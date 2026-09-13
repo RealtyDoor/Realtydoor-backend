@@ -83,6 +83,10 @@ router.patch('/documents/:id/verify',  ctrl.verifyDocument);
 router.get('/contact',             ctrl.listContactMessages);
 router.patch('/contact/:id/read',  ctrl.markContactRead);
 
+// NRI leads inbox
+router.get('/nri-leads',             ctrl.listNriLeads);
+router.patch('/nri-leads/:id/read',  ctrl.markNriLeadRead);
+
 // Team roster
 router.get('/team',          ctrl.listTeam);
 router.post('/team',         ctrl.createTeamMember);

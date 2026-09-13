@@ -236,6 +236,21 @@ async function markContactRead(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function listNriLeads(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const { data, total } = await service.listNriLeads(req.query, skip, limit);
+    success(res, paginate(data, total, page, limit));
+  } catch (err) { next(err); }
+}
+
+async function markNriLeadRead(req, res, next) {
+  try {
+    const lead = await service.markNriLeadRead(req.params.id);
+    success(res, lead, 'Marked as read');
+  } catch (err) { next(err); }
+}
+
 async function listTeam(req, res, next) {
   try {
     const members = await service.adminListTeam();
@@ -432,6 +447,7 @@ module.exports = {
   getKycById,
   listDocuments, verifyDocument,
   listContactMessages, markContactRead,
+  listNriLeads, markNriLeadRead,
   listTeam, createTeamMember, updateTeamMember, deleteTeamMember,
   listServices, createService, updateService, deleteService,
   listVideoTours, updateVideoTour, uploadVideoTourFile,

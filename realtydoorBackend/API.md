@@ -2394,7 +2394,99 @@ Submit a contact form (authenticated or public).
 
 ---
 
-## 12. Locality Insights
+## 12. NRI Leads
+
+Inbound home-buying interest capture from the NRI landing page. Not tied to a specific property listing or an authenticated user — a standalone lead-gen form submission.
+
+### POST /api/nri-leads
+
+**Auth:** Public (rate-limited)
+
+**Request Body:**
+
+```json
+{
+  "name": "Suresh Mehta",
+  "phone": "+919876543210",
+  "area": "Whitefield",
+  "homeType": "Apartment",
+  "bedrooms": "3",
+  "timeline": "3-6 months",
+  "budget": "80L-1Cr"
+}
+```
+
+All fields are required strings. `phone` should be sent pre-formatted with country code (e.g. `+91XXXXXXXXXX`) — the API does not add or infer a country code.
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "We will get back to you shortly.",
+  "data": { "id": "64nri..." }
+}
+```
+
+---
+
+### GET /api/admin/nri-leads
+
+All NRI leads (paginated).
+
+**Auth:** ADMIN
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `isRead` | boolean | Filter unread (`false`) or read (`true`) |
+| `page` | number | Default: `1` |
+| `limit` | number | Default: `20` |
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "data": [
+      {
+        "id": "64nri...",
+        "name": "Suresh Mehta",
+        "phone": "+919876543210",
+        "area": "Whitefield",
+        "homeType": "Apartment",
+        "bedrooms": "3",
+        "timeline": "3-6 months",
+        "budget": "80L-1Cr",
+        "isRead": false,
+        "createdAt": "2026-09-13T00:00:00.000Z"
+      }
+    ],
+    "pagination": { "total": 12, "page": 1, "limit": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
+  }
+}
+```
+
+---
+
+### PATCH /api/admin/nri-leads/:id/read
+
+Mark an NRI lead as read.
+
+**Auth:** ADMIN
+
+**Request Body:** _(none)_
+
+**Response `200`:** `{ "success": true, "message": "Marked as read", "data": { "id": "...", "isRead": true, ... } }`
+
+**Errors:** `404` NRI lead not found.
+
+---
+
+## 13. Locality Insights
 
 ### GET /api/locality-insights/insight
 
@@ -2626,7 +2718,7 @@ Create or update (upsert by city + locality). `dataAsOfDate` defaults to now if 
 
 ---
 
-## 13. Platform Config (Public)
+## 14. Platform Config (Public)
 
 ### GET /api/config/public
 
@@ -2653,7 +2745,7 @@ Returns a flat key → value object. Only keys with `isPublic: true` appear here
 
 ---
 
-## 14. Webhooks
+## 15. Webhooks
 
 ### POST /api/webhooks/razorpay
 
@@ -2701,7 +2793,7 @@ Handles `user.created`, `user.updated`, `user.deleted` from Clerk.
 
 ---
 
-## 15. Admin
+## 16. Admin
 
 All `/api/admin/*` routes require `authenticate` + `requireAdmin`.
 

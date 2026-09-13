@@ -743,6 +743,25 @@ async function markContactRead(id) {
   return prisma.contactMessage.update({ where: { id }, data: { isRead: true } });
 }
 
+// ─── NRI LEADS INBOX ────────────────────────────────────────────────────────
+
+async function listNriLeads(filters, skip, limit) {
+  const where = {};
+  if (filters.isRead !== undefined) where.isRead = filters.isRead === 'true';
+
+  const [data, total] = await Promise.all([
+    prisma.nriLead.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
+    prisma.nriLead.count({ where }),
+  ]);
+  return { data, total };
+}
+
+async function markNriLeadRead(id) {
+  const lead = await prisma.nriLead.findUnique({ where: { id } });
+  if (!lead) throw new ApiError(404, 'NRI lead not found');
+  return prisma.nriLead.update({ where: { id }, data: { isRead: true } });
+}
+
 // ─── TEAM MEMBER CRUD ─────────────────────────────────────────────────────────
 
 async function adminListTeam() {
@@ -780,6 +799,7 @@ module.exports = {
   adminListServices, adminCreateService, adminUpdateService, adminDeleteService,
   getPropertyByIdAdmin, getKycByUserId, getUserByIdAdmin,
   listContactMessages, markContactRead,
+  listNriLeads, markNriLeadRead,
   adminListTeam, adminCreateTeamMember, adminUpdateTeamMember, adminDeleteTeamMember,
   adminListDocuments, adminVerifyDocument,
   listVideoTours, updateVideoTour, uploadVideoTourFile,
