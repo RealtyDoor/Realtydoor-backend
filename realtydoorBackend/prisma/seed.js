@@ -758,6 +758,196 @@ async function main() {
       isPublished: true, publishedAt: new Date('2024-01-01'),
     },
     {
+      type: 'FAQ', title: 'Bengaluru Plot Buying FAQs', slug: 'bengaluru-plot-buying-faqs',
+      content: JSON.stringify({
+        categories: [
+          {
+            category: 'Legal & Document Verification',
+            faqs: [
+              {
+                question: 'What are the 3 documents every plot buyer MUST check?',
+                answerHtml: '<p>Never buy a plot without verifying these three critical documents:</p><ul><li><strong>The Mother Deed:</strong> Traces the ownership history of the land back to its origin. Essential to prove the seller has absolute rights.</li><li><strong>Encumbrance Certificate (EC) - 30 Years:</strong> Proves there are no pending loans, mortgages, or legal disputes on the property.</li><li><strong>DC Conversion Order:</strong> Confirms the Deputy Commissioner has legally converted the land from agricultural to residential use.</li></ul><p><strong>Realtydoor Data Insight:</strong> Over 64% of property disputes in Bangalore arise from missing links in the Mother Deed. We verify all 30 years of history before shortlisting.</p>',
+                relatedBlogSlug: 'critical-plot-documents-checklist-bangalore',
+              },
+              {
+                question: 'BDA vs BMRDA vs Panchayat — which is actually safe?',
+                answerHtml: '<p>There is a massive difference in safety, legality, and loan eligibility:</p><p><strong>BDA / BMRDA / RERA (100% Safe):</strong> Follows strict city planning rules. Mandated 30ft minimum roads, designated parks, and STPs. Fully eligible for SBI, HDFC, and all nationalized bank loans up to 70-80%.</p><p><strong>Panchayat / B-Khata (High Risk):</strong> Often lacks basic infrastructure. Highly risky, illegal for residential development in many zones, and practically impossible to get major bank funding.</p>',
+                relatedBlogSlug: 'bda-vs-bmrda-vs-panchayat-khata-bangalore',
+              },
+              {
+                question: 'How to read a Sale Deed before signing — red flags to spot',
+                answerHtml: "<p>Before you sign, check these three critical sections:</p><ol><li><strong>The Indemnity Clause:</strong> Ensure it states the seller will compensate you if the title is found defective later.</li><li><strong>Schedule Property Dimensions:</strong> The dimensions in the deed MUST perfectly match the physical measurements and the layout plan.</li><li><strong>Seller Consistency:</strong> The names on the deed must exactly match the Encumbrance Certificate. If it's inherited property, ALL legal heirs must sign.</li></ol>",
+                relatedBlogSlug: 'property-sale-deed-red-flags-bangalore',
+              },
+              {
+                question: 'Converting agricultural land to residential — what it costs and how long?',
+                answerHtml: '<p>DC Conversion (Deputy Commissioner) is a mandatory legal process to convert farm land for residential use.</p><ul><li><strong>Timeline:</strong> Typically takes 3 to 6 months depending on the zone.</li><li><strong>Costs:</strong> Varies heavily based on government guidance value, land size, and specific zoning regulations.</li></ul><p><strong>Warning:</strong> Never buy agricultural land hoping you can easily convert it later. Buy land that is ALREADY converted to avoid years of bureaucratic delays.</p>',
+                relatedBlogSlug: 'dc-conversion-agricultural-land-bangalore',
+              },
+            ],
+          },
+          {
+            category: 'Taxes, Fees & Hidden Costs',
+            faqs: [
+              {
+                question: 'Stamp duty + registration charges in Karnataka — full breakdown 2026',
+                answerHtml: '<p>As of 2026, here is the exact breakdown for properties above ₹45 Lakhs in Karnataka:</p><ul><li>Stamp Duty: 5.60%</li><li>Registration Fee: 1.00%</li><li>Cess &amp; Surcharges: ~0.05%</li><li><strong>Total Approximate: 6.65%</strong></li></ul><p>Always calculate this against the Government Guidance Value or the Sale Value, whichever is higher.</p>',
+                relatedBlogSlug: 'stamp-duty-registration-charges-bangalore',
+              },
+              {
+                question: 'How property tax works in Bangalore — and why unpaid tax is YOUR problem',
+                answerHtml: "<p>In Bangalore, the liability of unpaid property tax transfers to the new buyer.</p><p>If the seller hasn't paid tax for 5 years, the BBMP will demand the arrears (with heavy penalties) from YOU after registration. We ensure up-to-date tax receipts (Tax Paid Receipts - TPR) are collected and verified before any token advance is paid.</p>",
+                relatedBlogSlug: 'property-tax-bangalore-unpaid-arrears',
+              },
+            ],
+          },
+          {
+            category: 'Site Visit & Negotiation',
+            faqs: [
+              {
+                question: 'What to look for during a plot site visit — live checklist',
+                answerHtml: "<p>Don't just look at the view. Check these physical indicators:</p><ul><li><strong>Approach Road Width:</strong> BMRDA requires a minimum 30ft road. If it's narrower, the layout is likely unapproved.</li><li><strong>High-Tension Wires:</strong> Ensure no major electrical lines pass directly over the plot (severely impacts resale and construction safety).</li><li><strong>Boundary Stones:</strong> Are the physical dimensions clearly marked and matching the layout plan?</li><li><strong>Water Logging Indicators:</strong> Check the slope of the layout and ask locals about monsoon flooding.</li></ul>",
+                relatedBlogSlug: 'plot-site-visit-checklist-bangalore',
+              },
+              {
+                question: '10 questions to ask any plot seller before paying a token advance',
+                answerHtml: '<p>Crucial questions to weed out bad sellers:</p><ul><li>Is the original mother deed with you or pledged to a bank?</li><li>Are all legal heirs of the property alive and willing to sign?</li><li>Has the layout been handed over to the local authority for maintenance?</li><li>What is the current guidance value versus your asking price?</li><li>Are there any pending property tax or association dues?</li></ul>',
+                relatedBlogSlug: '10-questions-plot-token-advance-bangalore',
+              },
+              {
+                question: 'How to negotiate a plot price in Bangalore — 6 proven tactics',
+                answerHtml: "<p>Data-driven negotiation works best:</p><ul><li><strong>Guidance Value Baseline:</strong> Use the sub-registrar's guidance value to anchor your negotiation.</li><li><strong>Fast Closing Discount:</strong> Offer a faster closing timeline (30 days vs 90 days). Sellers often drop prices by 5-10% for immediate liquidity.</li><li><strong>Market Comps:</strong> Quote recent transaction values (not asking prices) of adjacent plots.</li><li><strong>Check Motivation:</strong> Is the seller relocating or funding an education? Highly motivated sellers offer the best margins.</li></ul>",
+                relatedBlogSlug: 'negotiate-plot-price-bangalore',
+              },
+            ],
+          },
+          {
+            category: 'Financing & Loans',
+            faqs: [
+              {
+                question: 'Why are plot loans harder to get than home loans?',
+                answerHtml: '<p>Banks view open land as a higher speculative risk compared to a constructed flat.</p><p><strong>Home Loans:</strong> Typically 80-90% funding.</p><p><strong>Plot Loans:</strong> Capped at 70% funding.</p><p>Furthermore, plot loans are strictly reserved for approved layouts (BDA, BMRDA, RERA). You cannot get a nationalized bank loan for an unapproved Panchayat layout.</p>',
+                relatedBlogSlug: 'why-plot-loans-are-harder-than-home-loans-bangalore-bangalore',
+              },
+              {
+                question: 'Plot loan comparison: SBI vs HDFC vs Axis?',
+                answerHtml: '<ul><li><strong>SBI:</strong> Offers the lowest interest rates (~8.5%) but has the strictest legal verification processes and longer processing times (2-4 weeks).</li><li><strong>HDFC/Axis:</strong> Offer slightly higher rates (~8.75% - 9.0%) but provide much faster processing (7-10 days) and excellent doorstep service.</li></ul><p>We match you with the right bank based on your property type and credit profile to ensure zero rejections.</p>',
+                relatedBlogSlug: 'plot-loan-comparison-sbi-hdfc-axis',
+              },
+            ],
+          },
+          {
+            category: 'Performance Data & Real Case Studies',
+            faqs: [
+              {
+                question: 'Data drop: Realtydoor client portfolio performance — H1 2026',
+                answerHtml: '<p><strong>14.2%</strong> Average Annualized Appreciation. <strong>0%</strong> Legal Disputes or Stalled Handovers.</p><p>In the first half of 2026, plots acquired through Realtydoor significantly outperformed local benchmarks, driven by our strict filtering for tier-1 developer layouts and upcoming metro corridors.</p>',
+                relatedBlogSlug: 'realtydoor-portfolio-performance-h1-2026',
+              },
+              {
+                question: '6-month check-in: Where are our January 2026 buyers now?',
+                answerHtml: '<p>Clients who secured plots in January 2026 in emerging corridors like Hosur Road and Devanahalli have already seen a 6-9% equity bump.</p><p>This rapid growth was driven by two factors we predicted:</p><ul><li>Revised government guidance values pushing up floor prices.</li><li>New infrastructure and tech park announcements in the state budget.</li></ul>',
+                relatedBlogSlug: 'where-are-our-january-2026-plot-buyers-now',
+              },
+              {
+                question: 'Case study: ₹38L Sarjapur plot — how we found it, verified it, closed it',
+                answerHtml: '<p><strong>The Goal:</strong> Client wanted a secure plot under ₹40L in Sarjapur.</p><ul><li><strong>Rejected:</strong> 14 properties due to hidden B-Khata issues and lake buffer zone (NGT) violations.</li><li><strong>Found:</strong> A ₹38L fully BMRDA-approved plot in an upcoming layout.</li><li><strong>Negotiated:</strong> Secured a 5% discount by offering a 12-day closing timeline.</li></ul>',
+                relatedBlogSlug: 'case-study-38l-sarjapur-plot',
+              },
+              {
+                question: 'Case study: IT manager, Devanahalli ₹26L → ₹71L in 4 years',
+                answerHtml: '<p>An IT manager bought a 1500 sqft plot in Devanahalli in 2022 for ₹26L through our advisory.</p><p>2022 Value: ₹26 Lakhs → 2026 Value: ₹71 Lakhs</p><p>Driven by the Airport expansion, Blue Line Metro, and massive SEZ developments. This is the power of holding clear-title land in high-growth corridors.</p>',
+                relatedBlogSlug: 'case-study-devanahalli-plot-26l-to-71l',
+              },
+            ],
+          },
+          {
+            category: 'Investment Strategy & ROI',
+            faqs: [
+              {
+                question: 'The ₹50L mistake most Bangalore buyers make (and how to avoid it)',
+                answerHtml: '<p>The biggest mistake is waiting 2-3 years for the "perfect" plot or a market crash, all while paying ₹30,000/month in rent.</p><p>In Bangalore\'s market, a premium plot priced at ₹50L today will likely hit ₹75L by the time you finish over-researching.</p><p><strong>The Fix:</strong> Stop looking for a 100% perfect plot. If the title is 100% clear and the location has solid 5-year growth drivers, act decisively.</p>',
+                relatedBlogSlug: 'costly-mistakes-bangalore-plot-buyers-make',
+              },
+              {
+                question: 'Plot vs Flat vs Mutual Fund — honest data comparison',
+                answerHtml: '<p>Here is how the data stacks up from 2021-2026 in Bangalore:</p><ul><li>Premium Plots (South/North Bangalore): +120% to +150%</li><li>Mutual Funds (Nifty 50 Index): +70% to +90%</li><li>Luxury Flats (Whitefield/ORR): +40% to +60%</li></ul><p>While mutual funds offer liquidity, plots offer unparalleled exponential growth. Flats begin depreciating structurally the moment you buy them, and suffer from high monthly maintenance.</p>',
+                relatedBlogSlug: 'plot-vs-flat-vs-mutual-fund-investment',
+              },
+            ],
+          },
+          {
+            category: 'Location Guide (2026)',
+            faqs: [
+              {
+                question: 'North Bangalore vs South Bangalore plots — 10-year outlook',
+                answerHtml: '<p><strong>North Bangalore:</strong> Aggressive, high-growth market driven by KIA Airport, Blue Line Metro, and upcoming Boeing/Foxconn tech parks. Best for massive capital appreciation.</p><p><strong>South Bangalore:</strong> Established, lifestyle-driven market (Sarjapur, Kanakapura Rd). Offers stable, steady appreciation with much better immediate livability and schools.</p>',
+                relatedBlogSlug: 'north-vs-south-bangalore-plots-10-year-outlook',
+              },
+              {
+                question: 'Hosur Road plots — underrated or overhyped? My honest take',
+                answerHtml: '<p><strong>Verdict: Highly Underrated.</strong></p><p>With the upcoming Yellow Line metro and massive industrial growth expanding towards Attibele and Anekal, Hosur road is offering clear-title plots at ₹30L-₹40L.</p><p>This corridor will see massive compounding in the next 5 years as the Electronic City IT corridor physically expands southward.</p>',
+                relatedBlogSlug: null,
+              },
+              {
+                question: 'Sarjapur vs Whitefield vs Devanahalli in 2026?',
+                answerHtml: '<ul><li><strong>Whitefield:</strong> Saturated but highly stable. Good for end-use, low capital appreciation.</li><li><strong>Sarjapur:</strong> Excellent mid-term growth due to upcoming tech parks, but currently suffers from severe traffic bottlenecks.</li><li><strong>Devanahalli:</strong> The ultimate long-term play. High risk/high reward, driven by Airport expansion and massive SEZ developments.</li></ul>',
+                relatedBlogSlug: 'sarjapur-vs-whitefield-vs-devanahalli-investment',
+              },
+              {
+                question: 'Is Hoskote a good place to live?',
+                answerHtml: '<p>Hoskote is rapidly developing into a peaceful, well-connected suburb. For those looking to escape the dense city traffic while maintaining access to IT hubs via upcoming ring roads, it offers an excellent quality of life.</p>',
+                relatedBlogSlug: 'is-investing-in-hoskote-plots-worth-it',
+              },
+              {
+                question: 'How far is Hoskote from Bangalore Airport?',
+                answerHtml: '<p>Hoskote is approximately 40-50 minutes away from Kempegowda International Airport. The completion of the STRR will further reduce this travel time drastically.</p>',
+                relatedBlogSlug: 'is-investing-in-hoskote-plots-worth-it',
+              },
+              {
+                question: 'Why is land value increasing in Hoskote?',
+                answerHtml: '<p>The surge is primarily driven by massive infrastructure projects (STRR, PRR), proximity to the Narsapura Industrial hub, and the outward expansion of the Whitefield IT corridor.</p>',
+                relatedBlogSlug: 'is-investing-in-hoskote-plots-worth-it',
+              },
+            ],
+          },
+          {
+            category: 'NRI Buyers',
+            faqs: [
+              {
+                question: 'NRI Guide: How to buy a Bangalore plot remotely in 2026?',
+                answerHtml: '<p>You no longer need to fly down to close a deal. The standard process is:</p><ol><li><strong>Virtual Tour &amp; Legal Check:</strong> We conduct live video tours and clear 30-year property titles with our legal team.</li><li><strong>Specific Power of Attorney (SPA):</strong> You draft an SPA and register/attest it at the local Indian Embassy or Consulate in your country of residence.</li><li><strong>Courier &amp; Registration:</strong> You courier the original SPA to a trusted blood relative in Bangalore, who will sign the final sale deed on your behalf at the sub-registrar office.</li></ol>',
+                relatedBlogSlug: 'nri-guide-buying-plot-bangalore-remotely',
+              },
+              {
+                question: 'Is a PAN card mandatory for NRIs to buy property in India?',
+                answerHtml: '<p>Yes, a Permanent Account Number (PAN) card is strictly mandatory for any real estate transaction in India, regardless of the value. It is required for property registration, TDS compliance, and filing related income tax returns.</p>',
+                relatedBlogSlug: 'nri-guide-buying-plot-bangalore-remotely',
+              },
+              {
+                question: 'What are the TDS (Tax Deducted at Source) rules for NRIs buying a plot?',
+                answerHtml: '<p>If you are buying from a resident Indian and the property value exceeds ₹50 Lakhs, you must deduct 1% TDS. However, if you are buying from another NRI, the TDS rate is much higher (typically 20% to 23% depending on long-term capital gains), and you will need to deduct this before paying the seller.</p>',
+                relatedBlogSlug: 'nri-guide-buying-plot-bangalore-remotely',
+              },
+              {
+                question: 'Can I easily repatriate the money back to my home country when I sell the plot later?',
+                answerHtml: '<p>Yes, but with limits. NRIs can repatriate up to USD 1 million per financial year (April–March) from their NRO account, which includes proceeds from property sales. You will need to submit Form 15CA and a Chartered Accountant\'s certificate (Form 15CB) to your bank confirming that applicable capital gains taxes have been paid.</p>',
+                relatedBlogSlug: 'nri-guide-buying-plot-bangalore-remotely',
+              },
+              {
+                question: 'Can an NRI buy a property jointly with a foreign citizen spouse?',
+                answerHtml: '<p>A foreign citizen of non-Indian origin cannot buy property in India unless they are a resident of India (living in India for more than 182 days in the preceding year). Therefore, an NRI cannot jointly purchase property with a non-resident foreign citizen spouse. However, joint ownership with a resident Indian or another NRI is permitted.</p>',
+                relatedBlogSlug: 'nri-guide-buying-plot-bangalore-remotely',
+              },
+            ],
+          },
+        ],
+      }),
+      excerpt: 'Categorized FAQs for Bengaluru plot buyers — legal documents, taxes, financing, site visits, and NRI guidance.',
+      tags: ['FAQ', 'Bengaluru', 'Plots', 'Legal', 'NRI'],
+      isPublished: true, publishedAt: new Date(),
+    },
+    {
       type: 'ANNOUNCEMENT', title: 'Welcome to RealtyDoor Beta!', slug: 'welcome-realtydoor-beta',
       content: "<p>We are excited to launch RealtyDoor — India's most transparent real estate platform. Our mission is to eliminate property fraud through technology, escrow-backed deals, and KYC-verified partners.</p><p>During beta, all services are available at introductory pricing. We'd love your feedback!</p>",
       excerpt: 'RealtyDoor is officially live! Explore verified properties and enjoy secure escrow-backed deals.',
