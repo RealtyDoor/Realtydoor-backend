@@ -2299,7 +2299,68 @@ Single published content block by slug.
 
 ---
 
-## 10. Contact
+## 10. FAQ
+
+Dedicated read-only endpoints over the same `ContentBlock` (`type: 'FAQ'`) records exposed by `GET /api/blog`, but with `content` pre-parsed to JSON instead of a raw string — clients don't need to `JSON.parse()` it themselves.
+
+### GET /api/faqs
+
+All published FAQ content blocks.
+
+**Auth:** Public
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "id": "64cms...",
+      "type": "FAQ",
+      "title": "Bengaluru Plot Buying FAQs",
+      "slug": "bengaluru-plot-buying-faqs",
+      "content": {
+        "categories": [
+          {
+            "category": "Legal & Document Verification",
+            "faqs": [
+              {
+                "question": "What are the 3 documents every plot buyer MUST check?",
+                "answerHtml": "<p>...</p><ul><li>...</li></ul>",
+                "relatedBlogSlug": "critical-plot-documents-checklist-bangalore"
+              }
+            ]
+          }
+        ]
+      },
+      "excerpt": "Categorized FAQs for Bengaluru plot buyers...",
+      "tags": ["FAQ", "Bengaluru", "Plots", "Legal", "NRI"],
+      "isPublished": true,
+      "publishedAt": "2026-09-13T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+The shape of `content` is whatever JSON the FAQ block was created with — the flat `[{q, a}]` list (legacy `faq` block) and the categorized `{categories: [{category, faqs: [{question, answerHtml, relatedBlogSlug}]}]}` shape (e.g. `bengaluru-plot-buying-faqs`) both come back parsed as-is.
+
+---
+
+### GET /api/faqs/:slug
+
+Single FAQ content block by slug.
+
+**Auth:** Public
+
+**Response `200`:** Same shape as one entry of the `GET /api/faqs` array.
+
+**Errors:** `404` if not found, not published, or not type `FAQ`.
+
+---
+
+## 11. Contact
 
 ### POST /api/contact
 
@@ -2333,7 +2394,7 @@ Submit a contact form (authenticated or public).
 
 ---
 
-## 11. Locality Insights
+## 12. Locality Insights
 
 ### GET /api/locality-insights/insight
 
@@ -2565,7 +2626,7 @@ Create or update (upsert by city + locality). `dataAsOfDate` defaults to now if 
 
 ---
 
-## 12. Platform Config (Public)
+## 13. Platform Config (Public)
 
 ### GET /api/config/public
 
@@ -2592,7 +2653,7 @@ Returns a flat key → value object. Only keys with `isPublic: true` appear here
 
 ---
 
-## 13. Webhooks
+## 14. Webhooks
 
 ### POST /api/webhooks/razorpay
 
@@ -2640,7 +2701,7 @@ Handles `user.created`, `user.updated`, `user.deleted` from Clerk.
 
 ---
 
-## 14. Admin
+## 15. Admin
 
 All `/api/admin/*` routes require `authenticate` + `requireAdmin`.
 
