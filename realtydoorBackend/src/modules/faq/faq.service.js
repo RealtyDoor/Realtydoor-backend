@@ -24,11 +24,15 @@ async function getAll() {
 }
 
 async function getBySlug(slug) {
-  return withCache(CACHE_KEYS.blogSlug(slug), 1800, async () => {
-    const block = await prisma.contentBlock.findUnique({ where: { slug, isPublished: true } });
-    if (!block || block.type !== 'FAQ') throw new ApiError(404, 'FAQ not found');
-    return parseContent(block);
+  // Cache key is shared with cms.service's getBySlug (same underlying row) — always
+  // cache the raw block here and parse after, so both callers agree on cache shape.
+  const block = await withCache(CACHE_KEYS.blogSlug(slug), 1800, async () => {
+    const found = await prisma.contentBlock.findUnique({ where: { slug, isPublished: true } });
+    if (!found) throw new ApiError(404, 'FAQ not found');
+    return found;
   });
+  if (block.type !== 'FAQ') throw new ApiError(404, 'FAQ not found');
+  return parseContent(block);
 }
 
 module.exports = { getAll, getBySlug };
