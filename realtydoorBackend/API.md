@@ -483,6 +483,32 @@ Upload videos to a listing.
 
 ---
 
+### POST /api/properties/:id/documents
+
+Upload listing documents (brochure, RERA certificate, sale agreement, etc.) — appended to the listing's `documents` array.
+
+**Auth:** PARTNER (KYC not required)
+
+**Request:** `multipart/form-data`, field name `documents`, up to 10 files (`jpg`/`png`/`pdf`, max 10MB each).
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Documents uploaded",
+  "data": {
+    "documents": [
+      { "name": "brochure.pdf", "url": "https://...s3.../properties/documents/abc123.pdf", "uploadedAt": "2026-09-20T10:00:00.000Z" }
+    ]
+  }
+}
+```
+
+**Errors:** `400` no documents provided · `403` not your listing.
+
+---
+
 ### GET /api/properties/:id/edit-logs
 
 Admin and partner edit history for a listing.
@@ -981,6 +1007,38 @@ Both fields are optional. At least one must be provided.
 
 ---
 
+### PATCH /api/user/consent
+
+Record onboarding consent (terms, privacy, marketing).
+
+**Auth:** USER
+
+**Request Body:**
+
+```json
+{ "termsAccepted": true, "privacyAccepted": true, "marketingOptIn": false }
+```
+
+All three fields are optional; at least one must be provided. `termsAccepted`/`privacyAccepted` record a one-time acceptance timestamp and are not revocable once set (sending `false` is a no-op for them). `marketingOptIn` is a genuine on/off toggle.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Consent recorded",
+  "data": {
+    "id": "64user...",
+    "termsAcceptedAt": "2026-09-20T10:00:00.000Z",
+    "privacyAcceptedAt": "2026-09-20T10:00:00.000Z",
+    "marketingOptIn": false,
+    "marketingOptInAt": null
+  }
+}
+```
+
+---
+
 ### GET /api/user/leads
 
 All inquiries submitted by the authenticated user.
@@ -1009,6 +1067,39 @@ All inquiries submitted by the authenticated user.
   ]
 }
 ```
+
+---
+
+### POST /api/user/leads/:leadId/rating
+
+Buyer rates the partner assigned to a lead. Allowed only once the lead's `status` is `SITE_VISIT_DONE` or `CLOSED`, and only once per lead.
+
+**Auth:** USER (must own the lead)
+
+**Request Body:**
+
+```json
+{ "rating": 5, "comment": "Partner was punctual and answered all my questions." }
+```
+
+`rating` is required, integer 1–5. `comment` is optional, max 1000 characters.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Rating submitted",
+  "data": {
+    "id": "64lead...",
+    "buyerRating": 5,
+    "buyerRatingComment": "Partner was punctual and answered all my questions.",
+    "buyerRatedAt": "2026-09-20T10:00:00.000Z"
+  }
+}
+```
+
+**Errors:** `404` lead not found or not yours · `400` site visit hasn't happened yet · `409` already rated.
 
 ---
 
@@ -2607,6 +2698,20 @@ Public — full locality market-intelligence landing page. Merges the admin-cura
 Any curated section with no admin-entered data returns `null` (or `[]`/`{total:0,addedThisWeek:0}` for the live sections). `badge` on a pick is `"PREMIUM"` if the listing is admin-featured, `"NEW"` if created within the last 30 days, else `null`. `topVerifiedPicks` only includes `APPROVED` + `isVerified` listings, newest/featured first, capped at 6.
 
 **Errors:** `400` if either query param is missing · `404` no curated locality data found for that city+locality (create one via `POST /api/locality-insights` first).
+
+---
+
+### GET /api/locality-insights/report
+
+Public — downloadable PDF report built from the same data as `/page` (structured text, no charts/AI). Streamed as `Content-Type: application/pdf` with `Content-Disposition: attachment`.
+
+**Auth:** Public (rate-limited at the search tier — 30 req/min/IP — since PDF generation is heavier than a plain JSON read)
+
+**Query Parameters:** same as `/page` — `city`, `locality` (both required).
+
+**Response `200`:** binary PDF body.
+
+**Errors:** `400` if either query param is missing · `404` no curated locality data found for that city+locality.
 
 ---
 

@@ -11,12 +11,16 @@ router.use(authenticate, requireUser);
 // Profile
 router.patch('/profile', ctrl.updateProfile);
 
+// Onboarding consent
+router.patch('/consent', ctrl.updateConsent);
+
 // Phone verification (lazy — only called when needed)
 router.post('/verify-phone',     otpLimiter, ctrl.requestPhoneOtp);
 router.post('/verify-phone/otp', otpLimiter, ctrl.verifyPhoneOtp);
 
 // Inquiries tracker
 router.get('/leads', ctrl.getMyLeads);
+router.post('/leads/:leadId/rating', ctrl.rateLead);
 
 // Favorites (phone required — PRD §2.5)
 router.get('/favorites',  ctrl.getFavorites);

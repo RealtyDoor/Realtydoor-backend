@@ -11,6 +11,8 @@ const {
   updateProfileSchema,
   requestVideoTourSchema,
   raiseDisputeSchema,
+  rateLeadSchema,
+  updateConsentSchema,
 } = require('./users.validator');
 
 async function requestPhoneOtp(req, res, next) {
@@ -33,6 +35,22 @@ async function getMyLeads(req, res, next) {
   try {
     const leads = await service.getMyLeads(req.user.id);
     success(res, leads);
+  } catch (err) { next(err); }
+}
+
+async function rateLead(req, res, next) {
+  try {
+    const data = rateLeadSchema.parse(req.body);
+    const lead = await service.rateLead(req.user.id, req.params.leadId, data);
+    success(res, lead, 'Rating submitted');
+  } catch (err) { next(err); }
+}
+
+async function updateConsent(req, res, next) {
+  try {
+    const data = updateConsentSchema.parse(req.body);
+    const result = await service.updateConsent(req.user.id, data);
+    success(res, result, 'Consent recorded');
   } catch (err) { next(err); }
 }
 
@@ -164,7 +182,8 @@ async function getMyDisputes(req, res, next) {
 }
 
 module.exports = {
-  requestPhoneOtp, verifyPhoneOtp, getMyLeads, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getMyLeads, rateLead, toggleFavorite, getFavorites, updateProfile,
+  updateConsent,
   getDocuments, uploadDocument, getSubscriptions,
   raiseTicket, getMyTickets, getMyTicketById, verifyTicket,
   createLoanApplication, getMyLoanApplications, getLoanApplicationById,

@@ -2,6 +2,7 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { withCache, cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
+const { buildLocalityReportPdf } = require('../../lib/pdfReport');
 
 async function getLocality(city, locality) {
   const insight = await prisma.localityInsight.findFirst({
@@ -133,6 +134,11 @@ async function buildLocalityPage(city, locality) {
   };
 }
 
+async function getLocalityReportPdf(city, locality) {
+  const page = await getLocalityPage(city, locality);
+  return buildLocalityReportPdf(page);
+}
+
 async function getCitiesSummary() {
   return withCache(CACHE_KEYS.CITIES_SUMMARY, 900, buildCitiesSummary);
 }
@@ -175,4 +181,7 @@ async function buildCitiesSummary() {
     .sort((a, b) => b.listingsCount - a.listingsCount);
 }
 
-module.exports = { getLocality, getLocalityPage, listLocalities, getLocalityById, upsertLocality, deleteLocality, getCitiesSummary };
+module.exports = {
+  getLocality, getLocalityPage, listLocalities, getLocalityById, upsertLocality, deleteLocality,
+  getCitiesSummary, getLocalityReportPdf,
+};

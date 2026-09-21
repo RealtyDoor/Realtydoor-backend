@@ -22,6 +22,18 @@ async function getLocalityPage(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function downloadReport(req, res, next) {
+  try {
+    const { city, locality } = req.query;
+    if (!city || !locality) throw new ApiError(400, 'city and locality query params are required');
+    const pdfBuffer = await service.getLocalityReportPdf(city, locality);
+    const filename = `${locality}-${city}-report.pdf`.replace(/[^a-z0-9.-]+/gi, '-');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(pdfBuffer);
+  } catch (err) { next(err); }
+}
+
 async function listLocalities(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
@@ -60,4 +72,7 @@ async function getCitiesSummary(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { getLocality, getLocalityPage, listLocalities, getLocalityById, upsertLocality, deleteLocality, getCitiesSummary };
+module.exports = {
+  getLocality, getLocalityPage, listLocalities, getLocalityById, upsertLocality, deleteLocality,
+  getCitiesSummary, downloadReport,
+};

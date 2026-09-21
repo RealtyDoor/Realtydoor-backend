@@ -61,6 +61,15 @@ async function uploadVideos(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function uploadDocuments(req, res, next) {
+  try {
+    const files = req.files || [];
+    if (!files.length) throw new ApiError(400, 'No documents provided');
+    const property = await service.addDocuments(req.params.id, req.user.id, files);
+    success(res, property, 'Documents uploaded');
+  } catch (err) { next(err); }
+}
+
 async function getEditLogs(req, res, next) {
   try {
     const logs = await service.getPropertyEditLogs(req.params.id, req.user.id);
@@ -85,6 +94,6 @@ async function addConstructionUpdate(req, res, next) {
 }
 
 module.exports = {
-  search, getBySlug, getFeatured, create, update, uploadImages, uploadVideos, getEditLogs,
+  search, getBySlug, getFeatured, create, update, uploadImages, uploadVideos, uploadDocuments, getEditLogs,
   getConstructionUpdates, addConstructionUpdate,
 };

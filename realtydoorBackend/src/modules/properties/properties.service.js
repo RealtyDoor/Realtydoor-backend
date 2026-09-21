@@ -162,6 +162,23 @@ async function addVideos(id, partnerId, urls) {
   });
 }
 
+async function addDocuments(id, partnerId, files) {
+  const property = await prisma.property.findUnique({ where: { id } });
+  if (!property) throw new ApiError(404, 'Property not found');
+  if (property.partnerId !== partnerId) throw new ApiError(403, 'Not your listing');
+
+  const docs = files.map((f) => ({
+    name: f.originalname,
+    url: f.path,
+    uploadedAt: new Date().toISOString(),
+  }));
+
+  return prisma.property.update({
+    where: { id },
+    data: { documents: { push: docs } },
+  });
+}
+
 async function getPropertyEditLogs(propertyId, partnerId) {
   const property = await prisma.property.findFirst({ where: { id: propertyId, partnerId } });
   if (!property) throw new ApiError(404, 'Property not found');
@@ -194,6 +211,6 @@ async function addConstructionUpdate(propertyId, partnerId, data) {
 
 module.exports = {
   searchProperties, getPropertyBySlug, createProperty, updateProperty, getFeaturedProperties,
-  addImages, addVideos, getPropertyEditLogs,
+  addImages, addVideos, addDocuments, getPropertyEditLogs,
   getConstructionUpdates, addConstructionUpdate,
 };

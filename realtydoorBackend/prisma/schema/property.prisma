@@ -54,6 +54,7 @@ model Property {
   floorPlanUrl    String?
   virtualTourUrl  String?
   videoUrl        String?
+  documents       Json[]   // [{ name, url, uploadedAt }] — brochure, sale agreement, RERA cert, etc.
 
   // Amenities
   amenities       String[]

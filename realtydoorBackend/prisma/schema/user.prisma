@@ -40,6 +40,12 @@ model User {
   suspendedAt   DateTime?
   suspendReason String?
 
+  // Onboarding consent (compliance audit trail)
+  termsAcceptedAt   DateTime?
+  privacyAcceptedAt DateTime?
+  marketingOptIn    Boolean   @default(false)
+  marketingOptInAt  DateTime?
+
   // Partner — visit availability
   visitDays               String[]   // e.g. ['Mon','Tue','Wed','Thu','Fri','Sat']
   visitFromTime           String?    // e.g. '10:00'

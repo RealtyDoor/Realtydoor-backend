@@ -85,6 +85,26 @@ async function getMyLeads(userId) {
   });
 }
 
+const RATEABLE_STATUSES = ['SITE_VISIT_DONE', 'CLOSED'];
+
+async function rateLead(userId, leadId, { rating, comment }) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId: userId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!RATEABLE_STATUSES.includes(lead.status)) {
+    throw new ApiError(400, 'You can rate the partner only after a site visit has taken place');
+  }
+  if (lead.buyerRating != null) throw new ApiError(409, 'You have already rated this partner for this lead');
+
+  return prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      buyerRating:        rating,
+      buyerRatingComment: comment ?? null,
+      buyerRatedAt:        new Date(),
+    },
+  });
+}
+
 async function toggleFavorite(userId, propertyId) {
   const property = await prisma.property.findUnique({ where: { id: propertyId }, select: { id: true } });
   if (!property) throw new ApiError(404, 'Property not found');
@@ -123,6 +143,26 @@ async function updateProfile(userId, data) {
     select: {
       id: true, name: true, email: true, phone: true, phoneVerified: true,
       isNRI: true, profileImageUrl: true, role: true, updatedAt: true,
+    },
+  });
+}
+
+async function updateConsent(userId, { termsAccepted, privacyAccepted, marketingOptIn }) {
+  const data = {};
+  const now = new Date();
+  if (termsAccepted)          data.termsAcceptedAt   = now;
+  if (privacyAccepted)        data.privacyAcceptedAt = now;
+  if (marketingOptIn !== undefined) {
+    data.marketingOptIn   = marketingOptIn;
+    data.marketingOptInAt = marketingOptIn ? now : null;
+  }
+
+  return prisma.user.update({
+    where: { id: userId },
+    data,
+    select: {
+      id: true, termsAcceptedAt: true, privacyAcceptedAt: true,
+      marketingOptIn: true, marketingOptInAt: true,
     },
   });
 }
@@ -240,7 +280,8 @@ async function getMyVideoTours(userId) {
 const disputeService = require('../disputes/disputes.service');
 
 module.exports = {
-  requestPhoneOtp, verifyPhoneOtp, getMyLeads, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getMyLeads, rateLead, toggleFavorite, getFavorites, updateProfile,
+  updateConsent,
   getDocuments, uploadDocument, getSubscriptions,
   raiseTicket, getMyTickets, getMyTicketById, verifyTicket,
   createLoanApplication, getMyLoanApplications, getLoanApplicationById,

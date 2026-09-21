@@ -54,6 +54,17 @@ const raiseDisputeSchema = z.object({
   description: z.string().min(10).max(2000),
 });
 
+const rateLeadSchema = z.object({
+  rating:  z.number().int().min(1).max(5),
+  comment: z.string().max(1000).optional(),
+});
+
+const updateConsentSchema = z.object({
+  termsAccepted:   z.boolean().optional(),
+  privacyAccepted: z.boolean().optional(),
+  marketingOptIn:  z.boolean().optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: 'At least one field must be provided' });
+
 module.exports = {
   requestPhoneOtpSchema,
   verifyPhoneOtpSchema,
@@ -64,4 +75,6 @@ module.exports = {
   updateProfileSchema,
   requestVideoTourSchema,
   raiseDisputeSchema,
+  rateLeadSchema,
+  updateConsentSchema,
 };

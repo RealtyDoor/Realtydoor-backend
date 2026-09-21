@@ -113,6 +113,7 @@ function buildUploader(folder, allowedFormats, maxSizeMb = 10) {
 const propertyImageUploader  = buildUploader('properties', IMAGE_FORMATS);
 const propertyVideoUploader  = buildUploader('properties', VIDEO_FORMATS, 200); // 200 MB for videos
 const propertyMediaUploader  = buildUploader('properties', MEDIA_FORMATS, 200); // images + videos
+const propertyDocUploader    = buildUploader('properties/documents', DOC_FORMATS);
 const kycDocUploader         = buildUploader('kyc',        DOC_FORMATS);
 const visitPhotoUploader     = buildUploader('visits',     IMAGE_FORMATS);
 const userDocUploader        = buildUploader('documents',  DOC_FORMATS);
@@ -128,6 +129,7 @@ module.exports = {
   propertyImageUploader,
   propertyVideoUploader,
   propertyMediaUploader,
+  propertyDocUploader,
   kycDocUploader,
   visitPhotoUploader,
   userDocUploader,

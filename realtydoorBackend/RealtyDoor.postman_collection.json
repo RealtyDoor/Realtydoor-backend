@@ -545,6 +545,87 @@
           ]
         },
         {
+          "name": "Upload Property Documents",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "documents",
+                  "type": "file",
+                  "src": [],
+                  "description": "jpg/png/pdf, max 10MB each, up to 10 files — brochure, RERA cert, sale agreement, etc."
+                },
+                {
+                  "key": "documents",
+                  "type": "file",
+                  "src": [],
+                  "disabled": true
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/properties/{{propertyId}}/documents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "properties",
+                "{{propertyId}}",
+                "documents"
+              ]
+            },
+            "description": "Partner-only. Appends to the listing's `documents` array as `{ name, url, uploadedAt }`."
+          },
+          "response": [
+            {
+              "name": "200 – Documents Uploaded",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Documents uploaded\",\"data\":{\"id\":\"664abc123def456789012345\",\"documents\":[{\"name\":\"brochure.pdf\",\"url\":\"https://realtydoor-bucket.s3.ap-south-1.amazonaws.com/properties/documents/abc123.pdf\",\"uploadedAt\":\"2026-09-20T10:00:00.000Z\"}]}}"
+            },
+            {
+              "name": "400 – No Documents",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"No documents provided\"}"
+            },
+            {
+              "name": "403 – Not Your Listing",
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Not your listing\"}"
+            }
+          ]
+        },
+        {
           "name": "Update Property Listing",
           "request": {
             "method": "PATCH",
@@ -1449,6 +1530,55 @@
           ]
         },
         {
+          "name": "Update Consent",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"termsAccepted\": true,\n  \"privacyAccepted\": true,\n  \"marketingOptIn\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/user/consent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "consent"
+              ]
+            },
+            "description": "Records onboarding consent. termsAccepted/privacyAccepted set a one-time acceptance timestamp (not revocable); marketingOptIn is a genuine toggle. Any subset of the three fields may be sent."
+          },
+          "response": [
+            {
+              "name": "200 – Consent Recorded",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Consent recorded\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"termsAcceptedAt\":\"2026-09-20T10:00:00.000Z\",\"privacyAcceptedAt\":\"2026-09-20T10:00:00.000Z\",\"marketingOptIn\":false,\"marketingOptInAt\":null}}"
+            }
+          ]
+        },
+        {
           "name": "Request Phone OTP",
           "request": {
             "method": "POST",
@@ -1630,6 +1760,85 @@
               ],
               "cookie": [],
               "body": "{\"success\":true,\"data\":[{\"id\":\"665def456abc789012345678\",\"status\":\"SITE_VISIT_DONE\",\"buyerMessage\":\"I am interested in this property.\",\"property\":{\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"city\":\"Pune\",\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"]},\"createdAt\":\"2026-05-10T10:00:00.000Z\"}]}"
+            }
+          ]
+        },
+        {
+          "name": "Rate Partner (Lead)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 5,\n  \"comment\": \"Partner was punctual and answered all my questions.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/user/leads/{{leadId}}/rating",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "leads",
+                "{{leadId}}",
+                "rating"
+              ]
+            },
+            "description": "Buyer rates the assigned partner for this lead. Allowed only once the lead status is SITE_VISIT_DONE or CLOSED, and only once per lead."
+          },
+          "response": [
+            {
+              "name": "200 – Rating Submitted",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Rating submitted\",\"data\":{\"id\":\"665def456abc789012345678\",\"buyerRating\":5,\"buyerRatingComment\":\"Partner was punctual and answered all my questions.\",\"buyerRatedAt\":\"2026-09-20T10:00:00.000Z\"}}"
+            },
+            {
+              "name": "400 – Not Yet Ratable",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"You can rate the partner only after a site visit has taken place\"}"
+            },
+            {
+              "name": "409 – Already Rated",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"You have already rated this partner for this lead\"}"
             }
           ]
         },
@@ -6772,6 +6981,54 @@
               "cookie": [],
               "body": "{\"success\":true,\"data\":{\"city\":\"Bengaluru\",\"locality\":\"Whitefield\",\"subtitle\":\"India's most dynamic IT corridor\",\"snapshot\":{\"localityScore\":8.6,\"marketStage\":\"Mature Growth\",\"rentalDemand\":\"High\",\"infrastructureStrength\":\"Strong\",\"bestFor\":[\"IT Professionals\",\"Families\",\"Investors\",\"Rental Income\"]},\"stats\":{\"avgPricePerSqftPaise\":549000,\"minPricePerSqftPaise\":480000,\"maxPricePerSqftPaise\":620000,\"priceChangeLastMonthPct\":8.4,\"medianPricePaise\":1080000000,\"medianPricePropertyType\":\"3BHK\",\"avgRentYieldPct\":3.2,\"inventoryLive\":{\"total\":542,\"addedThisWeek\":38}},\"priceTrends\":{\"historical\":[{\"period\":\"Aug 2023\",\"price\":4100},{\"period\":\"Aug 2026\",\"price\":5490}],\"growth\":{\"oneYear\":8.4,\"threeYear\":17.2,\"fiveYear\":31.8}},\"propertyMix\":[{\"type\":\"3BHK\",\"percentage\":42,\"count\":228}],\"microMarkets\":[{\"name\":\"ITPL\",\"avgPricePerSqft\":6200,\"rentalDemand\":\"Very High\"}],\"keyInfrastructure\":[{\"name\":\"ITPL\",\"category\":\"Tech Park\",\"distance\":\"5 min drive\"}],\"connectivity\":{\"metro\":[{\"name\":\"Whitefield Metro Station\",\"line\":\"Purple Line\",\"status\":\"Operational\"}],\"airports\":[{\"name\":\"Kempegowda International Airport\",\"code\":\"BLR\",\"distance\":\"42 km\"}],\"majorRoads\":[\"Whitefield Main Road\"],\"travelTimes\":[{\"destination\":\"ITPL\",\"time\":\"15 min\"}]},\"infrastructureProjects\":[{\"name\":\"Whitefield Metro Phase 2\",\"category\":\"Metro\",\"status\":\"Operational\",\"year\":2026,\"impact\":\"High\"}],\"prosAndCons\":{\"pros\":[\"Strong IT employment base\"],\"cons\":[\"Peak-hour traffic\"]},\"investmentScore\":{\"overall\":8.4,\"factors\":{\"priceGrowth\":8.8,\"rentalDemand\":9.1}},\"buyVsRent\":{\"buyerDemandPct\":76,\"sellerDemandPct\":24,\"avgRentByBhk\":{\"2BHK\":32000,\"3BHK\":48000},\"rentalYieldPct\":3.2},\"faqs\":[{\"question\":\"Is Whitefield good for investment?\",\"answer\":\"Yes.\"}],\"topVerifiedPicks\":[{\"badge\":\"NEW\",\"bedroomConfig\":\"3BHK\",\"project\":\"Prestige Falcon City\",\"locality\":\"Whitefield\",\"price\":12800000,\"area\":1800,\"areaUnit\":\"sqft\",\"facing\":\"East\",\"floorNumber\":4,\"totalFloors\":12,\"slug\":\"prestige-falcon-city-...\"}],\"dataAsOfDate\":\"2026-08-24T00:00:00.000Z\",\"updatedAt\":\"2026-08-24T00:00:00.000Z\"}}"
             },
+            {
+              "name": "404 – Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"No locality data found\"}"
+            }
+          ]
+        },
+        {
+          "name": "Download Locality Report (PDF)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/locality-insights/report?city=Pune&locality=Baner",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "locality-insights",
+                "report"
+              ],
+              "query": [
+                {
+                  "key": "city",
+                  "value": "Pune"
+                },
+                {
+                  "key": "locality",
+                  "value": "Baner"
+                }
+              ]
+            },
+            "description": "Streams a downloadable PDF report built from the same data as \"Get Locality Page\" (Content-Type: application/pdf, Content-Disposition: attachment). Requires a curated LocalityInsight row to exist for this city+locality — otherwise 404s. Rate-limited at the search tier (30 req/min) since PDF generation is heavier than a plain JSON read."
+          },
+          "response": [
             {
               "name": "404 – Not Found",
               "status": "Not Found",

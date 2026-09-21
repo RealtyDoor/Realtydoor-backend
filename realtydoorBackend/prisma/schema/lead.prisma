@@ -39,6 +39,11 @@ model Lead {
   closureDocumentUrls String[]
   partnerNotes        String?
 
+  // Buyer → partner rating (post site-visit / closure)
+  buyerRating        Int?
+  buyerRatingComment String?
+  buyerRatedAt       DateTime?
+
   // 7-day re-ping for STILL_DECIDING (Appendix C.4)
   secondFollowupSentAt DateTime?
 
