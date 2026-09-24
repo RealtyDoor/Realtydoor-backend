@@ -36,34 +36,42 @@ async function clerkWebhook(req, res) {
 
   try {
     if (type === 'user.created') {
-      const email = data.email_addresses?.[0]?.email_address;
-      const name  = [data.first_name, data.last_name].filter(Boolean).join(' ') || email;
-      const phone = data.phone_numbers?.[0]?.phone_number || null;
-
-      await prisma.user.upsert({
-        where:  { clerkId: data.id },
-        create: { clerkId: data.id, name, email, phone, profileImageUrl: data.image_url || null, role: 'USER' },
-        update: {},  // already exists — don't overwrite role or other fields
-      });
-
-      // Stamp default role in Clerk publicMetadata so JWT Template can include it
-      await setUserRole(data.id, 'USER').catch((err) =>
+      // Users created through our own signup service (B4) already have a DB
+      // row by the time this webhook lands — this is just a metadata safety
+      // net for them. Users created any other way (e.g. Google sign-in) get
+      // synced by the extended POST /api/auth/sync on their first call, which
+      // also runs the email-collision check — this handler does NOT create
+      // rows itself, to avoid two independent writers racing on the same
+      // clerkId/email.
+      const existing = await prisma.user.findUnique({ where: { clerkId: data.id } });
+      await setUserRole(data.id, existing?.role || 'USER').catch((err) =>
         logger.warn('[ClerkWebhook] setUserRole failed', { clerkId: data.id, error: err.message })
       );
-
-      logger.info('[ClerkWebhook] user.created synced', { clerkId: data.id, email });
+      logger.info('[ClerkWebhook] user.created received', { clerkId: data.id, hadExistingRow: !!existing });
     }
 
     if (type === 'user.updated') {
-      const email = data.email_addresses?.[0]?.email_address;
-      const name  = [data.first_name, data.last_name].filter(Boolean).join(' ') || email;
+      const existing = await prisma.user.findUnique({ where: { clerkId: data.id } });
+      if (!existing) {
+        logger.info('[ClerkWebhook] user.updated for unsynced clerkId — skipping', { clerkId: data.id });
+      } else {
+        const email = data.email_addresses?.[0]?.email_address;
+        const name  = [data.first_name, data.last_name].filter(Boolean).join(' ') || email;
+        const metadataPhone = data.public_metadata?.phone;
+        const metadataRole  = data.public_metadata?.role;
 
-      await prisma.user.upsert({
-        where:  { clerkId: data.id },
-        create: { clerkId: data.id, name, email, profileImageUrl: data.image_url || null, role: 'USER' },
-        update: { name, email, profileImageUrl: data.image_url || null },
-      });
-      logger.info('[ClerkWebhook] user.updated synced', { clerkId: data.id });
+        await prisma.user.update({
+          where: { id: existing.id },
+          data: {
+            name,
+            email,
+            profileImageUrl: data.image_url || null,
+            ...(metadataPhone ? { phone: metadataPhone } : {}),
+            ...(metadataRole && metadataRole !== existing.role ? { role: metadataRole } : {}),
+          },
+        });
+        logger.info('[ClerkWebhook] user.updated synced', { clerkId: data.id });
+      }
     }
 
     if (type === 'user.deleted') {

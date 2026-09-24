@@ -1,78 +1,30 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
-const { sendPhoneVerificationOtp } = require('../../lib/wati');
-const { generate, expiresAt, isExpired, isLocked, lockUntil, maxAttemptsReached, MAX_ATTEMPTS } = require('../../lib/otp');
-const logger = require('../../lib/logger');
+const otpAuth = require('../../lib/otpAuth');
 
+// Lazy phone verification for already-authenticated users (favorites, tickets,
+// loan applications, etc. — gated by requirePhone). Backed by the shared
+// PhoneOtp table (purpose: PROFILE_VERIFY) — see lib/otpAuth.js. The old
+// phoneOtp* columns on User are no longer read or written here.
 async function requestPhoneOtp(userId, phone) {
   const duplicate = await prisma.user.findFirst({ where: { phone, NOT: { id: userId } } });
   if (duplicate) throw new ApiError(409, 'Phone number already registered to another account');
 
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (isLocked(user.phoneOtpLockedUntil)) {
-    throw new ApiError(429, 'Too many attempts. Try again in 30 minutes.');
-  }
+  await prisma.user.update({ where: { id: userId }, data: { phone, phoneVerified: false } });
 
-  const otp = generate();
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      phone,
-      phoneVerified:       false,
-      phoneOtp:            otp,
-      phoneOtpExpiresAt:   expiresAt(),
-      phoneOtpAttempts:    0,
-      phoneOtpLockedUntil: null,
-    },
-  });
-
-  try {
-    await sendPhoneVerificationOtp(phone, otp);
-  } catch (err) {
-    if (process.env.NODE_ENV === 'production') throw err;
-    logger.warn(`[DEV] WATI send failed — OTP for ${phone}: ${otp}`);
-  }
-  const dev = process.env.NODE_ENV !== 'production';
-  return { message: 'OTP sent via WhatsApp', ...(dev && { _devOtp: otp }) };
+  const result = await otpAuth.createAndSendOtp({ phone, purpose: 'PROFILE_VERIFY' });
+  return { message: 'OTP sent via WhatsApp', ...result };
 }
 
-async function verifyPhoneOtp(userId, otp) {
+async function verifyPhoneOtp(userId, code) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user.phone || !user.phoneOtp) throw new ApiError(400, 'Request an OTP first');
+  if (!user.phone) throw new ApiError(400, 'Request an OTP first');
 
-  if (isLocked(user.phoneOtpLockedUntil)) {
-    throw new ApiError(429, 'Too many attempts. Try again in 30 minutes.');
-  }
-  if (isExpired(user.phoneOtpExpiresAt)) {
-    throw new ApiError(400, 'OTP expired. Request a new one.');
-  }
-
-  if (user.phoneOtp !== otp) {
-    const attempts = user.phoneOtpAttempts + 1;
-    const locked   = maxAttemptsReached(attempts);
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        phoneOtpAttempts:    attempts,
-        phoneOtpLockedUntil: locked ? lockUntil() : null,
-      },
-    });
-    throw new ApiError(400, locked
-      ? `Incorrect OTP. Account locked for 30 minutes after ${MAX_ATTEMPTS} failed attempts.`
-      : `Incorrect OTP. ${MAX_ATTEMPTS - attempts} attempt(s) remaining.`
-    );
-  }
+  await otpAuth.verifyOtp({ phone: user.phone, purpose: 'PROFILE_VERIFY', code });
 
   await prisma.user.update({
     where: { id: userId },
-    data: {
-      phoneVerified:       true,
-      phoneVerifiedAt:     new Date(),
-      phoneOtp:            null,
-      phoneOtpExpiresAt:   null,
-      phoneOtpAttempts:    0,
-      phoneOtpLockedUntil: null,
-    },
+    data: { phoneVerified: true, phoneVerifiedAt: new Date() },
   });
   return { phoneVerified: true, phone: user.phone };
 }

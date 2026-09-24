@@ -15,7 +15,7 @@ async function authenticate(req, res, next) {
       const email = req.headers['x-dev-user-email'];
       const dbUser = await prisma.user.findUnique({ where: { email } });
       if (!dbUser) throw new ApiError(401, `Dev bypass: no user with email ${email}`);
-      req.user = dbUser;
+      req.user = { ...dbUser, onboardingComplete: dbUser.phoneVerified === true };
       return next();
     }
 
@@ -32,7 +32,11 @@ async function authenticate(req, res, next) {
     if (!dbUser) throw new ApiError(401, 'User not registered — call POST /api/auth/sync first');
     if (dbUser.isSuspended) throw new ApiError(403, 'Your account has been suspended. Contact support@realtydoor.in');
 
-    req.user = { ...dbUser, role: payload.role || dbUser.role };
+    // Verified phone, or still inside the pre-migration grace window (B9 backfill).
+    const onboardingComplete = dbUser.phoneVerified === true
+      || (!!dbUser.phoneVerifyDeadline && new Date() < new Date(dbUser.phoneVerifyDeadline));
+
+    req.user = { ...dbUser, role: payload.role || dbUser.role, onboardingComplete };
     next();
   } catch (err) {
     next(err instanceof ApiError ? err : new ApiError(401, 'Invalid token'));

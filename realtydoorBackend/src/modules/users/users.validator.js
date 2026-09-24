@@ -6,7 +6,7 @@ const requestPhoneOtpSchema = z.object({
 });
 
 const verifyPhoneOtpSchema = z.object({
-  otp: z.string().length(4, 'OTP must be exactly 4 digits').regex(/^\d{4}$/, 'OTP must be numeric'),
+  otp: z.string().length(6, 'OTP must be exactly 6 digits').regex(/^\d{6}$/, 'OTP must be numeric'),
 });
 
 const toggleFavoriteSchema = z.object({

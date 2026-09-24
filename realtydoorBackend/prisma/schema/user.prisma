@@ -10,6 +10,11 @@ model User {
   phone               String?
   phoneVerifiedAt     DateTime?
   phoneVerified       Boolean   @default(false)
+  phoneVerifyDeadline DateTime? // grace period for pre-migration users without a verified phone (B9 backfill)
+  emailVerified       Boolean   @default(false)
+  // Deprecated — superseded by the PhoneOtp table. Code no longer reads/writes
+  // these; kept only so a rollback isn't destructive. Dropped in a follow-up
+  // migration once this deploy is confirmed stable (B9).
   phoneOtp            String?
   phoneOtpExpiresAt   DateTime?
   phoneOtpAttempts    Int       @default(0)

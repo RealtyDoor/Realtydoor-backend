@@ -2,11 +2,20 @@ const router = require('express').Router();
 const ctrl = require('./users.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireUser } = require('../../middleware/requireRole');
+const { requireOnboarded } = require('../../middleware/requireOnboarded');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { userDocUploader } = require('../../lib/fileUpload');
 const { otpLimiter } = require('../../middleware/rateLimiter');
 
 router.use(authenticate, requireUser);
+
+// requireOnboarded (B6) gates everything below except profile edits and the
+// phone-verification endpoints themselves — a USER account with no verified
+// phone still needs to be able to reach those to complete onboarding.
+const ONBOARDING_EXEMPT_PATHS = ['/profile', '/verify-phone', '/verify-phone/otp'];
+router.use((req, res, next) => (
+  ONBOARDING_EXEMPT_PATHS.includes(req.path) ? next() : requireOnboarded(req, res, next)
+));
 
 // Profile
 router.patch('/profile', ctrl.updateProfile);

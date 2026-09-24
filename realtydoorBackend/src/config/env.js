@@ -23,6 +23,8 @@ const envSchema = z.object({
   REDIS_URL: z.string().optional(),
   OTP_EXPIRY_MINUTES: z.string().default('120'),
   OTP_MAX_ATTEMPTS: z.string().default('3'),
+  OTP_HASH_SECRET: z.string().min(16, 'OTP_HASH_SECRET must be at least 16 characters'),
+  DEV_EXPOSE_OTP: z.string().optional(),
 });
 
 function validateEnv() {

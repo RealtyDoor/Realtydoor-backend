@@ -13,6 +13,10 @@
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:seed": "node prisma/seed.js",
+    "db:backfill-phone-deadline": "node scripts/backfillPhoneVerifyDeadline.js",
+    "db:sync-clerk-phone": "node scripts/syncClerkPhoneMetadata.js",
+    "db:create-phone-index": "node scripts/createPhoneUniqueIndex.js",
+    "db:drop-legacy-phone-otp": "node scripts/dropLegacyPhoneOtpColumns.js",
     "test": "jest --runInBand",
     "test:watch": "jest --watch"
   },

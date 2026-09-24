@@ -1626,7 +1626,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"data\":{\"message\":\"OTP sent via WhatsApp\"}}"
+              "body": "{\"success\":true,\"data\":{\"message\":\"OTP sent via WhatsApp\",\"expiresAt\":\"2026-09-24T10:10:00.000Z\"}}"
             },
             {
               "name": "409 – Phone Already In Use",
@@ -1660,7 +1660,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"otp\": \"7412\"\n}",
+              "raw": "{\n  \"otp\": \"748213\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1696,7 +1696,7 @@
               "body": "{\"success\":true,\"message\":\"Phone number verified\",\"data\":{\"phoneVerified\":true,\"phone\":\"+919876543210\"}}"
             },
             {
-              "name": "400 – Incorrect OTP",
+              "name": "400 – Invalid or Expired Code",
               "status": "Bad Request",
               "code": 400,
               "_postman_previewlanguage": "json",
@@ -1707,12 +1707,12 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":false,\"message\":\"Incorrect OTP\"}"
+              "body": "{\"success\":false,\"message\":\"Invalid or expired code.\",\"data\":{\"code\":\"OTP_INVALID\"}}"
             },
             {
-              "name": "400 – OTP Expired",
-              "status": "Bad Request",
-              "code": 400,
+              "name": "429 – Locked",
+              "status": "Too Many Requests",
+              "code": 429,
               "_postman_previewlanguage": "json",
               "header": [
                 {
@@ -1721,7 +1721,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":false,\"message\":\"OTP has expired\"}"
+              "body": "{\"success\":false,\"message\":\"Too many attempts. Try again later.\",\"data\":{\"code\":\"OTP_LOCKED\"}}"
             }
           ]
         },
@@ -7800,7 +7800,7 @@
                 "sync"
               ]
             },
-            "description": "Call this on every login from Next.js. Verifies the Clerk JWT, fetches the full Clerk profile (name, email, phone, avatar), upserts the MongoDB record, and returns the full profile. Also stamps publicMetadata.role in Clerk if missing."
+            "description": "Call this after any Clerk sign-in (Google, or Clerk native phone-number/SMS auth), and after phone-OTP signup/login complete the Clerk sign-in with the returned signInToken. Verifies the Clerk JWT, fetches the full Clerk profile, upserts the MongoDB record, and returns the full profile. If Clerk reports the phone as verified (native phone_code strategy, or a phone verified via Clerk frontend SDK), phoneVerified/phoneVerifiedAt are stamped here too (upgrade-only, never regresses an already-verified phone). Also stamps publicMetadata.role in Clerk if missing. 400 EMAIL_REQUIRED if the Clerk user has no email at all. 409 EXISTING_USER on an email collision with a different Clerk identity (with conditional cleanup of the duplicate). 409 PHONE_IN_USE if Clerk's phone for this user already belongs to a different account."
           },
           "response": [
             {
@@ -7819,7 +7819,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"clerkId\":\"user_seed_user_001\",\"name\":\"Suresh Mehta\",\"email\":\"user@realtydoor.com\",\"phone\":\"+919000000003\",\"phoneVerified\":true,\"role\":\"USER\",\"isNRI\":false,\"profileImageUrl\":null,\"partnerSubType\":null,\"companyName\":null,\"bio\":null,\"websiteUrl\":null,\"kycStatus\":\"NOT_SUBMITTED\",\"kycVerifiedAt\":null,\"kycRejectionNote\":null,\"createdAt\":\"2026-05-01T08:00:00.000Z\",\"updatedAt\":\"2026-05-01T08:00:00.000Z\"}}"
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"clerkId\":\"user_seed_user_001\",\"name\":\"Suresh Mehta\",\"email\":\"user@realtydoor.com\",\"phone\":\"+919000000003\",\"phoneVerified\":true,\"role\":\"USER\",\"isNRI\":false,\"profileImageUrl\":null,\"partnerSubType\":null,\"companyName\":null,\"bio\":null,\"websiteUrl\":null,\"kycStatus\":\"NOT_SUBMITTED\",\"kycVerifiedAt\":null,\"kycRejectionNote\":null,\"createdAt\":\"2026-05-01T08:00:00.000Z\",\"updatedAt\":\"2026-05-01T08:00:00.000Z\",\"onboardingComplete\":true,\"emailVerified\":true}}"
             },
             {
               "name": "200 – Partner Synced",
@@ -7837,7 +7837,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad7\",\"clerkId\":\"user_seed_partner_001\",\"name\":\"Rajdeep Kumar\",\"email\":\"partner@realtydoor.com\",\"phone\":\"+919000000002\",\"phoneVerified\":true,\"role\":\"PARTNER\",\"isNRI\":false,\"profileImageUrl\":null,\"partnerSubType\":\"AGENT\",\"companyName\":\"RealtyPro Solutions\",\"bio\":\"10 years of experience in Pune real estate market.\",\"websiteUrl\":\"https://realtypro.in\",\"kycStatus\":\"VERIFIED\",\"kycVerifiedAt\":\"2026-05-01T08:00:00.000Z\",\"kycRejectionNote\":null,\"createdAt\":\"2026-05-01T08:00:00.000Z\",\"updatedAt\":\"2026-05-01T08:00:00.000Z\"}}"
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad7\",\"clerkId\":\"user_seed_partner_001\",\"name\":\"Rajdeep Kumar\",\"email\":\"partner@realtydoor.com\",\"phone\":\"+919000000002\",\"phoneVerified\":true,\"role\":\"PARTNER\",\"isNRI\":false,\"profileImageUrl\":null,\"partnerSubType\":\"AGENT\",\"companyName\":\"RealtyPro Solutions\",\"bio\":\"10 years of experience in Pune real estate market.\",\"websiteUrl\":\"https://realtypro.in\",\"kycStatus\":\"VERIFIED\",\"kycVerifiedAt\":\"2026-05-01T08:00:00.000Z\",\"kycRejectionNote\":null,\"createdAt\":\"2026-05-01T08:00:00.000Z\",\"updatedAt\":\"2026-05-01T08:00:00.000Z\",\"onboardingComplete\":true,\"emailVerified\":true}}"
             },
             {
               "name": "401 – Invalid Token",
@@ -7856,6 +7856,344 @@
               ],
               "cookie": [],
               "body": "{\"success\":false,\"message\":\"Sync failed: Invalid token\"}"
+            },
+            {
+              "name": "409 – Existing User",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"An account with this email already exists. Please sign in with your original method.\",\"data\":{\"code\":\"EXISTING_USER\"}}"
+            },
+            {
+              "name": "400 – Email Required",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"An email address is required to complete signup.\",\"data\":{\"code\":\"EMAIL_REQUIRED\"}}"
+            },
+            {
+              "name": "409 – Phone In Use",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"This phone number is already linked to another account.\",\"data\":{\"code\":\"PHONE_IN_USE\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Signup — Request OTP",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Suresh Mehta\",\n  \"email\": \"suresh@example.com\",\n  \"phone\": \"9000000099\",\n  \"isNRI\": false,\n  \"marketingOptIn\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/signup/otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "signup",
+                "otp"
+              ]
+            },
+            "description": "New-account signup, step 1. Normalizes phone to E.164, rejects if the email/phone is already registered (DB) or the email exists in Clerk, then sends a 6-digit WhatsApp OTP. Rate-limited per-IP; the per-phone resend cooldown (30s) and hourly cap (3) are enforced in lib/otpAuth.js. isNRI and marketingOptIn are optional (default false) and are applied atomically when the account is created in signup/verify."
+          },
+          "response": [
+            {
+              "name": "200 – OTP Sent",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"OTP sent via WhatsApp\",\"data\":{\"expiresAt\":\"2026-09-24T10:10:00.000Z\"}}"
+            },
+            {
+              "name": "409 – Already Registered",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"An account with this email or phone already exists.\",\"data\":{\"code\":\"ALREADY_REGISTERED\"}}"
+            },
+            {
+              "name": "429 – Send Limit",
+              "status": "Too Many Requests",
+              "code": 429,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Too many codes requested. Try again in an hour.\",\"data\":{\"code\":\"OTP_SEND_LIMIT\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Signup — Verify OTP",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"9000000099\",\n  \"code\": \"482913\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/signup/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "signup",
+                "verify"
+              ]
+            },
+            "description": "Signup step 2. On success, creates the Clerk user (generated username + strong random password), creates the DB row (phoneVerified: true), and returns a short-lived (60s) signInToken for the frontend to complete Clerk sign-in with. If DB creation fails after the Clerk user was created, the Clerk user is rolled back automatically."
+          },
+          "response": [
+            {
+              "name": "201 – Account Created",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Account created\",\"data\":{\"signInToken\":\"sit_xxxxxxxxxxxxxxxxxxxxxxxx\",\"user\":{\"id\":\"6a1a3213aa8de854e8acfad9\",\"clerkId\":\"user_xxxxxxxxxxxxxxxxxxxx\",\"name\":\"Suresh Mehta\",\"email\":\"suresh@example.com\",\"phone\":\"+919000000099\",\"phoneVerified\":true,\"emailVerified\":false,\"role\":\"USER\",\"isNRI\":false}}}"
+            },
+            {
+              "name": "400 – Invalid Code",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Invalid or expired code.\",\"data\":{\"code\":\"OTP_INVALID\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Login — Request OTP",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"9000000003\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login/otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login",
+                "otp"
+              ]
+            },
+            "description": "Existing-account login, step 1. 404 ACCOUNT_NOT_FOUND if no user has this phone — the frontend should redirect to signup on that response. Otherwise sends a 6-digit WhatsApp OTP."
+          },
+          "response": [
+            {
+              "name": "200 – OTP Sent",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"OTP sent via WhatsApp\",\"data\":{\"expiresAt\":\"2026-09-24T10:10:00.000Z\"}}"
+            },
+            {
+              "name": "404 – No Account",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"No account found for this number\",\"data\":{\"code\":\"ACCOUNT_NOT_FOUND\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Login — Verify OTP",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"9000000003\",\n  \"code\": \"482913\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login",
+                "verify"
+              ]
+            },
+            "description": "Login step 2. Checks the account is not suspended and is role USER (a PARTNER/ADMIN account gets a 403 WRONG_PORTAL instead — the frontend should route them to the correct portal). On success returns a 60s signInToken."
+          },
+          "response": [
+            {
+              "name": "200 – Login Successful",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Login successful\",\"data\":{\"signInToken\":\"sit_xxxxxxxxxxxxxxxxxxxxxxxx\",\"user\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"name\":\"Suresh Mehta\",\"phone\":\"+919000000003\",\"phoneVerified\":true,\"role\":\"USER\"}}}"
+            },
+            {
+              "name": "400 – Invalid Code",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Invalid or expired code.\",\"data\":{\"code\":\"OTP_INVALID\"}}"
+            },
+            {
+              "name": "403 – Wrong Portal",
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"This account is registered as PARTNER. Please use the correct portal to sign in.\",\"data\":{\"code\":\"WRONG_PORTAL\",\"role\":\"PARTNER\"}}"
             }
           ]
         },
@@ -7994,6 +8332,171 @@
               ],
               "cookie": [],
               "body": "{\"success\":false,\"message\":\"No token provided\"}"
+            }
+          ]
+        },
+        {
+          "name": "Get Onboarding Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/onboarding-status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "onboarding-status"
+              ]
+            },
+            "description": "Cheap re-check of whether the current user has completed onboarding (verified phone), without a full /sync round-trip. Used after the Google phone-completion step, or on app resume."
+          },
+          "response": [
+            {
+              "name": "200 – Status",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"onboardingComplete\":false,\"phoneVerified\":false,\"role\":\"USER\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Google Onboarding — Request Phone OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"9000000099\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/google/phone/otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "google",
+                "phone",
+                "otp"
+              ]
+            },
+            "description": "Authenticated. Called after a Google sign-in whose onboarding is incomplete (see Sync User on Login / Get Onboarding Status). Rejects if this account already has a verified phone, or if the phone is already linked to another account."
+          },
+          "response": [
+            {
+              "name": "200 – OTP Sent",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"OTP sent via WhatsApp\",\"data\":{\"expiresAt\":\"2026-09-24T10:10:00.000Z\"}}"
+            },
+            {
+              "name": "409 – Phone In Use",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"This number is already linked to another account.\"}"
+            }
+          ]
+        },
+        {
+          "name": "Google Onboarding — Verify Phone OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"9000000099\",\n  \"code\": \"482913\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/google/phone/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "google",
+                "phone",
+                "verify"
+              ]
+            },
+            "description": "Authenticated. On success, writes the phone to the DB and to Clerk publicMetadata.phone together, marks phoneVerified: true, and onboarding is complete."
+          },
+          "response": [
+            {
+              "name": "200 – Phone Verified",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Phone verified\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"phone\":\"+919000000099\",\"phoneVerified\":true,\"onboardingComplete\":true}}"
+            },
+            {
+              "name": "400 – Invalid Code",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Invalid or expired code.\",\"data\":{\"code\":\"OTP_INVALID\"}}"
             }
           ]
         }

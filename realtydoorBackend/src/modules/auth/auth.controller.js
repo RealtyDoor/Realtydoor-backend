@@ -1,87 +1,34 @@
-const { createClerkClient } = require('@clerk/clerk-sdk-node');
 const prisma = require('../../lib/prisma');
 const { setUserRole } = require('../../lib/clerkAdmin');
 const ApiError = require('../../utils/ApiError');
-const { success } = require('../../utils/ApiResponse');
+const { success, created } = require('../../utils/ApiResponse');
 const logger = require('../../lib/logger');
-
-const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+const authService = require('./auth.service');
+const {
+  signupOtpSchema,
+  signupVerifySchema,
+  loginOtpSchema,
+  loginVerifySchema,
+  googlePhoneOtpSchema,
+  googlePhoneVerifySchema,
+} = require('./auth.validator');
 
 // POST /api/auth/sync
-// Called by the Next.js frontend after every login.
-// Fetches the full Clerk profile, upserts the DB record, and returns the profile.
+// Called by the frontend after every login (phone-OTP or Google).
+// Verifies the token, upserts the DB record, and reports onboarding status.
 async function syncUser(req, res, next) {
   try {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) throw new ApiError(401, 'No token provided');
 
-    const payload = await clerk.verifyToken(token);
-    const clerkId = payload.sub;
-
-    // Fetch full profile from Clerk (phone numbers, metadata, etc.)
-    const clerkUser = await clerk.users.getUser(clerkId);
-
-    const email = clerkUser.emailAddresses?.[0]?.emailAddress;
-    const name  = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ') || email;
-    const phone = clerkUser.phoneNumbers?.[0]?.phoneNumber || null;
-    const profileImageUrl = clerkUser.imageUrl || null;
-
-    // Role from Clerk publicMetadata (set by admin or on first signup)
-    // Falls back to existing DB role, then 'USER' for brand-new records
-    const clerkRole = clerkUser.publicMetadata?.role;
-
-    // Look up by clerkId first; fall back to email so we don't duplicate a
-    // record that was created via a different auth method or the seed script.
-    let existing = await prisma.user.findUnique({ where: { clerkId } });
-    if (!existing && email) {
-      existing = await prisma.user.findUnique({ where: { email } });
-    }
-    const resolvedRole = clerkRole || existing?.role || 'USER';
-
-    const phoneToWrite = phone || undefined;
-    const writeData = {
-      clerkId,
-      name,
-      email,
-      ...(phoneToWrite !== undefined && { phone: phoneToWrite }),
-      profileImageUrl,
-      role: resolvedRole,
-    };
-
-    let user;
-    try {
-      user = existing
-        ? await prisma.user.update({ where: { id: existing.id }, data: writeData })
-        : await prisma.user.create({ data: writeData });
-    } catch (err) {
-      // Concurrent request already inserted this user — find and update instead
-      if (err.code === 'P2002') {
-        const found = await prisma.user.findFirst({
-          where: { OR: [{ clerkId }, { email }] },
-        });
-        if (!found) throw err;
-        user = await prisma.user.update({ where: { id: found.id }, data: writeData });
-      } else {
-        throw err;
-      }
-    }
-
-    // If publicMetadata was missing a role, stamp it now so future JWTs include it
-    if (!clerkRole) {
-      await setUserRole(clerkId, resolvedRole).catch((err) =>
-        logger.warn('[authSync] setUserRole failed', { clerkId, error: err.message })
-      );
-    }
-
-    logger.info('[authSync] user synced', { clerkId, role: resolvedRole });
-    success(res, userProfile(user));
+    const { user, onboardingComplete } = await authService.syncUser(token);
+    success(res, { ...userProfile(user), onboardingComplete });
   } catch (err) {
     next(err instanceof ApiError ? err : new ApiError(401, 'Sync failed: ' + err.message));
   }
 }
 
 // GET /api/auth/me
-// Returns the full DB profile for the authenticated user (uses authenticate middleware).
 async function getMe(req, res, next) {
   try {
     const user = await prisma.user.findUnique({
@@ -103,7 +50,23 @@ async function getMe(req, res, next) {
       ? { plan: raw.service.name, paymentStatus: raw.paymentStatus, expiresAt: raw.endDate }
       : null;
 
-    success(res, { ...userProfile(user), unreadNotifications: unreadCount, activeSubscription: activeSub });
+    success(res, {
+      ...userProfile(user),
+      onboardingComplete: req.user.onboardingComplete,
+      unreadNotifications: unreadCount,
+      activeSubscription: activeSub,
+    });
+  } catch (err) { next(err); }
+}
+
+// GET /api/auth/onboarding-status — cheap re-check without a full /sync round-trip.
+async function getOnboardingStatus(req, res, next) {
+  try {
+    success(res, {
+      onboardingComplete: !!req.user.onboardingComplete,
+      phoneVerified: !!req.user.phoneVerified,
+      role: req.user.role,
+    });
   } catch (err) { next(err); }
 }
 
@@ -115,6 +78,7 @@ function userProfile(u) {
     email:           u.email,
     phone:           u.phone,
     phoneVerified:   u.phoneVerified,
+    emailVerified:   u.emailVerified,
     role:            u.role,
     isNRI:           u.isNRI,
     profileImageUrl: u.profileImageUrl,
@@ -133,7 +97,6 @@ function userProfile(u) {
 }
 
 // POST /api/auth/set-role
-// Self-service role upgrade — USER → PARTNER only. ADMIN is manually assigned.
 async function setRole(req, res, next) {
   try {
     const { role } = req.body;
@@ -151,4 +114,60 @@ async function setRole(req, res, next) {
   }
 }
 
-module.exports = { syncUser, getMe, setRole };
+// ─── B3: signup / login by phone OTP ──────────────────────────────────────────
+
+async function signupOtp(req, res, next) {
+  try {
+    const data = signupOtpSchema.parse(req.body);
+    const result = await authService.signupOtp(data);
+    success(res, result, 'OTP sent via WhatsApp');
+  } catch (err) { next(err); }
+}
+
+async function signupVerify(req, res, next) {
+  try {
+    const data = signupVerifySchema.parse(req.body);
+    const { user, signInToken } = await authService.signupVerify(data);
+    created(res, { signInToken, user: userProfile(user) }, 'Account created');
+  } catch (err) { next(err); }
+}
+
+async function loginOtp(req, res, next) {
+  try {
+    const data = loginOtpSchema.parse(req.body);
+    const result = await authService.loginOtp(data);
+    success(res, result, 'OTP sent via WhatsApp');
+  } catch (err) { next(err); }
+}
+
+async function loginVerify(req, res, next) {
+  try {
+    const data = loginVerifySchema.parse(req.body);
+    const { user, signInToken } = await authService.loginVerify(data);
+    success(res, { signInToken, user: userProfile(user) }, 'Login successful');
+  } catch (err) { next(err); }
+}
+
+// ─── B5: Google onboarding — phone completion ────────────────────────────────
+
+async function googlePhoneOtp(req, res, next) {
+  try {
+    const data = googlePhoneOtpSchema.parse(req.body);
+    const result = await authService.googlePhoneOtp(req.user, data);
+    success(res, result, 'OTP sent via WhatsApp');
+  } catch (err) { next(err); }
+}
+
+async function googlePhoneVerify(req, res, next) {
+  try {
+    const data = googlePhoneVerifySchema.parse(req.body);
+    const user = await authService.googlePhoneVerify(req.user, data);
+    success(res, { ...userProfile(user), onboardingComplete: true }, 'Phone verified');
+  } catch (err) { next(err); }
+}
+
+module.exports = {
+  syncUser, getMe, setRole, getOnboardingStatus,
+  signupOtp, signupVerify, loginOtp, loginVerify,
+  googlePhoneOtp, googlePhoneVerify,
+};

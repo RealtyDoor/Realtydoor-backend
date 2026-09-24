@@ -157,3 +157,10 @@ enum LoanStatus {
   DISBURSED
   REJECTED
 }
+
+enum OtpPurpose {
+  SIGNUP          // new-account creation (name + email carried in payload)
+  LOGIN           // existing-account phone login
+  GOOGLE_COMPLETE // linking + verifying phone after a Google sign-in
+  PROFILE_VERIFY  // lazy phone verification for an already-authenticated user
+}

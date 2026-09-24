@@ -1,0 +1,24 @@
+// ─── PHONE OTP ────────────────────────────────────────────────────────────────
+// Backs signup, login, Google-onboarding-completion, and lazy profile phone
+// verification. Replaces the old phoneOtp* columns on User (see B9 — those
+// columns are dropped in a follow-up migration once this is deployed).
+// codeHash is HMAC-SHA256(code, OTP_HASH_SECRET) — never store the raw code.
+
+model PhoneOtp {
+  id          String     @id @default(auto()) @map("_id") @db.ObjectId
+  phone       String
+  purpose     OtpPurpose
+  codeHash    String
+  expiresAt   DateTime
+  attempts    Int        @default(0)
+  lockedUntil DateTime?
+  sendCount   Int        @default(1)
+  lastSentAt  DateTime   @default(now())
+  payload     Json?      // { name, email } for SIGNUP; unused for other purposes
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([phone, purpose])
+  @@index([phone])
+  @@index([expiresAt])
+}

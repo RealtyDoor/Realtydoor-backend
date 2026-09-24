@@ -76,7 +76,11 @@ Default: `page=1`, `limit=20`.
 
 ### POST /api/auth/sync
 
-Verifies Clerk JWT, upserts DB user record, returns profile.
+Verifies Clerk JWT, upserts DB user record, returns profile. Called on every login — this is the completion hook for *any* Clerk-side sign-up/sign-in path (Google, or Clerk's native phone-number/SMS auth), not just Google specifically:
+
+- **Phone**: if Clerk reports the user's phone as verified (`phoneNumbers[0].verification.status === 'verified'` — true for Clerk's native `phone_code` strategy, or a phone added+verified via Clerk's frontend SDK after the fact), this endpoint stamps `phoneVerified: true` / `phoneVerifiedAt` here. It only ever upgrades `false → true` — an already-verified phone is never flipped back to unverified by a later sync, even if Clerk's own record looks stale.
+- **Google / email-first sign-up with no phone yet**: a brand-new Clerk identity lands with `phoneVerified: false`, and the response's `onboardingComplete` flag tells the frontend whether to show the WhatsApp-OTP phone-verification step (`POST /api/auth/google/phone/otp`) — that step is unrelated to Clerk's native phone auth and still uses our own `PhoneOtp`/WATI flow.
+- **Email is required.** If the Clerk user has no email address at all (e.g. a phone-only signup with nothing else collected), this returns `400 EMAIL_REQUIRED` — `User.email` is a required, unique field, so the frontend must always collect an email alongside phone-first signup even when only the phone gets OTP-verified.
 
 **Auth:** Clerk JWT in `Authorization` header (token verified manually, no middleware)
 
@@ -95,7 +99,7 @@ Verifies Clerk JWT, upserts DB user record, returns profile.
     "email": "rajdeep@example.com",
     "phone": "+919876543210",
     "phoneVerified": true,
-    "phoneVerifiedAt": "2024-01-15T10:30:00.000Z",
+    "emailVerified": true,
     "role": "USER",
     "isNRI": false,
     "profileImageUrl": "https://img.clerk.com/...",
@@ -107,10 +111,18 @@ Verifies Clerk JWT, upserts DB user record, returns profile.
     "kycVerifiedAt": null,
     "kycRejectionNote": null,
     "createdAt": "2024-01-01T00:00:00.000Z",
-    "updatedAt": "2024-01-15T10:30:00.000Z"
+    "updatedAt": "2024-01-15T10:30:00.000Z",
+    "onboardingComplete": true
   }
 }
 ```
+
+`emailVerified` is stamped once, at row-creation time, from Clerk's email verification status as of that moment — it is not re-derived from Clerk on every sync.
+
+**Errors:**
+- `400 EMAIL_REQUIRED` — no email on the Clerk user.
+- `409 EXISTING_USER` — the Clerk email already belongs to a *different* Clerk identity (e.g. a phone-OTP account signing in with Google using the same email later) — the frontend should sign the user out and show "an account with this email already exists". If the newly-created duplicate Clerk identity has no DB row and was created moments ago, it's deleted automatically as part of this response; anything older is left alone to avoid deleting a real account.
+- `409 PHONE_IN_USE` — Clerk's phone number for this user already belongs to a *different* account (e.g. they changed their phone in Clerk to a number someone else on RealtyDoor already has verified).
 
 ---
 
@@ -156,7 +168,168 @@ Returns the full profile for the authenticated user including active subscriptio
 }
 ```
 
-`activeSubscription` is `null` if the user has no subscription.
+`activeSubscription` is `null` if the user has no subscription. The response also includes `onboardingComplete` (computed the same way as everywhere else — see `GET /onboarding-status` below).
+
+---
+
+### GET /api/auth/onboarding-status
+
+Cheap re-check of onboarding state without a full `/sync` round-trip — use after the Google phone-completion step, or on app resume.
+
+**Auth:** Required (any role)
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Success", "data": { "onboardingComplete": false, "phoneVerified": false, "role": "USER" } }
+```
+
+`onboardingComplete` is `true` for any role other than `USER` (only USER accounts go through phone-first onboarding), or for a USER whose phone is verified, or who is still inside the pre-migration grace period (`phoneVerifyDeadline`).
+
+---
+
+### POST /api/auth/signup/otp
+
+New-account signup, step 1. Normalizes `phone` to E.164, rejects if the email or phone is already registered in the DB or the email already exists in Clerk, then sends a 6-digit code via WhatsApp.
+
+**Auth:** Public (per-IP rate limited; per-phone resend cooldown of 30s and cap of 3 sends/hour enforced separately)
+
+**Request Body:**
+
+```json
+{ "name": "Suresh Mehta", "email": "suresh@example.com", "phone": "9000000099", "isNRI": false, "marketingOptIn": false }
+```
+
+`isNRI` and `marketingOptIn` are both optional (default `false`) — captured here rather than via a follow-up call so nothing is lost if the frontend doesn't make a second request. They're carried through the OTP row and applied when the account is actually created in `/signup/verify`.
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "OTP sent via WhatsApp", "data": { "expiresAt": "2026-09-24T10:10:00.000Z" } }
+```
+
+**Errors:** `409 ALREADY_REGISTERED` · `429 OTP_SEND_LIMIT` / `OTP_RESEND_COOLDOWN`.
+
+---
+
+### POST /api/auth/signup/verify
+
+New-account signup, step 2. On success, creates the Clerk user (generated username, random strong password, `publicMetadata: { role: "USER", phone }`) and the DB row — `phoneVerified: true`, `phoneVerifiedAt`, `emailVerified` (from Clerk's status at creation time), `isNRI` and `marketingOptIn`/`marketingOptInAt` (from `/signup/otp`), and `termsAcceptedAt`/`privacyAcceptedAt` stamped to now (submitting the signup form is the agreement action per the signup screen's copy) — in one transaction-like step. If the DB write fails, the just-created Clerk user is deleted so nothing is left orphaned. Returns a 60-second Clerk sign-in token for the frontend to complete sign-in with.
+
+**Auth:** Public
+
+**Request Body:**
+
+```json
+{ "phone": "9000000099", "code": "482913" }
+```
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "Account created",
+  "data": {
+    "signInToken": "sit_...",
+    "user": { "id": "64abc...", "name": "Suresh Mehta", "email": "suresh@example.com", "phone": "+919000000099", "phoneVerified": true, "emailVerified": false, "role": "USER" }
+  }
+}
+```
+
+**Errors:** `400 OTP_INVALID` (wrong, expired, or already-used code — deliberately generic) · `429 OTP_LOCKED` (3 wrong attempts → 30-minute lock).
+
+---
+
+### POST /api/auth/login/otp
+
+Existing-account login, step 1.
+
+**Auth:** Public
+
+**Request Body:**
+
+```json
+{ "phone": "9000000003" }
+```
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "OTP sent via WhatsApp", "data": { "expiresAt": "2026-09-24T10:10:00.000Z" } }
+```
+
+**Errors:** `404 ACCOUNT_NOT_FOUND` — no user has this phone; the frontend should redirect to signup.
+
+---
+
+### POST /api/auth/login/verify
+
+Existing-account login, step 2. Checks the account isn't suspended and is role `USER` before issuing a sign-in token — a `PARTNER`/`ADMIN` account gets `403 WRONG_PORTAL` instead of a token.
+
+**Auth:** Public
+
+**Request Body:**
+
+```json
+{ "phone": "9000000003", "code": "482913" }
+```
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Login successful",
+  "data": { "signInToken": "sit_...", "user": { "id": "64abc...", "name": "Suresh Mehta", "phone": "+919000000003", "phoneVerified": true, "role": "USER" } }
+}
+```
+
+**Errors:** `400 OTP_INVALID` · `403` suspended account · `403 WRONG_PORTAL` (`data.role` tells the frontend which portal to redirect to).
+
+---
+
+### POST /api/auth/google/phone/otp
+
+Phone-completion step after a Google sign-in whose onboarding is incomplete (see `/sync` and `/onboarding-status` above).
+
+**Auth:** Required (any authenticated user)
+
+**Request Body:**
+
+```json
+{ "phone": "9000000099" }
+```
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "OTP sent via WhatsApp", "data": { "expiresAt": "2026-09-24T10:10:00.000Z" } }
+```
+
+**Errors:** `400` phone already verified on this account · `409` phone already linked to another account.
+
+---
+
+### POST /api/auth/google/phone/verify
+
+**Auth:** Required (any authenticated user)
+
+**Request Body:**
+
+```json
+{ "phone": "9000000099", "code": "482913" }
+```
+
+On success, writes `phone` to the DB **and** to Clerk `publicMetadata.phone` together, and marks `phoneVerified: true` — onboarding is now complete.
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Phone verified", "data": { "id": "64abc...", "phone": "+919000000099", "phoneVerified": true, "onboardingComplete": true } }
+```
+
+**Errors:** `400 OTP_INVALID` · `409` phone claimed by another account in the meantime.
 
 ---
 
@@ -927,11 +1100,11 @@ Mark lead as closed. Requires an escrow with `status: HELD` and a captured payme
 
 ## 4. User Dashboard
 
-All `/api/user/*` routes require `authenticate` + `requireUser`.
+All `/api/user/*` routes require `authenticate` + `requireUser`. All routes except `/profile`, `/verify-phone`, and `/verify-phone/otp` additionally require `requireOnboarded` for role `USER` — a USER account with no verified phone (and past its `phoneVerifyDeadline` grace period, if any) gets `403 ONBOARDING_INCOMPLETE` on everything else. PARTNER/ADMIN accounts are never blocked by this gate.
 
 ### POST /api/user/verify-phone
 
-Request a 4-digit phone verification OTP via WhatsApp.
+Request a 6-digit phone verification OTP via WhatsApp. Backed by the shared `PhoneOtp` table (purpose `PROFILE_VERIFY`) — same OTP mechanism as signup/login (§1), with a 10-minute expiry, 3-attempt lock, 30s resend cooldown, and 3-sends/hour cap.
 
 **Auth:** USER (rate-limited)
 
@@ -947,24 +1120,24 @@ Request a 4-digit phone verification OTP via WhatsApp.
 {
   "success": true,
   "message": "Success",
-  "data": { "message": "OTP sent via WhatsApp" }
+  "data": { "message": "OTP sent via WhatsApp", "expiresAt": "2026-09-24T10:10:00.000Z" }
 }
 ```
 
-**Errors:** `409` phone already registered to another account · `429` OTP locked.
+**Errors:** `409` phone already registered to another account · `429` OTP locked / resend cooldown / send limit.
 
 ---
 
 ### POST /api/user/verify-phone/otp
 
-Verify the 4-digit OTP to confirm phone ownership.
+Verify the 6-digit OTP to confirm phone ownership.
 
 **Auth:** USER (rate-limited)
 
 **Request Body:**
 
 ```json
-{ "otp": "7412" }
+{ "otp": "748213" }
 ```
 
 **Response `200`:**
@@ -977,7 +1150,7 @@ Verify the 4-digit OTP to confirm phone ownership.
 }
 ```
 
-**Errors:** `400` OTP expired or wrong · `429` account locked 30 minutes.
+**Errors:** `400 OTP_INVALID` (wrong, expired, or already-used code) · `429 OTP_LOCKED`.
 
 ---
 
