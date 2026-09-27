@@ -7800,7 +7800,7 @@
                 "sync"
               ]
             },
-            "description": "Call this after any Clerk sign-in (Google, or Clerk native phone-number/SMS auth), and after phone-OTP signup/login complete the Clerk sign-in with the returned signInToken. Verifies the Clerk JWT, fetches the full Clerk profile, upserts the MongoDB record, and returns the full profile. If Clerk reports the phone as verified (native phone_code strategy, or a phone verified via Clerk frontend SDK), phoneVerified/phoneVerifiedAt are stamped here too (upgrade-only, never regresses an already-verified phone). Also stamps publicMetadata.role in Clerk if missing. 400 EMAIL_REQUIRED if the Clerk user has no email at all. 409 EXISTING_USER on an email collision with a different Clerk identity (with conditional cleanup of the duplicate). 409 PHONE_IN_USE if Clerk's phone for this user already belongs to a different account."
+            "description": "Call this after every login from Next.js (Google or after phone-OTP signup/login complete the Clerk sign-in with the returned signInToken). Verifies the Clerk JWT, fetches the full Clerk profile, upserts the MongoDB record, and returns the full profile. Also stamps publicMetadata.role in Clerk if missing. 400 EMAIL_REQUIRED if the Clerk user has no email at all. 409 EXISTING_USER on an email collision with a different Clerk identity (with conditional cleanup of the duplicate). 409 PHONE_IN_USE if the Clerk profile phone already belongs to a different account."
           },
           "response": [
             {

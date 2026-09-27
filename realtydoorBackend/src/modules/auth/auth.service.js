@@ -178,7 +178,6 @@ async function syncUser(token) {
   const email = clerkUser.emailAddresses?.[0]?.emailAddress;
   const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ') || email;
   const phone = clerkUser.phoneNumbers?.[0]?.phoneNumber || null;
-  const phoneVerifiedInClerk = clerkUser.phoneNumbers?.[0]?.verification?.status === 'verified';
   const profileImageUrl = clerkUser.imageUrl || null;
   const clerkRole = clerkUser.publicMetadata?.role;
 
@@ -225,15 +224,6 @@ async function syncUser(token) {
     profileImageUrl,
     role: resolvedRole,
   };
-
-  // Trust Clerk's own phone verification (native phone_code sign-up/sign-in,
-  // or a phone added+verified via Clerk's frontend SDK post-signup) the same
-  // way we already trust its email verification status — but only ever
-  // upgrade false→true here, never regress an already-verified phone.
-  if (existing?.phoneVerified !== true && phoneVerifiedInClerk) {
-    writeData.phoneVerified = true;
-    writeData.phoneVerifiedAt = new Date();
-  }
 
   if (isNewIdentity && !existing) {
     writeData.emailVerified = clerkUser.emailAddresses?.[0]?.verification?.status === 'verified';

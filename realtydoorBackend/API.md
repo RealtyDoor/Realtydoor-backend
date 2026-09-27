@@ -76,11 +76,10 @@ Default: `page=1`, `limit=20`.
 
 ### POST /api/auth/sync
 
-Verifies Clerk JWT, upserts DB user record, returns profile. Called on every login — this is the completion hook for *any* Clerk-side sign-up/sign-in path (Google, or Clerk's native phone-number/SMS auth), not just Google specifically:
+Verifies Clerk JWT, upserts DB user record, returns profile. Called on every login — this is also the completion hook for a Google sign-in: a brand-new Clerk identity gets an "incomplete" DB row (`phoneVerified: false`) here, and the response's `onboardingComplete` flag tells the frontend whether to show the phone-verification step (`POST /api/auth/google/phone/otp`, using our own `PhoneOtp`/WATI flow — this endpoint does not read or trust Clerk's own phone verification status).
 
-- **Phone**: if Clerk reports the user's phone as verified (`phoneNumbers[0].verification.status === 'verified'` — true for Clerk's native `phone_code` strategy, or a phone added+verified via Clerk's frontend SDK after the fact), this endpoint stamps `phoneVerified: true` / `phoneVerifiedAt` here. It only ever upgrades `false → true` — an already-verified phone is never flipped back to unverified by a later sync, even if Clerk's own record looks stale.
-- **Google / email-first sign-up with no phone yet**: a brand-new Clerk identity lands with `phoneVerified: false`, and the response's `onboardingComplete` flag tells the frontend whether to show the WhatsApp-OTP phone-verification step (`POST /api/auth/google/phone/otp`) — that step is unrelated to Clerk's native phone auth and still uses our own `PhoneOtp`/WATI flow.
-- **Email is required.** If the Clerk user has no email address at all (e.g. a phone-only signup with nothing else collected), this returns `400 EMAIL_REQUIRED` — `User.email` is a required, unique field, so the frontend must always collect an email alongside phone-first signup even when only the phone gets OTP-verified.
+- **Email is required.** If the Clerk user has no email address at all, this returns `400 EMAIL_REQUIRED` — `User.email` is a required, unique field.
+- **Phone**, if present on the Clerk profile, is synced as a plain field (not treated as verified) — guarded against colliding with a different existing account (`409 PHONE_IN_USE`).
 
 **Auth:** Clerk JWT in `Authorization` header (token verified manually, no middleware)
 
