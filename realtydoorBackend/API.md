@@ -14,7 +14,9 @@ All protected routes require a Clerk JWT in the `Authorization` header:
 Authorization: Bearer <clerk_session_token>
 ```
 
-Roles: `USER` · `PARTNER` · `ADMIN`
+Roles: `USER` · `PARTNER` · `ADMIN`. Role is always resolved from the database on every request, never from a claim embedded in the JWT itself — so a role change via `POST /auth/set-role` (or an admin action) takes effect on the very next request, with no stale-token window.
+
+**`POST /auth/sync` is no longer required before any other call.** If a valid Clerk JWT has no matching DB row yet (a brand-new Google/Clerk identity that's never hit this backend before), `authenticate` creates it on demand using the exact same logic as `POST /auth/sync` (see below), then continues the original request — there's no 401-then-sync-then-retry needed on any path (proxy, server-side fetches, client fetches, Postman, a future mobile client). Calling `/auth/sync` explicitly right after login is still worthwhile — it's the one endpoint that returns the full profile shape in a single round trip — but nothing is load-bearing on it happening first anymore. One consequence: the collision/validation errors `/sync` can throw (`400 EMAIL_REQUIRED`, `403` suspended, `409 EXISTING_USER`, `409 PHONE_IN_USE`) can now surface from *any* authenticated endpoint for a not-yet-synced user, not just from `/auth/sync` — the error codes are identical either way, so a client that already handles them on `/sync` needs to handle the same codes globally.
 
 ### Response Envelope
 
@@ -78,8 +80,11 @@ Default: `page=1`, `limit=20`.
 
 Verifies Clerk JWT, upserts DB user record, returns profile. Called on every login — this is also the completion hook for a Google sign-in: a brand-new Clerk identity gets an "incomplete" DB row (`phoneVerified: false`) here, and the response's `onboardingComplete` flag tells the frontend whether to show the phone-verification step (`POST /api/auth/google/phone/otp`, using our own `PhoneOtp`/WATI flow — this endpoint does not read or trust Clerk's own phone verification status).
 
+Recommended right after login for the full profile in one call, but **not required** first — `middleware/auth.js`'s `authenticate` runs this exact same upsert logic on demand for any authenticated route when the DB row doesn't exist yet (see the Authentication section above).
+
 - **Email is required.** If the Clerk user has no email address at all, this returns `400 EMAIL_REQUIRED` — `User.email` is a required, unique field.
 - **Phone**, if present on the Clerk profile, is synced as a plain field (not treated as verified) — guarded against colliding with a different existing account (`409 PHONE_IN_USE`).
+- **`name` and `profileImageUrl` are only seeded from Clerk the first time this person's row is created.** On every later sync they are left untouched, so an edit made via `PATCH /user/profile` is never reverted back to the Google account's name/photo on the next page load.
 
 **Auth:** Clerk JWT in `Authorization` header (token verified manually, no middleware)
 
@@ -119,9 +124,13 @@ Verifies Clerk JWT, upserts DB user record, returns profile. Called on every log
 `emailVerified` is stamped once, at row-creation time, from Clerk's email verification status as of that moment — it is not re-derived from Clerk on every sync.
 
 **Errors:**
+- `401` — the Clerk token itself is invalid or expired. This is the *only* case that returns 401; any other failure (DB error, Clerk API error) returns `500`, so a real outage never looks like an expired session to the frontend.
 - `400 EMAIL_REQUIRED` — no email on the Clerk user.
+- `403` — the account is suspended (checked here the same way `authenticate` checks it on every other request).
 - `409 EXISTING_USER` — the Clerk email already belongs to a *different* Clerk identity (e.g. a phone-OTP account signing in with Google using the same email later) — the frontend should sign the user out and show "an account with this email already exists". If the newly-created duplicate Clerk identity has no DB row and was created moments ago, it's deleted automatically as part of this response; anything older is left alone to avoid deleting a real account.
 - `409 PHONE_IN_USE` — Clerk's phone number for this user already belongs to a *different* account (e.g. they changed their phone in Clerk to a number someone else on RealtyDoor already has verified).
+
+`onboardingComplete` is computed by the same shared helper `/auth/me`, `/auth/onboarding-status`, and every authenticated request use (`src/lib/onboarding.js`) — verified phone, or still inside the pre-migration grace window (`phoneVerifyDeadline`). All four call sites always agree.
 
 ---
 
@@ -191,13 +200,15 @@ Cheap re-check of onboarding state without a full `/sync` round-trip — use aft
 { "success": true, "message": "Success", "data": { "onboardingComplete": false, "phoneVerified": false, "role": "USER" } }
 ```
 
-`onboardingComplete` is `true` for any role other than `USER` (only USER accounts go through phone-first onboarding), or for a USER whose phone is verified, or who is still inside the pre-migration grace period (`phoneVerifyDeadline`).
+`onboardingComplete` itself reflects phone status only — `true` once the phone is verified, or while still inside the pre-migration grace period (`phoneVerifyDeadline`); it does **not** factor in role. Non-`USER` accounts are instead exempted one layer up, at the route gate (`middleware/requireOnboarded.js` lets any non-`USER` role through regardless of this flag) — so a `PARTNER`/`ADMIN` can see `onboardingComplete: false` here without that blocking anything.
 
 ---
 
 ### POST /api/auth/signup/otp
 
 New-account signup, step 1. Normalizes `phone` to E.164, rejects if the email or phone is already registered in the DB or the email already exists in Clerk, then sends a 6-digit code via WhatsApp.
+
+`phone` accepts any valid international number, not just Indian ones (backed by `libphonenumber-js`) — for NRI signups. A bare national number with no `+`/country code (e.g. `"9000000099"`, `"09000000099"`) is assumed Indian; anything with a leading `+` (or `00` IDD prefix) is parsed as full international input against whatever country it declares (e.g. `"+1 415-555-2671"`, `"+44 20 7946 0958"`). `isNRI` is a self-declared display/admin flag only — it doesn't gate or change which phone formats are accepted. This same rule (`src/lib/phoneUtils.js`'s `phoneField`) applies to every phone-OTP endpoint in this section and to `POST /user/verify-phone`.
 
 **Auth:** Public (per-IP rate limited; per-phone resend cooldown of 30s and cap of 3 sends/hour enforced separately)
 
@@ -244,7 +255,7 @@ New-account signup, step 2. On success, creates the Clerk user (generated userna
 }
 ```
 
-**Errors:** `400 OTP_INVALID` (wrong, expired, or already-used code — deliberately generic) · `429 OTP_LOCKED` (3 wrong attempts → 30-minute lock).
+**Errors:** `400 OTP_INVALID` (wrong, expired, or already-used code — deliberately generic) · `429 OTP_LOCKED` (5 wrong attempts → 10-minute lock).
 
 ---
 
@@ -300,7 +311,7 @@ Existing-account login, step 2. Checks the account isn't suspended and is role `
 
 Phone-completion step after a Google sign-in whose onboarding is incomplete (see `/sync` and `/onboarding-status` above).
 
-**Auth:** Required (any authenticated user)
+**Auth:** Required (any authenticated user). Rate limited per-IP (`otpSendLimiter`) **and** per-user, 5 requests/hour (`perUserPhoneOtpLimiter`, keyed by `req.user.id`) — since this endpoint is behind login, per-IP alone wouldn't stop one signed-in account from working through many different target phone numbers.
 
 **Request Body:**
 
@@ -314,13 +325,13 @@ Phone-completion step after a Google sign-in whose onboarding is incomplete (see
 { "success": true, "message": "OTP sent via WhatsApp", "data": { "expiresAt": "2026-09-24T10:10:00.000Z" } }
 ```
 
-**Errors:** `400` phone already verified on this account · `409` phone already linked to another account.
+**Errors:** `400 PHONE_ALREADY_VERIFIED` · `409 PHONE_IN_USE` · `429` (per-IP or per-user cap).
 
 ---
 
 ### POST /api/auth/google/phone/verify
 
-**Auth:** Required (any authenticated user)
+**Auth:** Required (any authenticated user). Rate limited per-IP (`otpVerifyLimiter`) and per-user, 5 requests/hour (`perUserPhoneOtpLimiter`).
 
 **Request Body:**
 
@@ -336,7 +347,7 @@ On success, writes `phone` to the DB **and** to Clerk `publicMetadata.phone` tog
 { "success": true, "message": "Phone verified", "data": { "id": "64abc...", "phone": "+919000000099", "phoneVerified": true, "onboardingComplete": true } }
 ```
 
-**Errors:** `400 OTP_INVALID` · `409` phone claimed by another account in the meantime.
+**Errors:** `400 OTP_INVALID` · `409 PHONE_IN_USE` (claimed by another account in the meantime) · `429` (per-IP or per-user cap).
 
 ---
 
@@ -362,7 +373,7 @@ Self-service role upgrade: `USER` → `PARTNER` only. Idempotent if already PART
 }
 ```
 
-**Errors:** `400` if role is not `"PARTNER"`.
+**Errors:** `400` if role is not `"PARTNER"` · `500` if the Clerk metadata update fails (the DB role is only changed after Clerk confirms — this prevents Clerk and the DB from ever disagreeing on role, which previously let `/auth/sync` silently downgrade a partner back to `USER`).
 
 ---
 
@@ -1165,7 +1176,9 @@ All `/api/user/*` routes require `authenticate` + `requireUser`. All routes exce
 
 ### POST /api/user/verify-phone
 
-Request a 6-digit phone verification OTP via WhatsApp. Backed by the shared `PhoneOtp` table (purpose `PROFILE_VERIFY`) — same OTP mechanism as signup/login (§1), with a 10-minute expiry, 3-attempt lock, 30s resend cooldown, and 3-sends/hour cap.
+Request a 6-digit phone verification OTP via WhatsApp. Backed by the shared `PhoneOtp` table (purpose `PROFILE_VERIFY`) — same OTP mechanism as signup/login (§1), with a 10-minute expiry, 5-attempt lock (10 minutes), 30s resend cooldown, and 3-sends/hour cap.
+
+`phone` is **not** written to the user's row at this step — only once `POST /verify-phone/otp` below actually checks the code. This prevents one account from squatting on someone else's real number before proving ownership of it.
 
 **Auth:** USER (rate-limited)
 
@@ -1185,20 +1198,20 @@ Request a 6-digit phone verification OTP via WhatsApp. Backed by the shared `Pho
 }
 ```
 
-**Errors:** `409` phone already registered to another account · `429` OTP locked / resend cooldown / send limit.
+**Errors:** `409 PHONE_IN_USE` — phone already registered to another account · `429` OTP locked / resend cooldown / send limit.
 
 ---
 
 ### POST /api/user/verify-phone/otp
 
-Verify the 6-digit OTP to confirm phone ownership.
+Verify the 6-digit OTP to confirm phone ownership. `phone` must be included in the body (it's what's checked against the code — the endpoint no longer trusts whatever happens to already be on the user row). Only on success is `phone` actually written to the user's row, together with `phoneVerified: true`.
 
 **Auth:** USER (rate-limited)
 
 **Request Body:**
 
 ```json
-{ "otp": "748213" }
+{ "phone": "+919876543210", "otp": "748213" }
 ```
 
 **Response `200`:**
@@ -1211,7 +1224,7 @@ Verify the 6-digit OTP to confirm phone ownership.
 }
 ```
 
-**Errors:** `400 OTP_INVALID` (wrong, expired, or already-used code) · `429 OTP_LOCKED`.
+**Errors:** `400 OTP_INVALID` (wrong, expired, or already-used code) · `429 OTP_LOCKED` · `409 PHONE_IN_USE` (someone else claimed the number between the OTP request and this verify call).
 
 ---
 

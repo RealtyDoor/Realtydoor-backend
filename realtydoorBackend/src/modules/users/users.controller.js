@@ -29,8 +29,8 @@ async function requestPhoneOtp(req, res, next) {
 
 async function verifyPhoneOtp(req, res, next) {
   try {
-    const { otp } = verifyPhoneOtpSchema.parse(req.body);
-    const result = await service.verifyPhoneOtp(req.user.id, otp);
+    const { phone, otp } = verifyPhoneOtpSchema.parse(req.body);
+    const result = await service.verifyPhoneOtp(req.user.id, phone, otp);
     success(res, result, 'Phone number verified');
   } catch (err) { next(err); }
 }

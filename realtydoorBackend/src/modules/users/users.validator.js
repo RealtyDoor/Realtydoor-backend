@@ -1,11 +1,15 @@
 const { z } = require('zod');
-const { indianPhone, objectId } = require('../../utils/validators');
+const { objectId } = require('../../utils/validators');
+const { phoneField } = require('../../lib/phoneUtils');
 
 const requestPhoneOtpSchema = z.object({
-  phone: indianPhone,
+  phone: phoneField,
 });
 
+// phone is required here too — verification must be checked against the
+// number the caller is proving they own, not whatever is on the user row.
 const verifyPhoneOtpSchema = z.object({
+  phone: phoneField,
   otp: z.string().length(6, 'OTP must be exactly 6 digits').regex(/^\d{6}$/, 'OTP must be numeric'),
 });
 

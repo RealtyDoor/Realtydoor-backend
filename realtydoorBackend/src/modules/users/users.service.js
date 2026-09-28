@@ -12,25 +12,33 @@ const DEFAULT_ESCROW_REFUND_WINDOW_HOURS = 48;
 // phoneOtp* columns on User are no longer read or written here.
 async function requestPhoneOtp(userId, phone) {
   const duplicate = await prisma.user.findFirst({ where: { phone, NOT: { id: userId } } });
-  if (duplicate) throw new ApiError(409, 'Phone number already registered to another account');
+  if (duplicate) {
+    throw new ApiError(409, 'Phone number already registered to another account', { code: 'PHONE_IN_USE' });
+  }
 
-  await prisma.user.update({ where: { id: userId }, data: { phone, phoneVerified: false } });
-
+  // Do NOT write `phone` to the user row here — it isn't verified yet, and
+  // writing it early lets anyone lock another person's real number onto their
+  // own account before ever proving they own it. The number only lands on
+  // the row once verifyPhoneOtp below actually checks the code.
   const result = await otpAuth.createAndSendOtp({ phone, purpose: 'PROFILE_VERIFY' });
   return { message: 'OTP sent via WhatsApp', ...result };
 }
 
-async function verifyPhoneOtp(userId, code) {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user.phone) throw new ApiError(400, 'Request an OTP first');
+async function verifyPhoneOtp(userId, phone, code) {
+  await otpAuth.verifyOtp({ phone, purpose: 'PROFILE_VERIFY', code });
 
-  await otpAuth.verifyOtp({ phone: user.phone, purpose: 'PROFILE_VERIFY', code });
+  // Re-check for a race: someone else may have claimed this number between
+  // the OTP request and this verify call.
+  const duplicate = await prisma.user.findFirst({ where: { phone, NOT: { id: userId } } });
+  if (duplicate) {
+    throw new ApiError(409, 'Phone number already registered to another account', { code: 'PHONE_IN_USE' });
+  }
 
   await prisma.user.update({
     where: { id: userId },
-    data: { phoneVerified: true, phoneVerifiedAt: new Date() },
+    data: { phone, phoneVerified: true, phoneVerifiedAt: new Date() },
   });
-  return { phoneVerified: true, phone: user.phone };
+  return { phoneVerified: true, phone };
 }
 
 async function getMyLeads(userId) {

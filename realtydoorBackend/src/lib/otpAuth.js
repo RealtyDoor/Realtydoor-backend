@@ -9,8 +9,15 @@ const logger = require('./logger');
 // the unrelated site-visit anti-leakage OTP on Lead — do not merge the two.
 
 const EXPIRY_MS           = 10 * 60 * 1000;      // 10 minutes
-const MAX_ATTEMPTS        = 3;
-const LOCK_MS             = 30 * 60 * 1000;      // 30 minutes
+// Verify is public by design (anyone who has the code the owner received
+// needs to be able to submit it) — which also means anyone who merely knows
+// the *phone number* can deliberately submit wrong codes to lock it out from
+// under its real owner. A 6-digit code has 1,000,000 possibilities, so even
+// 5 attempts is a ~0.0005% brute-force success chance — negligible — while
+// raising the bar from 3 to 5 wrong guesses, and cutting the lock from 30
+// to 10 minutes, meaningfully reduces how disruptive that griefing is.
+const MAX_ATTEMPTS        = 5;
+const LOCK_MS             = 10 * 60 * 1000;      // 10 minutes
 const RESEND_COOLDOWN_MS  = 30 * 1000;           // 30 seconds
 const MAX_SENDS_PER_HOUR  = 3;
 const SEND_WINDOW_MS      = 60 * 60 * 1000;      // 1 hour

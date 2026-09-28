@@ -1,14 +1,5 @@
 const { z } = require('zod');
-const { normalizeIndianPhone } = require('../../lib/phoneUtils');
-
-const phoneField = z.string().transform((val, ctx) => {
-  const normalized = normalizeIndianPhone(val);
-  if (!normalized) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Must be a valid Indian mobile number' });
-    return z.NEVER;
-  }
-  return normalized;
-});
+const { phoneField } = require('../../lib/phoneUtils');
 
 const codeField = z.string().length(6, 'Code must be exactly 6 digits').regex(/^\d{6}$/, 'Code must be numeric');
 

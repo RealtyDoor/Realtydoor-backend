@@ -25,7 +25,11 @@ async function syncUser(req, res, next) {
     const { user, onboardingComplete } = await authService.syncUser(token);
     success(res, { ...userProfile(user), onboardingComplete });
   } catch (err) {
-    next(err instanceof ApiError ? err : new ApiError(401, 'Sync failed: ' + err.message));
+    // authService.syncUser already throws ApiError(401, ...) for a genuine
+    // auth failure (bad/expired token) — anything else reaching here is a
+    // real server error (DB, Clerk API) and must not masquerade as one, or
+    // the frontend shows "session expired" for what's actually an outage.
+    next(err instanceof ApiError ? err : new ApiError(500, 'Sync failed: ' + err.message));
   }
 }
 
@@ -115,9 +119,12 @@ async function setRole(req, res, next) {
     if (role !== 'PARTNER') throw new ApiError(400, 'Only PARTNER role can be self-assigned');
     if (req.user.role !== 'USER') return success(res, { role: req.user.role }); // idempotent
 
-    await setUserRole(req.user.clerkId, 'PARTNER').catch((err) =>
-      logger.warn('[setRole] setUserRole failed', { clerkId: req.user.clerkId, error: err.message })
-    );
+    try {
+      await setUserRole(req.user.clerkId, 'PARTNER');
+    } catch (err) {
+      logger.error('[setRole] setUserRole failed', { clerkId: req.user.clerkId, error: err.message });
+      throw new ApiError(500, 'Could not update role. Please try again.');
+    }
     const user = await prisma.user.update({ where: { id: req.user.id }, data: { role: 'PARTNER' } });
     logger.info('[setRole] upgraded to PARTNER', { userId: req.user.id });
     success(res, { role: user.role });

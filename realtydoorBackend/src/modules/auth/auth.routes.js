@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const ctrl = require('./auth.controller');
 const { authenticate } = require('../../middleware/auth');
-const { authLimiter, otpSendLimiter, otpVerifyLimiter } = require('../../middleware/rateLimiter');
+const { authLimiter, otpSendLimiter, otpVerifyLimiter, perUserPhoneOtpLimiter } = require('../../middleware/rateLimiter');
 
 // POST /api/auth/sync  — call on every login from the frontend
 // Verifies JWT, fetches full Clerk profile, upserts DB, returns profile
@@ -25,7 +25,7 @@ router.post('/login/otp',     otpSendLimiter,   ctrl.loginOtp);
 router.post('/login/verify',  otpVerifyLimiter, ctrl.loginVerify);
 
 // Google onboarding — phone completion step
-router.post('/google/phone/otp',    authenticate, otpSendLimiter,   ctrl.googlePhoneOtp);
-router.post('/google/phone/verify', authenticate, otpVerifyLimiter, ctrl.googlePhoneVerify);
+router.post('/google/phone/otp',    authenticate, otpSendLimiter,   perUserPhoneOtpLimiter, ctrl.googlePhoneOtp);
+router.post('/google/phone/verify', authenticate, otpVerifyLimiter, perUserPhoneOtpLimiter, ctrl.googlePhoneVerify);
 
 module.exports = router;

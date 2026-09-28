@@ -5,6 +5,7 @@ const ApiError = require('../../utils/ApiError');
 const logger = require('../../lib/logger');
 const otpAuth = require('../../lib/otpAuth');
 const { setUserRole, syncUserFields } = require('../../lib/clerkAdmin');
+const { computeOnboardingComplete } = require('../../lib/onboarding');
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -96,12 +97,23 @@ async function createAccount({ name, email, phone, isNRI = false, marketingOptIn
     throw err;
   }
 
+  // The account (Clerk user + DB row) already exists by this point — a failure
+  // here doesn't leave a broken account (the user can still log in normally
+  // afterward via /login/otp), but it is a bad first-run experience, and this
+  // step is the one most likely to hit a transient network blip right after
+  // the createUser call above. One immediate retry meaningfully cuts how often
+  // a real user actually hits the fallback message below.
   let signInToken;
   try {
     signInToken = await createSignInToken(clerkUser.id);
-  } catch (err) {
-    logger.error('[createAccount] Sign-in token creation failed', { clerkId: clerkUser.id, error: err.message });
-    throw new ApiError(500, 'Account created but sign-in failed. Please log in from the sign-in screen.');
+  } catch (firstErr) {
+    logger.warn('[createAccount] Sign-in token creation failed, retrying once', { clerkId: clerkUser.id, error: firstErr.message });
+    try {
+      signInToken = await createSignInToken(clerkUser.id);
+    } catch (err) {
+      logger.error('[createAccount] Sign-in token creation failed after retry', { clerkId: clerkUser.id, error: err.message });
+      throw new ApiError(500, 'Account created but sign-in failed. Please log in from the sign-in screen.');
+    }
   }
 
   return { user: dbUser, signInToken };
@@ -170,7 +182,15 @@ async function loginVerify({ phone, code }) {
 // ─── B5: Google flow — sync + onboarding + phone completion ──────────────────
 
 async function syncUser(token) {
-  const payload = await clerk.verifyToken(token);
+  // Only a genuine token-verification failure is a 401 — everything else
+  // below (DB errors, Clerk API errors) is a real server error and should
+  // surface as one, not look like an expired session to the frontend.
+  let payload;
+  try {
+    payload = await clerk.verifyToken(token);
+  } catch (err) {
+    throw new ApiError(401, 'Invalid or expired session.');
+  }
   const clerkId = payload.sub;
 
   const clerkUser = await clerk.users.getUser(clerkId);
@@ -186,7 +206,6 @@ async function syncUser(token) {
   }
 
   let existing = await prisma.user.findUnique({ where: { clerkId } });
-  const isNewIdentity = !existing;
   if (!existing && email) {
     existing = await prisma.user.findUnique({ where: { email } });
   }
@@ -204,6 +223,10 @@ async function syncUser(token) {
     });
   }
 
+  if (existing?.isSuspended) {
+    throw new ApiError(403, 'Your account has been suspended. Contact support@realtydoor.in');
+  }
+
   const resolvedRole = clerkRole || existing?.role || 'USER';
   const phoneToWrite = phone || undefined;
 
@@ -218,15 +241,25 @@ async function syncUser(token) {
 
   const writeData = {
     clerkId,
-    name,
     email,
     ...(phoneToWrite !== undefined && { phone: phoneToWrite }),
-    profileImageUrl,
     role: resolvedRole,
   };
 
-  if (isNewIdentity && !existing) {
+  // name/profileImageUrl are only seeded from Clerk when the row is first
+  // created — after that, profile edits (PATCH /user/profile) own them, so
+  // a sync must never revert a user's edited name back to their Google name.
+  if (!existing) {
+    writeData.name = name;
+    writeData.profileImageUrl = profileImageUrl;
     writeData.emailVerified = clerkUser.emailAddresses?.[0]?.verification?.status === 'verified';
+    // Phone signup stamps consent at account-creation time (completing the
+    // signup form is the agreement action). Do the same here so a Google
+    // user who never explicitly hits PATCH /user/consent isn't left with a
+    // blank consent record — this call, completing signup, is that action.
+    const now = new Date();
+    writeData.termsAcceptedAt = now;
+    writeData.privacyAcceptedAt = now;
   }
 
   let user;
@@ -238,7 +271,10 @@ async function syncUser(token) {
     if (err.code === 'P2002') {
       const found = await prisma.user.findFirst({ where: { OR: [{ clerkId }, { email }] } });
       if (!found) throw err;
-      user = await prisma.user.update({ where: { id: found.id }, data: writeData });
+      // The row already exists (a concurrent sync created it) — never stomp
+      // its name/photo/emailVerified here, same rule as the normal update path.
+      const { name: _n, profileImageUrl: _p, emailVerified: _e, ...raceData } = writeData;
+      user = await prisma.user.update({ where: { id: found.id }, data: raceData });
     } else {
       throw err;
     }
@@ -251,15 +287,15 @@ async function syncUser(token) {
   }
 
   logger.info('[authSync] user synced', { clerkId, role: resolvedRole });
-  return { user, onboardingComplete: user.phoneVerified === true };
+  return { user, onboardingComplete: computeOnboardingComplete(user) };
 }
 
 async function googlePhoneOtp(currentUser, { phone }) {
   if (currentUser.phoneVerified) {
-    throw new ApiError(400, 'Phone already verified.');
+    throw new ApiError(400, 'Phone already verified.', { code: 'PHONE_ALREADY_VERIFIED' });
   }
   const dup = await prisma.user.findFirst({ where: { phone, NOT: { id: currentUser.id } } });
-  if (dup) throw new ApiError(409, 'This number is already linked to another account.');
+  if (dup) throw new ApiError(409, 'This number is already linked to another account.', { code: 'PHONE_IN_USE' });
 
   return otpAuth.createAndSendOtp({ phone, purpose: 'GOOGLE_COMPLETE' });
 }
@@ -268,7 +304,7 @@ async function googlePhoneVerify(currentUser, { phone, code }) {
   await otpAuth.verifyOtp({ phone, purpose: 'GOOGLE_COMPLETE', code });
 
   const dup = await prisma.user.findFirst({ where: { phone, NOT: { id: currentUser.id } } });
-  if (dup) throw new ApiError(409, 'This number is already linked to another account.');
+  if (dup) throw new ApiError(409, 'This number is already linked to another account.', { code: 'PHONE_IN_USE' });
 
   await syncUserFields(currentUser.id, { phone });
   const user = await prisma.user.update({
