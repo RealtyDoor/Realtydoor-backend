@@ -46,6 +46,14 @@ async function updateProfile(partnerId, data) {
   return prisma.user.update({ where: { id: partnerId }, data });
 }
 
+async function uploadProfilePhoto(partnerId, url) {
+  return prisma.user.update({
+    where: { id: partnerId },
+    data: { profileImageUrl: url },
+    select: { id: true, profileImageUrl: true },
+  });
+}
+
 async function getListing(partnerId, id) {
   const property = await prisma.property.findFirst({ where: { id, partnerId } });
   if (!property) throw new ApiError(404, 'Listing not found');
@@ -97,6 +105,32 @@ async function getFinanceSummary(partnerId) {
     releasedTotal:       releasedEscrows.reduce((s, e) => s + e.amount, 0),
     releasedThisMonth:   thisMonthEscrows.reduce((s, e) => s + e.amount, 0),
     payoutCountThisMonth: thisMonthEscrows.length,
+  };
+}
+
+// ─── RATINGS ─────────────────────────────────────────────────────────────────
+// Backed by Lead.buyerRating/buyerRatingComment (set via POST /user/leads/:leadId/rating)
+// — no separate PartnerRating model needed, each Lead already scopes one buyer's
+// rating to one partner.
+
+async function getRatings(partnerId) {
+  const rated = await prisma.lead.findMany({
+    where: { assignedPartnerId: partnerId, buyerRating: { not: null } },
+    select: { id: true, buyerRating: true, buyerRatingComment: true, buyerRatedAt: true, buyerName: true },
+    orderBy: { buyerRatedAt: 'desc' },
+  });
+
+  const average = rated.length
+    ? Math.round((rated.reduce((sum, r) => sum + r.buyerRating, 0) / rated.length) * 10) / 10
+    : null;
+
+  return {
+    average,
+    count: rated.length,
+    ratings: rated.map((r) => ({
+      leadId: r.id, rating: r.buyerRating, comment: r.buyerRatingComment,
+      ratedAt: r.buyerRatedAt, buyerName: r.buyerName,
+    })),
   };
 }
 
@@ -258,8 +292,8 @@ async function getPartnerAnalytics(partnerId) {
 }
 
 module.exports = {
-  submitKyc, getProfile, updateProfile, getListing, getMyListings,
-  getFinanceSummary,
+  submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
+  getFinanceSummary, getRatings,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount,
   getSupportTickets, getSupportTicketById, createSupportTicket,

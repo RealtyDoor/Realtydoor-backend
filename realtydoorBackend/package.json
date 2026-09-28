@@ -17,6 +17,7 @@
     "db:sync-clerk-phone": "node scripts/syncClerkPhoneMetadata.js",
     "db:create-phone-index": "node scripts/createPhoneUniqueIndex.js",
     "db:drop-legacy-phone-otp": "node scripts/dropLegacyPhoneOtpColumns.js",
+    "db:backfill-property-views": "node scripts/backfillPropertyViewCounter.js",
     "test": "jest --runInBand",
     "test:watch": "jest --watch"
   },

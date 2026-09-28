@@ -103,15 +103,17 @@ async function assignLead(leadId, partnerId, adminId, ip) {
 
 // ─── PROPERTY APPROVAL ───────────────────────────────────────────────────────
 
-async function getPendingProperties(skip, limit) {
+async function getPendingProperties(filters, skip, limit) {
+  const where = { publishStatus: filters.status || 'PENDING_APPROVAL' };
+
   const [data, total] = await Promise.all([
     prisma.property.findMany({
-      where: { publishStatus: 'PENDING_APPROVAL' },
+      where,
       skip, take: limit,
       include: { partner: { select: { name: true, email: true, companyName: true } } },
       orderBy: { createdAt: 'asc' },
     }),
-    prisma.property.count({ where: { publishStatus: 'PENDING_APPROVAL' } }),
+    prisma.property.count({ where }),
   ]);
   return { data, total };
 }
@@ -329,7 +331,9 @@ async function editProperty(propertyId, data, adminId, adminName, ip) {
 
 async function getAllLoans(filters, skip, limit) {
   const where = {};
-  if (filters.status) where.status = filters.status;
+  if (filters.status) {
+    where.status = Array.isArray(filters.status) ? { in: filters.status } : filters.status;
+  }
   if (filters.userId) where.userId = filters.userId;
 
   const [data, total] = await Promise.all([
@@ -346,20 +350,46 @@ async function getAllLoans(filters, skip, limit) {
   return { data, total };
 }
 
-async function updateLoanStatus(loanId, status, adminNote, adminId) {
+// Per-bank aggregate for the admin loan page's bank cards (§4.3) — real
+// groupBy over the full table, not computed client-side from one page.
+async function getLoanBankStats() {
+  const loans = await prisma.loanApplication.findMany({
+    where: { preferredBank: { not: null } },
+    select: { preferredBank: true, status: true, loanAmountRequestedPaise: true },
+  });
+
+  const byBank = {};
+  for (const loan of loans) {
+    const bank = loan.preferredBank;
+    byBank[bank] ??= { bank, applications: 0, sanctioned: 0, totalRequestedPaise: 0 };
+    byBank[bank].applications += 1;
+    if (['SANCTIONED', 'DISBURSED'].includes(loan.status)) byBank[bank].sanctioned += 1;
+    byBank[bank].totalRequestedPaise += loan.loanAmountRequestedPaise || 0;
+  }
+
+  return Object.values(byBank).map((b) => ({
+    bank: b.bank,
+    applications: b.applications,
+    sanctioned: b.sanctioned,
+    closeRatePct: b.applications ? Math.round((b.sanctioned / b.applications) * 1000) / 10 : 0,
+    avgRequestedPaise: b.applications ? Math.round(b.totalRequestedPaise / b.applications) : 0,
+  }));
+}
+
+async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields = {}) {
   const loan = await prisma.loanApplication.findUnique({
     where: { id: loanId },
     include: { user: { select: { email: true } } },
   });
   if (!loan) throw new ApiError(404, 'Loan application not found');
 
-  const extraFields = {};
-  if (status === 'SANCTIONED') extraFields.sanctionedAt = new Date();
-  if (status === 'DISBURSED')  extraFields.disbursedAt  = new Date();
+  const statusFields = {};
+  if (status === 'SANCTIONED') statusFields.sanctionedAt = new Date();
+  if (status === 'DISBURSED')  statusFields.disbursedAt  = new Date();
 
   const updated = await prisma.loanApplication.update({
     where: { id: loanId },
-    data: { status, adminNote: adminNote || loan.adminNote, ...extraFields },
+    data: { status, adminNote: adminNote || loan.adminNote, ...statusFields, ...extraFields },
   });
 
   await createNotification({
@@ -460,6 +490,7 @@ async function getTicketById(ticketId) {
     include: {
       user:         { select: { id: true, name: true, email: true, phone: true } },
       subscription: { include: { service: { select: { name: true, category: true } } } },
+      comments:     { orderBy: { createdAt: 'asc' } },
     },
   });
   if (!ticket) throw new ApiError(404, 'Ticket not found');
@@ -468,8 +499,14 @@ async function getTicketById(ticketId) {
 
 async function getAllTickets(filters, skip, limit) {
   const where = {};
-  if (filters.status) where.status = filters.status;
-  if (filters.userId) where.userId = filters.userId;
+  if (filters.status)   where.status   = filters.status;
+  if (filters.userId)   where.userId   = filters.userId;
+  if (filters.category) where.category = filters.category;
+  if (filters.search) where.OR = [
+    { subject:     { contains: filters.search, mode: 'insensitive' } },
+    { description: { contains: filters.search, mode: 'insensitive' } },
+    { vendorName:  { contains: filters.search, mode: 'insensitive' } },
+  ];
 
   const [data, total] = await Promise.all([
     prisma.serviceTicket.findMany({
@@ -483,6 +520,36 @@ async function getAllTickets(filters, skip, limit) {
     prisma.serviceTicket.count({ where }),
   ]);
   return { data, total };
+}
+
+// Fetches the whole table once and computes in JS rather than filtering
+// `vendorName: null` in the query — on MongoDB that filter only matches rows
+// where the field was explicitly set to null, not ones where it was never
+// written at all (confirmed empirically — see escrowAutoEscalate.js), which
+// would silently undercount "unassigned" for most existing tickets.
+async function getTicketStats() {
+  const startOfWeek = new Date();
+  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+
+  const tickets = await prisma.serviceTicket.findMany({
+    select: { status: true, vendorName: true, createdAt: true, resolvedAt: true },
+  });
+
+  const unassigned = tickets.filter((t) => !t.vendorName).length;
+  const inProgress = tickets.filter((t) => t.status === 'IN_PROGRESS').length;
+  const resolvedThisWeek = tickets.filter((t) => t.resolvedAt && t.resolvedAt >= startOfWeek).length;
+  const resolved = tickets.filter((t) => t.resolvedAt);
+  const avgResolutionDays = resolved.length
+    ? resolved.reduce((sum, t) => sum + (t.resolvedAt - t.createdAt) / 86_400_000, 0) / resolved.length
+    : 0;
+
+  return {
+    unassigned,
+    inProgress,
+    resolvedThisWeek,
+    avgResolutionDays: Math.round(avgResolutionDays * 10) / 10,
+  };
 }
 
 const TICKET_TRANSITIONS = {
@@ -792,8 +859,8 @@ module.exports = {
   getPendingKyc, verifyKyc,
   getRevenueSummary,
   getAuditLogs,
-  getAllTickets, getTicketById, updateTicketStatus,
-  getAllLoans, updateLoanStatus,
+  getAllTickets, getTicketById, updateTicketStatus, getTicketStats,
+  getAllLoans, updateLoanStatus, getLoanBankStats,
   getAllUsers, changeUserRole, suspendUser,
   getPartnerMetrics, getPartnerById,
   adminListServices, adminCreateService, adminUpdateService, adminDeleteService,

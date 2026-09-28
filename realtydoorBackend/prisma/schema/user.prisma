@@ -22,6 +22,25 @@ model User {
   role          Role            @default(USER)
   isNRI         Boolean         @default(false)
 
+  // Profile & settings (buyer-facing)
+  address              String?
+  language             String?  @default("en") // "en" | "kn" | "hi"
+
+  // Buyer notification preferences (distinct from the partner notif* fields below)
+  notifPush            Boolean  @default(true)
+  notifEmail           Boolean  @default(true)
+  notifWhatsapp        Boolean  @default(true)
+  notifMarketing       Boolean  @default(false)
+  notifVisitReminders  Boolean  @default(true)
+
+  // Onboarding preferences — collected on the mandatory "let's get started"
+  // step right after Google + phone verification (FRONTEND_HANDOFF_SPEC.md §8.4)
+  buyerType     String?    // "BUYER" | "RENTER" | "INVESTOR"
+  preferredCity String?
+  budget        String?
+  bhk           String[]
+  timeline      String?    // "NOW" | "3_6_MONTHS" | "BROWSING"
+
   // Partner-specific fields
   partnerSubType  PartnerSubType?
   companyName     String?

@@ -68,9 +68,10 @@ async function searchProperties(query, skip, limit, page) {
       select: {
         id: true, title: true, slug: true, price: true, monthlyRent: true,
         propertyType: true, listingType: true, propertyStatus: true,
-        bhk: true, carpetArea: true, locality: true, city: true,
+        bhk: true, balconies: true, carpetArea: true, locality: true, city: true,
         images: true, coverImageIndex: true, isVerified: true, isFeatured: true,
         reraNumber: true, createdAt: true, facing: true, furnishing: true,
+        previousPrice: true, priceChange6m: true, unitsLeft: true, viewsThisWeek: true,
       },
     }),
     prisma.property.count({ where }),
@@ -85,6 +86,14 @@ async function getPropertyBySlug(slug) {
     include: { partner: { select: { companyName: true, partnerSubType: true } } },
   });
   if (!property) throw new ApiError(404, 'Property not found');
+
+  // Fire-and-forget — a view counter shouldn't add latency to the page load,
+  // and a lost increment under a race is harmless for this metric.
+  prisma.property.update({
+    where: { id: property.id },
+    data: { viewsThisWeek: { increment: 1 } },
+  }).catch(() => {});
+
   return property;
 }
 
@@ -136,8 +145,9 @@ async function getFeaturedProperties() {
     orderBy: { createdAt: 'desc' },
     select: {
       id: true, title: true, slug: true, price: true, monthlyRent: true,
-      propertyType: true, listingType: true, bhk: true, locality: true, city: true,
+      propertyType: true, listingType: true, bhk: true, balconies: true, locality: true, city: true,
       images: true, coverImageIndex: true, isVerified: true, facing: true, furnishing: true,
+      previousPrice: true, priceChange6m: true, unitsLeft: true, viewsThisWeek: true,
     },
   }));
 }

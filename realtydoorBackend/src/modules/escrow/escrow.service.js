@@ -4,6 +4,9 @@ const { createEscrowOrder, releaseEscrow, refundPayment } = require('../../lib/r
 const { createAuditLog } = require('../../lib/auditLog');
 const { createNotification } = require('../../lib/notifications');
 const { sendEscrowRefunded } = require('../../lib/email');
+const { getConfigNumber } = require('../config/config.service');
+
+const DEFAULT_MIN_ESCROW_AMOUNT = 50000;
 
 async function createOrder(leadId, buyerId, amountInRupees) {
   const lead = await prisma.lead.findUnique({ where: { id: leadId } });
@@ -13,6 +16,11 @@ async function createOrder(leadId, buyerId, amountInRupees) {
     where: { leadId, status: { in: ['HELD', 'PAYMENT_PENDING'] } },
   });
   if (existing) throw new ApiError(400, 'An active escrow order already exists for this lead');
+
+  const minAmount = await getConfigNumber('escrowMinAmountRupees', DEFAULT_MIN_ESCROW_AMOUNT);
+  if (amountInRupees < minAmount) {
+    throw new ApiError(400, `Minimum escrow amount is ₹${minAmount.toLocaleString('en-IN')}`);
+  }
 
   const amountInPaise = Math.round(amountInRupees * 100);
   const order = await createEscrowOrder(amountInPaise, `escrow_${leadId}`);
@@ -87,11 +95,11 @@ async function refund(escrowId, adminId, ip) {
   if (!escrow.razorpayPaymentId) throw new ApiError(400, 'Payment not yet captured');
 
   const amountInPaise = Math.round(escrow.amount * 100);
-  await refundPayment(escrow.razorpayPaymentId, amountInPaise);
+  const refundResult = await refundPayment(escrow.razorpayPaymentId, amountInPaise);
 
   const updated = await prisma.escrowTransaction.update({
     where: { id: escrowId },
-    data: { status: 'REFUNDED', refundedAt: new Date() },
+    data: { status: 'REFUNDED', refundedAt: new Date(), razorpayRefundId: refundResult.id },
   });
 
   await createAuditLog({
@@ -116,10 +124,53 @@ async function getAllEscrow(filters, skip, limit) {
   const where = {};
   if (filters.status) where.status = filters.status;
   const [data, total] = await prisma.$transaction([
-    prisma.escrowTransaction.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
+    prisma.escrowTransaction.findMany({
+      where, skip, take: limit, orderBy: { createdAt: 'desc' },
+      include: {
+        lead: {
+          select: {
+            buyerName: true, buyerEmail: true,
+            property: { select: { title: true, locality: true, city: true } },
+            assignedPartner: { select: { name: true, companyName: true } },
+          },
+        },
+      },
+    }),
     prisma.escrowTransaction.count({ where }),
   ]);
   return { data, total };
 }
 
-module.exports = { createOrder, confirmPayment, release, refund, getAllEscrow };
+// Real DB-side aggregates over the full table — the admin Escrow page's stat
+// cards and Platform Analytics' "Escrow GMV" previously sampled up to 50 rows
+// per status with no aggregate query at all (FRONTEND_HANDOFF_SPEC.md §11.1).
+async function getEscrowStats() {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const [heldAgg, refundedAgg, releasedThisMonthAgg, releasedForAvg] = await Promise.all([
+    prisma.escrowTransaction.aggregate({ where: { status: 'HELD' }, _sum: { amount: true } }),
+    prisma.escrowTransaction.aggregate({ where: { status: 'REFUNDED' }, _sum: { amount: true } }),
+    prisma.escrowTransaction.aggregate({
+      where: { status: 'RELEASED', releasedAt: { gte: startOfMonth } },
+      _sum: { amount: true },
+    }),
+    prisma.escrowTransaction.findMany({
+      where: { status: 'RELEASED', releasedAt: { not: null } },
+      select: { createdAt: true, releasedAt: true },
+    }),
+  ]);
+
+  const avgHoldDays = releasedForAvg.length
+    ? releasedForAvg.reduce((sum, t) => sum + (t.releasedAt - t.createdAt) / 86_400_000, 0) / releasedForAvg.length
+    : 0;
+
+  return {
+    heldSum: heldAgg._sum.amount || 0,
+    refundedSum: refundedAgg._sum.amount || 0,
+    releasedSumThisMonth: releasedThisMonthAgg._sum.amount || 0,
+    avgHoldDays: Math.round(avgHoldDays * 10) / 10,
+  };
+}
+
+module.exports = { createOrder, confirmPayment, release, refund, getAllEscrow, getEscrowStats };

@@ -1213,6 +1213,108 @@
           ]
         },
         {
+          "name": "Resend Site-Visit OTP",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/partner/{{leadId}}/resend-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "leads",
+                "partner",
+                "{{leadId}}",
+                "resend-otp"
+              ]
+            },
+            "description": "New code without moving the scheduled visit time. Does NOT reset the 3-attempt lockout counter."
+          },
+          "response": [
+            {
+              "name": "200 – Resent",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"message\":\"A new OTP has been sent to the buyer via WhatsApp.\"}}"
+            },
+            {
+              "name": "429 – Locked",
+              "status": "Too Many Requests",
+              "code": 429,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"OTP is locked after too many failed attempts. Request an admin override instead.\"}"
+            }
+          ]
+        },
+        {
+          "name": "Request OTP Override",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/partner/{{leadId}}/request-otp-override",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "leads",
+                "partner",
+                "{{leadId}}",
+                "request-otp-override"
+              ]
+            },
+            "description": "Only requests — never unlocks the OTP itself. Notifies every admin and flags the lead for review."
+          },
+          "response": [
+            {
+              "name": "200 – Requested",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"message\":\"Admin has been notified.\"}}"
+            },
+            {
+              "name": "400 – Not Locked",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"This lead's OTP is not currently locked\"}"
+            }
+          ]
+        },
+        {
           "name": "Verify Site Visit OTP",
           "request": {
             "method": "POST",
@@ -1493,7 +1595,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Suresh Mehta\",\n  \"isNRI\": false\n}",
+              "raw": "{\n  \"name\": \"Suresh Mehta\",\n  \"isNRI\": false,\n  \"address\": \"123 MG Road, Bengaluru\",\n  \"language\": \"kn\",\n  \"notificationPreferences\": {\n    \"push\": false,\n    \"whatsapp\": true,\n    \"marketing\": true\n  },\n  \"buyerType\": \"INVESTOR\",\n  \"city\": \"Bengaluru\",\n  \"budget\": \"80L-1.2Cr\",\n  \"bhk\": [\n    \"2\",\n    \"3\"\n  ],\n  \"timeline\": \"NOW\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1510,7 +1612,8 @@
                 "user",
                 "profile"
               ]
-            }
+            },
+            "description": "All fields optional (at least one required). language: en|kn|hi. notificationPreferences is a partial object — only keys you send are changed. buyerType: BUYER|RENTER|INVESTOR. timeline: NOW|3_6_MONTHS|BROWSING. city here is the buyer's preferred city (stored as preferredCity), unrelated to a property's own city field."
           },
           "response": [
             {
@@ -1525,7 +1628,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"message\":\"Profile updated\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"name\":\"Suresh Mehta\",\"isNRI\":false}}"
+              "body": "{\"success\":true,\"message\":\"Profile updated\",\"data\":{\"id\":\"64user...\",\"name\":\"Suresh Mehta\",\"isNRI\":false,\"address\":\"123 MG Road, Bengaluru\",\"language\":\"kn\",\"notificationPreferences\":{\"push\":false,\"email\":true,\"whatsapp\":true,\"marketing\":true,\"visitReminders\":true},\"buyerType\":\"INVESTOR\",\"city\":\"Bengaluru\",\"budget\":\"80L-1.2Cr\",\"bhk\":[\"2\",\"3\"],\"timeline\":\"NOW\"}}"
             }
           ]
         },
@@ -1839,6 +1942,85 @@
               ],
               "cookie": [],
               "body": "{\"success\":false,\"message\":\"You have already rated this partner for this lead\"}"
+            }
+          ]
+        },
+        {
+          "name": "Cancel Inquiry",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Found a better option\",\n  \"reasonLabel\": \"Changed my mind\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/user/leads/{{leadId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "leads",
+                "{{leadId}}",
+                "cancel"
+              ]
+            },
+            "description": "refund is present only if there was an active HELD escrow within the refund window (default 48h) — a real Razorpay refund is issued in that case."
+          },
+          "response": [
+            {
+              "name": "200 – Cancelled With Refund",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Inquiry cancelled\",\"data\":{\"refund\":{\"amount\":60000,\"refundId\":\"rfnd_...\",\"refundTo\":\"original payment method\",\"eta\":\"5-7 business days\"}}}"
+            },
+            {
+              "name": "200 – Cancelled, No Refund",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Inquiry cancelled\",\"data\":{}}"
+            },
+            {
+              "name": "400 – Already Closed",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"This inquiry is already dropped\"}"
             }
           ]
         },
@@ -2171,7 +2353,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"subscriptionId\": \"{{subscriptionId}}\",\n  \"subject\": \"Bathroom tap dripping\",\n  \"description\": \"The cold water tap in the master bathroom has been dripping for 3 days.\",\n  \"category\": \"PLUMBING\"\n}",
+              "raw": "{\n  \"subscriptionId\": \"{{subscriptionId}}\",\n  \"subject\": \"Bathroom tap dripping\",\n  \"description\": \"The cold water tap in the master bathroom has been dripping for 3 days.\",\n  \"category\": \"PLUMBING\",\n  \"propertyId\": \"{{propertyId}}\",\n  \"photos\": [\n    \"https://cdn.realtydoor.in/tickets/tap1.jpg\"\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2188,7 +2370,8 @@
                 "user",
                 "tickets"
               ]
-            }
+            },
+            "description": "propertyId and photos are both optional."
           },
           "response": [
             {
@@ -2246,7 +2429,17 @@
                 "{{ticketId}}",
                 "verify"
               ]
-            }
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vendorRating\": 4,\n  \"vendorRatingComment\": \"Good work, bit slow\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "vendorRating (1-5) and vendorRatingComment are both optional."
           },
           "response": [
             {
@@ -2284,6 +2477,208 @@
               ],
               "cookie": [],
               "body": "{\"success\":false,\"message\":\"Ticket is not yet resolved\"}"
+            }
+          ]
+        },
+        {
+          "name": "Reopen Ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"The leak came back after two days\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/user/tickets/{{ticketId}}/reopen",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "tickets",
+                "{{ticketId}}",
+                "reopen"
+              ]
+            },
+            "description": "Only valid when the ticket is currently RESOLVED. Sets status back to IN_PROGRESS."
+          },
+          "response": [
+            {
+              "name": "200 – Reopened",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Ticket reopened\",\"data\":{\"id\":\"{{ticketId}}\",\"status\":\"IN_PROGRESS\",\"reopenReason\":\"The leak came back after two days\",\"resolvedAt\":null}}"
+            },
+            {
+              "name": "400 – Not Resolved",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Only a resolved ticket can be reopened\"}"
+            }
+          ]
+        },
+        {
+          "name": "Withdraw Ticket",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/tickets/{{ticketId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "tickets",
+                "{{ticketId}}"
+              ]
+            },
+            "description": "Only valid when status is OPEN and no vendor has been assigned."
+          },
+          "response": [
+            {
+              "name": "200 – Withdrawn",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Ticket withdrawn\",\"data\":null}"
+            },
+            {
+              "name": "400 – Cannot Withdraw",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"This ticket can no longer be withdrawn\"}"
+            }
+          ]
+        },
+        {
+          "name": "Get Ticket Comments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/tickets/{{ticketId}}/comments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "tickets",
+                "{{ticketId}}",
+                "comments"
+              ]
+            },
+            "description": "Full comment thread — same thread the admin ticket detail view sees."
+          },
+          "response": [
+            {
+              "name": "200 – Comments",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":[{\"id\":\"64cmt...\",\"ticketId\":\"{{ticketId}}\",\"authorId\":\"64usr...\",\"authorRole\":\"USER\",\"text\":\"Any update on this?\",\"photos\":[],\"createdAt\":\"2026-09-28T00:00:00.000Z\"}]}"
+            }
+          ]
+        },
+        {
+          "name": "Post Ticket Comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Any update on this?\",\n  \"photos\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/user/tickets/{{ticketId}}/comments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "tickets",
+                "{{ticketId}}",
+                "comments"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "201 – Comment Posted",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Comment posted\",\"data\":{\"id\":\"64cmt...\",\"ticketId\":\"{{ticketId}}\",\"authorId\":\"64usr...\",\"authorRole\":\"USER\",\"text\":\"Any update on this?\",\"photos\":[],\"createdAt\":\"2026-09-28T00:00:00.000Z\"}}"
             }
           ]
         },
@@ -2847,6 +3242,66 @@
           ]
         },
         {
+          "name": "Upload Profile Photo",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "photo",
+                  "type": "file",
+                  "src": [],
+                  "description": "jpg/png/webp"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/partner/profile/photo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "partner",
+                "profile",
+                "photo"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 – Photo Updated",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Profile photo updated\",\"data\":{\"id\":\"{{partnerId}}\",\"profileImageUrl\":\"https://realtydoor-bucket.s3.ap-south-1.amazonaws.com/partners/profile-photos/abc123.jpg\"}}"
+            },
+            {
+              "name": "400 – No File",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"A photo file is required\"}"
+            }
+          ]
+        },
+        {
           "name": "Get My Listings",
           "request": {
             "method": "GET",
@@ -2976,6 +3431,41 @@
               ],
               "cookie": [],
               "body": "{\"success\":true,\"data\":{\"totalLeads\":12,\"closedDeals\":3,\"escrowHeld\":300000}}"
+            }
+          ]
+        },
+        {
+          "name": "Get My Ratings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/partner/ratings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "partner",
+                "ratings"
+              ]
+            },
+            "description": "Backed by Lead.buyerRating — no separate rating model."
+          },
+          "response": [
+            {
+              "name": "200 – Ratings",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"average\":4.5,\"count\":2,\"ratings\":[{\"leadId\":\"64lead...\",\"rating\":5,\"comment\":\"Great partner\",\"ratedAt\":\"2026-09-28T00:00:00.000Z\",\"buyerName\":\"Suresh Mehta\"}]}}"
             }
           ]
         },
@@ -3636,7 +4126,7 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/api/admin/properties?page=1&limit=20",
+                  "raw": "{{baseUrl}}/api/admin/properties?page=1&limit=20&status=PENDING_APPROVAL",
                   "host": [
                     "{{baseUrl}}"
                   ],
@@ -3653,6 +4143,11 @@
                     {
                       "key": "limit",
                       "value": "20"
+                    },
+                    {
+                      "key": "status",
+                      "value": "PENDING_APPROVAL",
+                      "description": "PENDING_APPROVAL (default) | APPROVED | REJECTED"
                     }
                   ]
                 }
@@ -4313,7 +4808,42 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"66bbb111ccc222ddd333eee4\",\"leadId\":\"665def456abc789012345678\",\"razorpayOrderId\":\"order_Abc123XYZ\",\"amount\":100000,\"status\":\"HELD\",\"createdAt\":\"2026-05-15T09:00:00.000Z\"}],\"pagination\":{\"total\":8,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                  "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"66bbb111ccc222ddd333eee4\",\"leadId\":\"665def456abc789012345678\",\"lead\":{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"property\":{\"title\":\"3 BHK Flat in Baner\"}},\"razorpayOrderId\":\"order_Abc123XYZ\",\"razorpayRefundId\":null,\"amount\":100000,\"status\":\"HELD\",\"createdAt\":\"2026-05-15T09:00:00.000Z\"}],\"pagination\":{\"total\":8,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                }
+              ]
+            },
+            {
+              "name": "Get Escrow Stats",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/escrow/stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "escrow",
+                    "stats"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 – Escrow Stats",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"data\":{\"heldSum\":460000,\"refundedSum\":60000,\"releasedSumThisMonth\":320000,\"avgHoldDays\":6.4}}"
                 }
               ]
             },
@@ -4706,6 +5236,18 @@
                       "disabled": true
                     },
                     {
+                      "key": "category",
+                      "value": "PLUMBING",
+                      "description": "e.g. PLUMBING, ELECTRICAL",
+                      "disabled": true
+                    },
+                    {
+                      "key": "search",
+                      "value": "",
+                      "description": "matches subject, description, vendorName",
+                      "disabled": true
+                    },
+                    {
                       "key": "page",
                       "value": "1"
                     },
@@ -4730,6 +5272,41 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"669ddd444eee555fff666aaa\",\"subject\":\"Bathroom tap dripping\",\"status\":\"OPEN\",\"priority\":\"NORMAL\",\"createdAt\":\"2026-05-19T11:30:00.000Z\",\"user\":{\"name\":\"Suresh Mehta\",\"email\":\"user@realtydoor.com\"},\"subscription\":{\"id\":\"667bbb222ccc333ddd444eee\",\"amountPaid\":5999}}],\"pagination\":{\"total\":8,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                }
+              ]
+            },
+            {
+              "name": "Get Ticket Stats",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/tickets/stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "tickets",
+                    "stats"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 – Ticket Stats",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"data\":{\"unassigned\":4,\"inProgress\":6,\"resolvedThisWeek\":11,\"avgResolutionDays\":2.3}}"
                 }
               ]
             },
@@ -5224,7 +5801,7 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/api/admin/loan?page=1&limit=20&status=DOCUMENTS_PENDING",
+                  "raw": "{{baseUrl}}/api/admin/loan?page=1&limit=20&status=DOCUMENTS_PENDING,DOCUMENTS_SUBMITTED",
                   "host": [
                     "{{baseUrl}}"
                   ],
@@ -5244,7 +5821,8 @@
                     },
                     {
                       "key": "status",
-                      "value": "DOCUMENTS_PENDING"
+                      "value": "DOCUMENTS_PENDING,DOCUMENTS_SUBMITTED",
+                      "description": "Comma-separated list of statuses is accepted"
                     }
                   ]
                 }
@@ -5282,7 +5860,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"status\": \"DOCUMENTS_VERIFIED\",\n  \"adminNote\": \"All documents verified. Sending to HDFC Bank for sanction.\"\n}",
+                  "raw": "{\n  \"status\": \"SANCTIONED\",\n  \"adminNote\": \"Sanctioned by HDFC Bank at 8.5% for 240 months.\",\n  \"interestRatePct\": 8.5,\n  \"tenureMonths\": 240,\n  \"emiPaise\": 3450000,\n  \"sanctionLetterUrl\": \"https://realtydoor-bucket.s3.ap-south-1.amazonaws.com/loans/sanction-669eee.pdf\"\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -5301,7 +5879,8 @@
                     "{{loanId}}",
                     "status"
                   ]
-                }
+                },
+                "description": "interestRatePct, tenureMonths, emiPaise and sanctionLetterUrl are all optional — send whichever are known at this stage."
               },
               "response": [
                 {
@@ -5320,7 +5899,42 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":true,\"message\":\"Loan status updated\",\"data\":{\"id\":\"669eee555fff666aaa777bbb\",\"status\":\"DOCUMENTS_VERIFIED\",\"adminNote\":\"All documents verified. Sending to HDFC Bank for sanction.\",\"updatedAt\":\"2026-05-27T11:00:00.000Z\"}}"
+                  "body": "{\"success\":true,\"message\":\"Loan status updated\",\"data\":{\"id\":\"669eee555fff666aaa777bbb\",\"status\":\"SANCTIONED\",\"adminNote\":\"Sanctioned by HDFC Bank at 8.5% for 240 months.\",\"interestRatePct\":8.5,\"tenureMonths\":240,\"emiPaise\":3450000,\"sanctionLetterUrl\":\"https://realtydoor-bucket.s3.ap-south-1.amazonaws.com/loans/sanction-669eee.pdf\",\"sanctionedAt\":\"2026-05-27T11:00:00.000Z\",\"updatedAt\":\"2026-05-27T11:00:00.000Z\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Get Bank Stats",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/loan/bank-stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "loan",
+                    "bank-stats"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 – Bank Stats",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"data\":[{\"bank\":\"HDFC Bank\",\"applications\":12,\"sanctioned\":7,\"closeRatePct\":58.3,\"avgRequestedPaise\":4200000}]}"
                 }
               ]
             }
@@ -7766,6 +8380,71 @@
               ],
               "cookie": [],
               "body": "{\"success\":true,\"message\":\"Message received. We will get back to you shortly.\",\"data\":{\"id\":\"66fff666aaa777bbb888ccc\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Submit Service Request",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Priya Sharma\",\n  \"phone\": \"+919876500001\",\n  \"email\": \"priya@example.com\",\n  \"serviceIds\": [\n    \"{{serviceId}}\"\n  ],\n  \"note\": \"Interested in this service\",\n  \"source\": \"services-page\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/service-requests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "service-requests"
+              ]
+            },
+            "description": "Distinct lead type from /api/contact — tagged with which service(s) and where it came from."
+          },
+          "response": [
+            {
+              "name": "201 – Request Received",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"We will get back to you shortly.\",\"data\":{\"id\":\"64svcreq...\"}}"
+            },
+            {
+              "name": "400 – Missing serviceIds",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"At least one service is required\"}"
             }
           ]
         }

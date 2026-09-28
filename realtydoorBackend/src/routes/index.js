@@ -13,6 +13,7 @@ const faqRoutes = require('../modules/faq/faq.routes');
 const notificationsRoutes = require('../modules/notifications/notifications.routes');
 const contactRoutes = require('../modules/contact/contact.routes');
 const nriLeadsRoutes = require('../modules/nriLeads/nriLeads.routes');
+const serviceRequestsRoutes = require('../modules/serviceRequests/serviceRequests.routes');
 const localityRoutes = require('../modules/locality/locality.routes');
 const configRoutes = require('../modules/config/config.routes');
 
@@ -26,6 +27,7 @@ router.use('/blog', cmsRoutes);           // GET /api/blog and /api/blog/:slug
 router.use('/faqs', faqRoutes);           // GET /api/faqs and /api/faqs/:slug (content pre-parsed)
 router.use('/contact', contactRoutes);
 router.use('/nri-leads', nriLeadsRoutes);
+router.use('/service-requests', serviceRequestsRoutes);
 router.use('/locality-insights', localityRoutes);
 router.use('/config', configRoutes);
 

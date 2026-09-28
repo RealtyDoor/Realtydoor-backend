@@ -12,6 +12,10 @@ model LoanApplication {
   preferredBank            String?
   loanAmountRequestedPaise Int?
   sanctionedAmountPaise    Int?
+  interestRatePct          Float?
+  tenureMonths             Int?
+  emiPaise                 Int?
+  sanctionLetterUrl        String?
 
   status                   LoanStatus @default(DOCUMENTS_PENDING)
   statusHistory            String[]

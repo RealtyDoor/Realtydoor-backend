@@ -1,6 +1,10 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const otpAuth = require('../../lib/otpAuth');
+const escrowService = require('../escrow/escrow.service');
+const { getConfigNumber } = require('../config/config.service');
+
+const DEFAULT_ESCROW_REFUND_WINDOW_HOURS = 48;
 
 // Lazy phone verification for already-authenticated users (favorites, tickets,
 // loan applications, etc. — gated by requirePhone). Backed by the shared
@@ -57,6 +61,52 @@ async function rateLead(userId, leadId, { rating, comment }) {
   });
 }
 
+async function cancelLead(userId, leadId, { reason, reasonLabel }) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId: userId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (['CLOSED', 'DROPPED'].includes(lead.status)) {
+    throw new ApiError(400, `This inquiry is already ${lead.status.toLowerCase()}`);
+  }
+
+  const escrow = await prisma.escrowTransaction.findFirst({
+    where: { leadId, status: { in: ['HELD', 'PAYMENT_PENDING'] } },
+  });
+
+  let refund;
+  if (escrow?.status === 'HELD') {
+    const windowHours = await getConfigNumber('escrowRefundWindowHours', DEFAULT_ESCROW_REFUND_WINDOW_HOURS);
+    const withinWindow = escrow.heldAt
+      && (Date.now() - new Date(escrow.heldAt).getTime()) < windowHours * 60 * 60 * 1000;
+
+    if (withinWindow) {
+      const updatedEscrow = await escrowService.refund(escrow.id, userId, null);
+      refund = {
+        amount: updatedEscrow.amount,
+        refundId: updatedEscrow.razorpayRefundId,
+        refundTo: 'original payment method',
+        eta: '5-7 business days',
+      };
+    }
+  } else if (escrow?.status === 'PAYMENT_PENDING') {
+    // Nothing was ever captured — just close it out, no Razorpay call, no refund to report.
+    await prisma.escrowTransaction.update({
+      where: { id: escrow.id },
+      data: { status: 'CANCELLED', cancelledAt: new Date() },
+    });
+  }
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      status: 'DROPPED',
+      droppedReason: `${reasonLabel} — ${reason}`,
+      droppedAt: new Date(),
+    },
+  });
+
+  return { refund };
+}
+
 async function toggleFavorite(userId, propertyId) {
   const property = await prisma.property.findUnique({ where: { id: propertyId }, select: { id: true } });
   if (!property) throw new ApiError(404, 'Property not found');
@@ -88,15 +138,48 @@ async function getFavorites(userId) {
   return favs.map((f) => ({ ...f.property, favoritedAt: f.savedAt }));
 }
 
-async function updateProfile(userId, data) {
-  return prisma.user.update({
+async function updateProfile(userId, { notificationPreferences, city, ...rest }) {
+  const data = { ...rest };
+  if (city !== undefined) data.preferredCity = city;
+
+  if (notificationPreferences) {
+    const { push, email, whatsapp, marketing, visitReminders } = notificationPreferences;
+    if (push           !== undefined) data.notifPush           = push;
+    if (email          !== undefined) data.notifEmail          = email;
+    if (whatsapp       !== undefined) data.notifWhatsapp       = whatsapp;
+    if (marketing      !== undefined) data.notifMarketing      = marketing;
+    if (visitReminders !== undefined) data.notifVisitReminders = visitReminders;
+  }
+
+  const user = await prisma.user.update({
     where: { id: userId },
     data,
     select: {
       id: true, name: true, email: true, phone: true, phoneVerified: true,
       isNRI: true, profileImageUrl: true, role: true, updatedAt: true,
+      address: true, language: true, preferredCity: true,
+      buyerType: true, budget: true, bhk: true, timeline: true,
+      notifPush: true, notifEmail: true, notifWhatsapp: true, notifMarketing: true, notifVisitReminders: true,
     },
   });
+
+  return formatProfileSettings(user);
+}
+
+// Shared re-nesting so the API returns notificationPreferences/city in the
+// same shape the PATCH body accepts them in, not as flat DB columns.
+function formatProfileSettings(user) {
+  const { preferredCity, notifPush, notifEmail, notifWhatsapp, notifMarketing, notifVisitReminders, ...rest } = user;
+  return {
+    ...rest,
+    ...(preferredCity !== undefined && { city: preferredCity }),
+    ...(notifPush !== undefined && {
+      notificationPreferences: {
+        push: notifPush, email: notifEmail, whatsapp: notifWhatsapp,
+        marketing: notifMarketing, visitReminders: notifVisitReminders,
+      },
+    }),
+  };
 }
 
 async function updateConsent(userId, { termsAccepted, privacyAccepted, marketingOptIn }) {
@@ -138,7 +221,10 @@ async function uploadDocument(userId, documentType, fileUrl, fileName) {
 async function getSubscriptions(userId) {
   return prisma.userSubscription.findMany({
     where: { userId },
-    include: { tickets: { orderBy: { createdAt: 'desc' } } },
+    include: {
+      service: { select: { name: true, category: true } },
+      tickets: { orderBy: { createdAt: 'desc' } },
+    },
     orderBy: { startDate: 'desc' },
   });
 }
@@ -171,14 +257,57 @@ async function getMyTicketById(userId, ticketId) {
   return ticket;
 }
 
-async function verifyTicket(userId, ticketId) {
+async function verifyTicket(userId, ticketId, { vendorRating, vendorRatingComment } = {}) {
   const ticket = await prisma.serviceTicket.findFirst({ where: { id: ticketId, userId } });
   if (!ticket) throw new ApiError(404, 'Ticket not found');
   if (ticket.status !== 'RESOLVED') throw new ApiError(400, 'Ticket is not yet resolved');
 
   return prisma.serviceTicket.update({
     where: { id: ticketId },
-    data: { status: 'VERIFIED_BY_USER', verifiedAt: new Date() },
+    data: {
+      status: 'VERIFIED_BY_USER',
+      verifiedAt: new Date(),
+      ...(vendorRating !== undefined && { vendorRating }),
+      ...(vendorRatingComment !== undefined && { vendorRatingComment }),
+    },
+  });
+}
+
+async function reopenTicket(userId, ticketId, reason) {
+  const ticket = await prisma.serviceTicket.findFirst({ where: { id: ticketId, userId } });
+  if (!ticket) throw new ApiError(404, 'Ticket not found');
+  if (ticket.status !== 'RESOLVED') throw new ApiError(400, 'Only a resolved ticket can be reopened');
+
+  return prisma.serviceTicket.update({
+    where: { id: ticketId },
+    data: { status: 'IN_PROGRESS', reopenReason: reason, resolvedAt: null },
+  });
+}
+
+async function withdrawTicket(userId, ticketId) {
+  const ticket = await prisma.serviceTicket.findFirst({ where: { id: ticketId, userId } });
+  if (!ticket) throw new ApiError(404, 'Ticket not found');
+  if (ticket.status !== 'OPEN' || ticket.vendorName) {
+    throw new ApiError(400, 'This ticket can no longer be withdrawn');
+  }
+
+  await prisma.ticketComment.deleteMany({ where: { ticketId } });
+  await prisma.serviceTicket.delete({ where: { id: ticketId } });
+}
+
+async function getTicketComments(userId, ticketId) {
+  const ticket = await prisma.serviceTicket.findFirst({ where: { id: ticketId, userId } });
+  if (!ticket) throw new ApiError(404, 'Ticket not found');
+
+  return prisma.ticketComment.findMany({ where: { ticketId }, orderBy: { createdAt: 'asc' } });
+}
+
+async function addTicketComment(userId, ticketId, { text, photos }) {
+  const ticket = await prisma.serviceTicket.findFirst({ where: { id: ticketId, userId } });
+  if (!ticket) throw new ApiError(404, 'Ticket not found');
+
+  return prisma.ticketComment.create({
+    data: { ticketId, authorId: userId, authorRole: 'USER', text, photos: photos || [] },
   });
 }
 
@@ -232,10 +361,12 @@ async function getMyVideoTours(userId) {
 const disputeService = require('../disputes/disputes.service');
 
 module.exports = {
-  requestPhoneOtp, verifyPhoneOtp, getMyLeads, rateLead, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getMyLeads, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
+  formatProfileSettings,
   updateConsent,
   getDocuments, uploadDocument, getSubscriptions,
   raiseTicket, getMyTickets, getMyTicketById, verifyTicket,
+  reopenTicket, withdrawTicket, getTicketComments, addTicketComment,
   createLoanApplication, getMyLoanApplications, getLoanApplicationById,
   requestVideoTour, getMyVideoTours,
   raiseDispute:    disputeService.raiseDispute,

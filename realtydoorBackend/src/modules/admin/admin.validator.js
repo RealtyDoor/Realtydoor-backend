@@ -25,6 +25,10 @@ const updateLoanStatusSchema = z.object({
     'SENT_TO_BANK', 'AWAITING_SANCTION', 'SANCTIONED', 'DISBURSED', 'REJECTED',
   ], { errorMap: () => ({ message: 'Invalid loan status' }) }),
   adminNote: z.string().max(1000).optional(),
+  interestRatePct:   z.number().positive().max(100).optional(),
+  tenureMonths:      z.number().int().positive().optional(),
+  emiPaise:          z.number().int().positive().optional(),
+  sanctionLetterUrl: z.string().url().optional(),
 });
 
 const changeUserRoleSchema = z.object({

@@ -6,6 +6,8 @@ model Property {
   slug            String         @unique
   description     String
   price           Float?
+  previousPrice   Int?
+  priceChange6m   Int?
   monthlyRent     Float?
   priceNegotiable Boolean        @default(false)
   propertyType    PropertyType
@@ -21,6 +23,7 @@ model Property {
   // Physical details
   bhk            Int?
   bathrooms      Int?
+  balconies      Int?
   carpetArea     Float?
   builtUpArea    Float?
   plotArea       Float?
@@ -30,6 +33,10 @@ model Property {
   furnishing     String?
   facing         String?
   possessionDate DateTime?
+
+  // Demand signals
+  unitsLeft      Int?
+  viewsThisWeek  Int      @default(0)
 
   // Location
   address         String
@@ -82,6 +89,7 @@ model Property {
   b2bConnections      B2BConnection[]
   videoTourRequests   VideoTourRequest[]
   reviews             PropertyReview[]
+  serviceTickets      ServiceTicket[]
 
   @@index([publishStatus, isB2BOnly])
   @@index([partnerId])

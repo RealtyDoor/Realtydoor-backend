@@ -30,6 +30,7 @@ router.post('/verify-phone/otp', otpLimiter, ctrl.verifyPhoneOtp);
 // Inquiries tracker
 router.get('/leads', ctrl.getMyLeads);
 router.post('/leads/:leadId/rating', ctrl.rateLead);
+router.post('/leads/:id/cancel', ctrl.cancelLead);
 
 // Favorites (phone required — PRD §2.5)
 router.get('/favorites',  ctrl.getFavorites);
@@ -47,6 +48,10 @@ router.get('/tickets',              ctrl.getMyTickets);
 router.get('/tickets/:id',          ctrl.getMyTicketById);
 router.post('/tickets',             requirePhone, ctrl.raiseTicket);
 router.patch('/tickets/:id/verify', ctrl.verifyTicket);
+router.patch('/tickets/:id/reopen', ctrl.reopenTicket);
+router.delete('/tickets/:id',       ctrl.withdrawTicket);
+router.get('/tickets/:id/comments',  ctrl.getTicketComments);
+router.post('/tickets/:id/comments', ctrl.addTicketComment);
 
 // Loan applications
 router.post('/loan',     requirePhone, ctrl.createLoanApplication);

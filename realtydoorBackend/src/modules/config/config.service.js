@@ -13,6 +13,21 @@ async function getPublicConfig() {
   });
 }
 
+// ─── Typed readers for other modules to consume config at decision time ──────
+// Deliberately uncached — callers depend on an admin's edit taking effect on
+// the very next read, not after a TTL (see FRONTEND_HANDOFF_SPEC.md §9.1).
+
+async function getConfigValue(key, fallback = null) {
+  const entry = await prisma.platformConfig.findUnique({ where: { key } });
+  return entry ? entry.value : fallback;
+}
+
+async function getConfigNumber(key, fallback) {
+  const entry = await prisma.platformConfig.findUnique({ where: { key } });
+  const num = entry ? Number(entry.value) : NaN;
+  return Number.isFinite(num) ? num : fallback;
+}
+
 // ─── Admin ────────────────────────────────────────────────────────────────────
 
 async function adminListConfig() {
@@ -42,4 +57,7 @@ async function adminDeleteConfig(key) {
   return deleted;
 }
 
-module.exports = { getPublicConfig, adminListConfig, adminUpsertConfig, adminDeleteConfig };
+module.exports = {
+  getPublicConfig, adminListConfig, adminUpsertConfig, adminDeleteConfig,
+  getConfigValue, getConfigNumber,
+};

@@ -25,6 +25,7 @@ model EscrowTransaction {
 
   releasedByAdminId String?  @db.ObjectId
   adminNote         String?
+  autoEscalatedAt   DateTime? // set once an overdue-HELD notification has fired, so the daily job doesn't re-notify
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

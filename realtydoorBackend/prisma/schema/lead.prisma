@@ -28,6 +28,11 @@ model Lead {
   isOtpVerified        Boolean    @default(false)
   otpVerifiedAt        DateTime?
 
+  // Partner's request for Admin to unlock a locked OTP (§12.3) — a real,
+  // queryable queue, not just a notification. Only an admin action clears it.
+  otpOverrideRequestedByPartner Boolean   @default(false)
+  otpOverrideRequestedAt        DateTime?
+
   // WhatsApp buyer feedback cross-check (PRD §5 — Leakage 1)
   whatsappSentAt      DateTime?
   buyerFeedbackStatus BuyerFeedbackStatus?
@@ -74,6 +79,7 @@ model Lead {
   @@index([propertyId])
   @@index([buyerFeedbackStatus])
   @@index([dropRequestedByPartner])
+  @@index([otpOverrideRequestedByPartner])
   @@index([assignedPartnerId, status])
   @@index([status, createdAt])
   @@index([propertyId, status])

@@ -36,6 +36,13 @@ async function getAllEscrow(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getEscrowStats(req, res, next) {
+  try {
+    const stats = await service.getEscrowStats();
+    success(res, stats);
+  } catch (err) { next(err); }
+}
+
 async function verifyPayment(req, res, next) {
   try {
     const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
@@ -50,4 +57,4 @@ async function verifyPayment(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { createOrder, verifyPayment, releaseEscrow, refundEscrow, getAllEscrow };
+module.exports = { createOrder, verifyPayment, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats };

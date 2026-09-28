@@ -4,6 +4,7 @@ const ApiError = require('../../utils/ApiError');
 const { success, created } = require('../../utils/ApiResponse');
 const logger = require('../../lib/logger');
 const authService = require('./auth.service');
+const { formatProfileSettings } = require('../users/users.service');
 const {
   signupOtpSchema,
   signupVerifySchema,
@@ -71,6 +72,7 @@ async function getOnboardingStatus(req, res, next) {
 }
 
 function userProfile(u) {
+  const { notificationPreferences, city } = formatProfileSettings(u);
   return {
     id:              u.id,
     clerkId:         u.clerkId,
@@ -82,6 +84,16 @@ function userProfile(u) {
     role:            u.role,
     isNRI:           u.isNRI,
     profileImageUrl: u.profileImageUrl,
+    // Profile & settings
+    address:         u.address || null,
+    language:        u.language || null,
+    notificationPreferences,
+    // Onboarding preferences
+    buyerType: u.buyerType || null,
+    city:      city || null,
+    budget:    u.budget || null,
+    bhk:       u.bhk || [],
+    timeline:  u.timeline || null,
     // Partner-specific
     partnerSubType:  u.partnerSubType  || null,
     companyName:     u.companyName     || null,

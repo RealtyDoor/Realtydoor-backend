@@ -1,3 +1,24 @@
+// ─── SERVICE REQUEST ──────────────────────────────────────────────────────────
+// Inbound interest from the public Services page / "request a callback"
+// banners — a distinct lead type from ContactMessage so it can be triaged and
+// reported on per-service (§6.2), instead of folded into generic contact copy.
+
+model ServiceRequest {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  name       String
+  phone      String
+  email      String?
+  serviceIds String[] @db.ObjectId
+  note       String?
+  source     String
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([isRead])
+  @@index([createdAt])
+  @@index([serviceIds])
+}
+
 // ─── SERVICE CATALOG ──────────────────────────────────────────────────────────
 // Post-purchase services sold to users (MVP revenue stream 1).
 // category: MAINTENANCE | CONSTRUCTION | LEGAL | LOAN | VALUATION
@@ -52,21 +73,29 @@ model ServiceTicket {
   user           User             @relation(fields: [userId], references: [id])
   subscriptionId String           @db.ObjectId
   subscription   UserSubscription @relation(fields: [subscriptionId], references: [id])
+  propertyId     String?          @db.ObjectId
+  property       Property?        @relation(fields: [propertyId], references: [id])
   subject        String
   description    String
+  photos         String[]
   // category: PLUMBING | ELECTRICAL | PAINTING | GENERAL
   category       String?
   status         TicketStatus     @default(OPEN)
   // priority: NORMAL | HIGH | URGENT
   priority       String           @default("NORMAL")
   adminNotes     String?
+  reopenReason   String?
   resolutionUrls String[]
   vendorName     String?
   vendorPhone    String?
+  vendorRating        Int?
+  vendorRatingComment String?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   resolvedAt     DateTime?
   verifiedAt     DateTime?
+
+  comments TicketComment[]
 
   @@index([userId])
   @@index([subscriptionId])
@@ -74,4 +103,21 @@ model ServiceTicket {
   @@index([status, createdAt])
   @@index([userId, status])
   @@index([subscriptionId, status])
+}
+
+// ─── TICKET COMMENT ───────────────────────────────────────────────────────────
+// Thread visible to both the buyer (ticket owner) and Admin's ticket detail view.
+
+model TicketComment {
+  id         String        @id @default(auto()) @map("_id") @db.ObjectId
+  ticketId   String        @db.ObjectId
+  ticket     ServiceTicket @relation(fields: [ticketId], references: [id])
+  authorId   String        @db.ObjectId
+  authorRole String
+  text       String
+  photos     String[]
+  createdAt  DateTime      @default(now())
+
+  @@index([ticketId])
+  @@index([ticketId, createdAt])
 }

@@ -148,6 +148,14 @@ Returns the full profile for the authenticated user including active subscriptio
     "role": "PARTNER",
     "isNRI": false,
     "profileImageUrl": "https://img.clerk.com/...",
+    "address": null,
+    "language": "en",
+    "notificationPreferences": { "push": true, "email": true, "whatsapp": true, "marketing": false, "visitReminders": true },
+    "buyerType": null,
+    "city": null,
+    "budget": null,
+    "bhk": [],
+    "timeline": null,
     "partnerSubType": "AGENT",
     "companyName": "RealtyPro Solutions",
     "bio": "10 years in Pune real estate.",
@@ -406,6 +414,7 @@ Search published, non-B2B properties.
         "listingType": "SALE",
         "propertyStatus": "READY_TO_MOVE",
         "bhk": 3,
+        "balconies": 2,
         "carpetArea": 1200,
         "locality": "Baner",
         "city": "Pune",
@@ -416,7 +425,11 @@ Search published, non-B2B properties.
         "reraNumber": "P52100012345",
         "createdAt": "2024-01-10T00:00:00.000Z",
         "facing": "East",
-        "furnishing": "Semi-Furnished"
+        "furnishing": "Semi-Furnished",
+        "previousPrice": 9000000,
+        "priceChange6m": -5,
+        "unitsLeft": 3,
+        "viewsThisWeek": 12
       }
     ],
     "pagination": {
@@ -430,6 +443,8 @@ Search published, non-B2B properties.
   }
 }
 ```
+
+`previousPrice`, `priceChange6m`, `unitsLeft`, `balconies` are all `null` until an admin sets them on the listing. `viewsThisWeek` increments on every `GET /api/properties/:slug` and resets to `0` every Monday at midnight.
 
 ---
 
@@ -461,11 +476,18 @@ Returns up to 12 featured approved listings.
       "coverImageIndex": 0,
       "isVerified": true,
       "facing": "North",
-      "furnishing": "Fully Furnished"
+      "furnishing": "Fully Furnished",
+      "balconies": 3,
+      "previousPrice": null,
+      "priceChange6m": null,
+      "unitsLeft": null,
+      "viewsThisWeek": 4
     }
   ]
 }
 ```
+
+Note: this list is cached for 10 minutes (`FEATURED_PROPERTIES` key) — a cache entry written before the new fields were added won't show them until it naturally expires or an admin edit invalidates it.
 
 ---
 
@@ -992,6 +1014,46 @@ Schedule a site visit and send a 4-digit OTP to the buyer via WhatsApp.
 
 ---
 
+### POST /api/leads/partner/:id/resend-otp
+
+Resends the site-visit OTP without moving the scheduled visit time (unlike `schedule-visit`, which would also reset it). Reuses the same `site_visit_otp` WhatsApp template — no new Meta template approval needed.
+
+**Auth:** PARTNER + KYC verified (rate-limited)
+
+**Request Body:** _(none)_
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Success", "data": { "message": "A new OTP has been sent to the buyer via WhatsApp." } }
+```
+
+Deliberately does **not** reset the 3-attempt lockout counter — a resend can't be used to repeatedly reset the anti-leakage lock. If the OTP is currently locked, this returns `429` instead of sending anything; use `request-otp-override` in that case.
+
+**Errors:** `404` lead not found or not yours · `400` no site visit scheduled · `429` OTP is locked.
+
+---
+
+### POST /api/leads/partner/:id/request-otp-override
+
+Flags a locked lead for Admin to review and unlock manually. This endpoint only requests — it never unlocks the OTP itself.
+
+**Auth:** PARTNER + KYC verified
+
+**Request Body:** _(none)_
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Success", "data": { "message": "Admin has been notified." } }
+```
+
+Sets `otpOverrideRequestedByPartner`/`otpOverrideRequestedAt` on the lead (a real, queryable queue) and broadcasts a notification to every admin.
+
+**Errors:** `404` lead not found or not yours · `400` the OTP isn't currently locked.
+
+---
+
 ### POST /api/leads/partner/:id/verify-otp
 
 Verify the 4-digit site-visit OTP. Reveals buyer's full phone number on success.
@@ -1155,17 +1217,28 @@ Verify the 6-digit OTP to confirm phone ownership.
 
 ### PATCH /api/user/profile
 
-Update display name and NRI flag.
+Update profile, settings, and onboarding preferences.
 
 **Auth:** USER
 
 **Request Body:**
 
 ```json
-{ "name": "Suresh Mehta", "isNRI": false }
+{
+  "name": "Suresh Mehta",
+  "isNRI": false,
+  "address": "123 MG Road, Bengaluru",
+  "language": "kn",
+  "notificationPreferences": { "push": false, "whatsapp": true, "marketing": true },
+  "buyerType": "INVESTOR",
+  "city": "Bengaluru",
+  "budget": "80L-1.2Cr",
+  "bhk": ["2", "3"],
+  "timeline": "NOW"
+}
 ```
 
-Both fields are optional. At least one must be provided.
+All fields are optional (at least one must be provided). `language`: `en` · `kn` · `hi`. `notificationPreferences` is a partial object — send only the keys you want to change (`push`, `email`, `whatsapp`, `marketing`, `visitReminders`); untouched keys keep their existing value. `buyerType`: `BUYER` · `RENTER` · `INVESTOR`. `timeline`: `NOW` · `3_6_MONTHS` · `BROWSING`. The `buyerType`/`city`/`budget`/`bhk`/`timeline` group is the mandatory "let's get started" step collected right after Google + phone verification.
 
 **Response `200`:**
 
@@ -1173,9 +1246,16 @@ Both fields are optional. At least one must be provided.
 {
   "success": true,
   "message": "Profile updated",
-  "data": { "id": "64user...", "name": "Suresh Mehta", "isNRI": false }
+  "data": {
+    "id": "64user...", "name": "Suresh Mehta", "isNRI": false,
+    "address": "123 MG Road, Bengaluru", "language": "kn",
+    "notificationPreferences": { "push": false, "email": true, "whatsapp": true, "marketing": true, "visitReminders": true },
+    "buyerType": "INVESTOR", "city": "Bengaluru", "budget": "80L-1.2Cr", "bhk": ["2", "3"], "timeline": "NOW"
+  }
 }
 ```
+
+Note: `city` here is the buyer's *preferred* city (an onboarding preference, stored internally as `preferredCity`) — unrelated to any property's own `city` field. The full profile (including all of the above) is also readable from `GET /api/auth/me`, so a second device/session picks up the same preferences.
 
 ---
 
@@ -1275,6 +1355,30 @@ Buyer rates the partner assigned to a lead. Allowed only once the lead's `status
 
 ---
 
+### POST /api/user/leads/:id/cancel
+
+Buyer cancels their own inquiry, with a conditional Razorpay refund.
+
+**Auth:** USER (must own the lead)
+
+**Request Body:**
+
+```json
+{ "reason": "Found a better option", "reasonLabel": "Changed my mind" }
+```
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Inquiry cancelled", "data": { "refund": { "amount": 60000, "refundId": "rfnd_...", "refundTo": "original payment method", "eta": "5-7 business days" } } }
+```
+
+`refund` is present only if there was an active `HELD` escrow within the refund window (`escrowRefundWindowHours` config, default 48h) — a real Razorpay refund is issued in that case. If the escrow was only `PAYMENT_PENDING` (nothing captured yet), it's just marked `CANCELLED`, no refund object. If there's no active escrow, or the `HELD` escrow is outside the window, `refund` is omitted and the lead still closes.
+
+**Errors:** `404` lead not found or not yours · `400` inquiry already closed/dropped.
+
+---
+
 ### GET /api/user/favorites
 
 All properties the user has saved.
@@ -1369,7 +1473,7 @@ Upload a document.
 | Field | Type | Description |
 |-------|------|-------------|
 | `file` | file | Single file |
-| `documentType` | string | `PAN_CARD` · `AADHAR` · `SALARY_SLIP` · `FORM_16` · `BANK_STATEMENT` |
+| `documentType` | string | `PAN_CARD` · `AADHAR` · `SALARY_SLIP` · `FORM_16` · `BANK_STATEMENT` · `PASSPORT` · `OCI_PIO_CARD` · `POA_DRAFT` · `POA_NOTARIZED` · `NRE_NRO_PROOF` (the last five are for NRI users) |
 
 **Response `201`:**
 
@@ -1414,6 +1518,7 @@ All service subscriptions with associated tickets.
       "currency": "INR",
       "startDate": "2024-01-10T00:00:00.000Z",
       "endDate": "2025-01-10T00:00:00.000Z",
+      "service": { "name": "Maintenance Premium", "category": "MAINTENANCE" },
       "tickets": [
         { "id": "64tkt...", "subject": "Plumbing leak", "status": "OPEN", "createdAt": "..." }
       ]
@@ -1493,12 +1598,15 @@ Raise a service ticket under an active subscription.
   "subject": "Plumbing leak in bathroom",
   "description": "Slow leak under the wash basin.",
   "category": "PLUMBING",
-  "priority": "HIGH"
+  "priority": "HIGH",
+  "propertyId": "64prop...",
+  "photos": ["https://cdn.realtydoor.in/tickets/leak1.jpg"]
 }
 ```
 
 `category`: `PLUMBING` · `ELECTRICAL` · `PAINTING` · `GENERAL`  
-`priority`: `NORMAL` (default) · `HIGH` · `URGENT`
+`priority`: `NORMAL` (default) · `HIGH` · `URGENT`  
+`propertyId` and `photos` are both optional.
 
 **Response `201`:**
 
@@ -1511,6 +1619,8 @@ Raise a service ticket under an active subscription.
     "subject": "Plumbing leak in bathroom",
     "status": "OPEN",
     "priority": "HIGH",
+    "propertyId": "64prop...",
+    "photos": ["https://cdn.realtydoor.in/tickets/leak1.jpg"],
     "createdAt": "2024-02-01T00:00:00.000Z"
   }
 }
@@ -1520,13 +1630,109 @@ Raise a service ticket under an active subscription.
 
 ---
 
+### PATCH /api/user/tickets/:id/reopen
+
+Reopen a ticket the user believes wasn't actually fixed. Only valid when `status === 'RESOLVED'`.
+
+**Auth:** USER
+
+**Request Body:**
+
+```json
+{ "reason": "The leak came back after two days" }
+```
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Ticket reopened",
+  "data": { "id": "64tkt...", "status": "IN_PROGRESS", "reopenReason": "The leak came back after two days", "resolvedAt": null }
+}
+```
+
+**Errors:** `404` not found · `400` ticket is not `RESOLVED`.
+
+---
+
+### DELETE /api/user/tickets/:id
+
+Withdraw a ticket. Only valid when `status === 'OPEN'` and no vendor has been assigned yet.
+
+**Auth:** USER
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Ticket withdrawn", "data": null }
+```
+
+**Errors:** `404` not found · `400` ticket is not `OPEN`, or a vendor is already assigned.
+
+---
+
+### GET /api/user/tickets/:id/comments
+
+Full comment thread for a ticket — same thread the admin ticket detail view sees.
+
+**Auth:** USER (must own the ticket)
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    { "id": "64cmt...", "ticketId": "64tkt...", "authorId": "64usr...", "authorRole": "USER", "text": "Any update on this?", "photos": [], "createdAt": "..." }
+  ]
+}
+```
+
+**Errors:** `404` if the ticket doesn't exist or isn't yours (never reveals someone else's ticket by ID).
+
+---
+
+### POST /api/user/tickets/:id/comments
+
+Post a comment to the thread.
+
+**Auth:** USER (must own the ticket)
+
+**Request Body:**
+
+```json
+{ "text": "Any update on this?", "photos": [] }
+```
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "Comment posted",
+  "data": { "id": "64cmt...", "ticketId": "64tkt...", "authorId": "64usr...", "authorRole": "USER", "text": "Any update on this?", "photos": [], "createdAt": "..." }
+}
+```
+
+**Errors:** `404` not found or not yours.
+
+---
+
 ### PATCH /api/user/tickets/:id/verify
 
 Confirm service was completed. Moves ticket to `VERIFIED_BY_USER`.
 
 **Auth:** USER
 
-**Request Body:** _(none)_
+**Request Body:**
+
+```json
+{ "vendorRating": 4, "vendorRatingComment": "Good work, bit slow" }
+```
+
+Both fields optional.
 
 **Response `200`:**
 
@@ -1534,7 +1740,7 @@ Confirm service was completed. Moves ticket to `VERIFIED_BY_USER`.
 {
   "success": true,
   "message": "Ticket verified and closed",
-  "data": { "id": "64tkt...", "status": "VERIFIED_BY_USER", "verifiedAt": "..." }
+  "data": { "id": "64tkt...", "status": "VERIFIED_BY_USER", "verifiedAt": "...", "vendorRating": 4, "vendorRatingComment": "Good work, bit slow" }
 }
 ```
 
@@ -1882,6 +2088,24 @@ Update partner profile. Fields `role`, `kycStatus`, `kycDocumentUrls`, `email` a
 
 ---
 
+### POST /api/partner/profile/photo
+
+Upload/replace the partner's profile photo.
+
+**Auth:** PARTNER
+
+**Request:** `multipart/form-data`, field name `photo` (jpg/png/webp).
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Profile photo updated", "data": { "id": "64partner...", "profileImageUrl": "https://...s3.../partners/profile-photos/abc123.jpg" } }
+```
+
+**Errors:** `400` no file provided.
+
+---
+
 ### GET /api/partner/listings
 
 Partner's own property listings.
@@ -1953,6 +2177,32 @@ Partner finance / escrow summary.
 ```
 
 `escrowHeld` is the sum in ₹ of HELD escrow on the partner's closed leads.
+
+---
+
+### GET /api/partner/ratings
+
+Ratings buyers have left for this partner. Backed by `Lead.buyerRating`/`buyerRatingComment` (set via `POST /api/user/leads/:leadId/rating`) — there's no separate rating model, each `Lead` already scopes one buyer's rating to one partner.
+
+**Auth:** PARTNER + KYC verified
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "average": 4.5,
+    "count": 2,
+    "ratings": [
+      { "leadId": "64lead...", "rating": 5, "comment": "Great partner", "ratedAt": "...", "buyerName": "Suresh Mehta" }
+    ]
+  }
+}
+```
+
+`average` is `null` when `count` is 0.
 
 ---
 
@@ -2643,7 +2893,7 @@ Submit a contact form (authenticated or public).
 }
 ```
 
-`phone` optional. `name` min 2. `subject` min 3. `message` min 10 chars.
+`phone` and `email` are both optional (most mobile callback-form submitters don't type an email). `name` min 2. `subject` min 3. `message` min 10 chars.
 
 **Response `201`:**
 
@@ -2654,6 +2904,37 @@ Submit a contact form (authenticated or public).
   "data": { "id": "64msg..." }
 }
 ```
+
+---
+
+### POST /api/service-requests
+
+Interest from the public Services page or a "request a callback" banner — a distinct lead type from `/api/contact`, tagged with which service(s) and where it came from, so it can be reported on per-service.
+
+**Auth:** Public
+
+**Request Body:**
+
+```json
+{
+  "name": "Priya Sharma",
+  "phone": "+919876543210",
+  "email": "priya@example.com",
+  "serviceIds": ["64svc1...", "64svc2..."],
+  "note": "Interested in both services",
+  "source": "services-page"
+}
+```
+
+`email` and `note` are optional. `serviceIds` requires at least one valid `Service` ID.
+
+**Response `201`:**
+
+```json
+{ "success": true, "message": "We will get back to you shortly.", "data": { "id": "64svcreq..." } }
+```
+
+**Errors:** `400` no `serviceIds` provided, or one is not a valid ObjectId.
 
 ---
 
@@ -3200,11 +3481,13 @@ Assign lead to a KYC-verified partner.
 
 ### GET /api/admin/properties
 
-Properties with `PENDING_APPROVAL` status (paginated).
+Properties filtered by status (paginated).
 
 **Auth:** ADMIN
 
-**Query Parameters:** `page`, `limit`
+**Query Parameters:** `page`, `limit`, `status` (`PENDING_APPROVAL` · `APPROVED` · `REJECTED` · `ARCHIVED` — defaults to `PENDING_APPROVAL` when omitted)
+
+Each of the four status tabs on the admin Property Queue page now returns rows that actually match that status — previously `status` was ignored entirely and every tab showed pending-only rows.
 
 **Response `200`:**
 
@@ -3577,17 +3860,46 @@ All escrow transactions (paginated).
         "buyerId": "64user...",
         "razorpayOrderId": "order_...",
         "razorpayPaymentId": "pay_...",
+        "razorpayRefundId": null,
         "amount": 50000,
         "currency": "INR",
         "status": "HELD",
         "heldAt": "2024-01-16T00:00:00.000Z",
-        "createdAt": "2024-01-15T00:00:00.000Z"
+        "createdAt": "2024-01-15T00:00:00.000Z",
+        "lead": {
+          "buyerName": "Suresh Mehta",
+          "buyerEmail": "suresh@example.com",
+          "property": { "title": "3 BHK Flat in Baner", "locality": "Baner", "city": "Pune" },
+          "assignedPartner": { "name": "Rajdeep Kumar", "companyName": "RealtyPro Solutions" }
+        }
       }
     ],
     "pagination": { "total": 20, "page": 1, "limit": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
   }
 }
 ```
+
+Each row's `lead` object carries buyer/property/partner context — previously absent, so the admin UI showed those three columns blank.
+
+---
+
+### GET /api/admin/escrow/stats
+
+Real aggregate figures over the whole table — not sampled from whichever page happened to be loaded.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": { "heldSum": 150000, "refundedSum": 0, "releasedSumThisMonth": 250000, "avgHoldDays": 6.5 }
+}
+```
+
+`avgHoldDays` is the average of `releasedAt - createdAt` (in days) across all `RELEASED` transactions.
 
 ---
 
@@ -3683,8 +3995,12 @@ All support tickets (paginated).
 |-------|------|-------------|
 | `status` | string | `OPEN` · `IN_PROGRESS` · `RESOLVED` · `VERIFIED_BY_USER` |
 | `userId` | string | Filter by user ID |
+| `category` | string | `PLUMBING` · `ELECTRICAL` · `PAINTING` · `GENERAL` |
+| `search` | string | Free-text, matches `subject`, `description`, or `vendorName` (case-insensitive) |
 | `page` | number | Default: `1` |
 | `limit` | number | Default: `20` |
+
+`category` and `search` compose correctly with pagination — the total/page math reflects the filtered set, not the whole table.
 
 **Response `200`:**
 
@@ -3708,6 +4024,26 @@ All support tickets (paginated).
   }
 }
 ```
+
+---
+
+### GET /api/admin/tickets/stats
+
+The four stat cards on the admin tickets page — computed over the full table, not the currently-loaded page.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": { "unassigned": 3, "inProgress": 5, "resolvedThisWeek": 2, "avgResolutionDays": 1.8 }
+}
+```
+
+`unassigned` counts tickets with no `vendorName` set. `resolvedThisWeek` counts by `resolvedAt` falling in the current week (Sunday–Saturday), regardless of current status.
 
 ---
 
@@ -3792,7 +4128,7 @@ All loan applications (paginated).
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `status` | string | `DOCUMENTS_PENDING` · `DOCUMENTS_SUBMITTED` · `DOCUMENTS_VERIFIED` · `SENT_TO_BANK` · `AWAITING_SANCTION` · `SANCTIONED` · `DISBURSED` · `REJECTED` |
+| `status` | string or string[] | Any of `DOCUMENTS_PENDING` · `DOCUMENTS_SUBMITTED` · `DOCUMENTS_VERIFIED` · `SENT_TO_BANK` · `AWAITING_SANCTION` · `SANCTIONED` · `DISBURSED` · `REJECTED`. Pass multiple (`?status=A&status=B`) to match any of them — used by tabs like "Pending" (5 statuses) or "Sanctioned" (2 statuses) |
 | `userId` | string | Filter by user ID |
 | `page` | number | Default: `1` |
 | `limit` | number | Default: `20` |
@@ -3826,15 +4162,24 @@ All loan applications (paginated).
 
 ### PATCH /api/admin/loan/:id/status
 
-Update loan status. Sets `sanctionedAt` on `SANCTIONED`, `disbursedAt` on `DISBURSED`.
+Update loan status. Sets `sanctionedAt` on `SANCTIONED`, `disbursedAt` on `DISBURSED`. Also accepts the sanction details, independent of status.
 
 **Auth:** ADMIN
 
 **Request Body:**
 
 ```json
-{ "status": "SANCTIONED", "adminNote": "Sanctioned by HDFC. Ref: HDFC2024012345." }
+{
+  "status": "SANCTIONED",
+  "adminNote": "Sanctioned by HDFC. Ref: HDFC2024012345.",
+  "interestRatePct": 8.5,
+  "tenureMonths": 240,
+  "emiPaise": 4500000,
+  "sanctionLetterUrl": "https://cdn.realtydoor.in/loans/sanction-64loan.pdf"
+}
 ```
+
+`interestRatePct`, `tenureMonths`, `emiPaise`, `sanctionLetterUrl` are all optional — set them whenever the information is available, not only alongside a status change.
 
 **Response `200`:**
 
@@ -3842,11 +4187,37 @@ Update loan status. Sets `sanctionedAt` on `SANCTIONED`, `disbursedAt` on `DISBU
 {
   "success": true,
   "message": "Loan status updated",
-  "data": { "id": "64loan...", "status": "SANCTIONED", "sanctionedAt": "...", "disbursedAt": null }
+  "data": {
+    "id": "64loan...", "status": "SANCTIONED", "sanctionedAt": "...", "disbursedAt": null,
+    "interestRatePct": 8.5, "tenureMonths": 240, "emiPaise": 4500000,
+    "sanctionLetterUrl": "https://cdn.realtydoor.in/loans/sanction-64loan.pdf"
+  }
 }
 ```
 
 **Errors:** `404` loan not found.
+
+---
+
+### GET /api/admin/loan/bank-stats
+
+Per-bank aggregate — applications, sanctioned count, close rate, average requested amount — for the admin loan page's bank cards.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    { "bank": "HDFC Bank", "applications": 12, "sanctioned": 5, "closeRatePct": 41.7, "avgRequestedPaise": 650000000 }
+  ]
+}
+```
+
+`sanctioned` counts loans currently `SANCTIONED` or `DISBURSED`. Only banks with at least one application appear.
 
 ---
 

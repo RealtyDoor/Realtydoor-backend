@@ -3,7 +3,8 @@ const ApiError = require('../../utils/ApiError');
 const { formatPhone } = require('../../lib/phoneUtils');
 const { generate, expiresAt, isExpired, isLocked, lockUntil, maxAttemptsReached } = require('../../lib/otp');
 const { sendSiteVisitOtp } = require('../../lib/wati');
-const { createNotification } = require('../../lib/notifications');
+const { createNotification, broadcastNotification } = require('../../lib/notifications');
+const logger = require('../../lib/logger');
 const { sendLeadAssigned } = require('../../lib/email');
 const { createAuditLog } = require('../../lib/auditLog');
 
@@ -104,6 +105,60 @@ async function scheduleVisit(leadId, partnerId, scheduledAt) {
     logger.error('[scheduleVisit] WATI OTP send failed', { leadId, error: err.message });
   }
   return { message: 'Visit scheduled. OTP sent to buyer via WhatsApp.' };
+}
+
+// Resends the site-visit OTP without touching siteVisitScheduledAt (unlike
+// scheduleVisit) and deliberately does NOT reset otpAttempts/otpLockedUntil —
+// a resend must not be a free way to reset the 3-attempt anti-leakage lock
+// (§12.2). A locked lead can't resend at all; it has to go through the
+// admin-override request (§12.3) instead.
+async function resendOtp(leadId, partnerId) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!lead.siteVisitScheduledAt) throw new ApiError(400, 'No site visit scheduled for this lead');
+  if (isLocked(lead.otpLockedUntil)) {
+    throw new ApiError(429, 'OTP is locked after too many failed attempts. Request an admin override instead.');
+  }
+
+  const otp = generate();
+  const otpExp = expiresAt();
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: { siteVisitOTP: otp, otpGeneratedAt: new Date(), otpExpiresAt: otpExp },
+  });
+
+  try {
+    await sendSiteVisitOtp(lead.buyerPhone, otp);
+  } catch (err) {
+    logger.error('[resendOtp] WATI OTP send failed', { leadId, error: err.message });
+  }
+  return { message: 'A new OTP has been sent to the buyer via WhatsApp.' };
+}
+
+// Partner-side request only — flags the lead for Admin and notifies every
+// admin. It never unlocks the OTP itself; only an explicit admin action does.
+async function requestOtpOverride(leadId, partnerId) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!isLocked(lead.otpLockedUntil)) throw new ApiError(400, "This lead's OTP is not currently locked");
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: { otpOverrideRequestedByPartner: true, otpOverrideRequestedAt: new Date() },
+  });
+
+  const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
+  if (admins.length > 0) {
+    await broadcastNotification({
+      userIds: admins.map((a) => a.id),
+      title: 'OTP override requested',
+      message: `A partner requested an OTP unlock for a locked lead (buyer: ${lead.buyerName}).`,
+      type: 'OTP_OVERRIDE_REQUESTED',
+    });
+  }
+
+  return { message: 'Admin has been notified.' };
 }
 
 async function verifyOtp(leadId, partnerId, inputOtp) {
@@ -272,4 +327,4 @@ async function adminRejectDrop(leadId, adminId, ip) {
   return { message: 'Drop request rejected. Partner notified.' };
 }
 
-module.exports = { submitLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop };
+module.exports = { submitLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop };

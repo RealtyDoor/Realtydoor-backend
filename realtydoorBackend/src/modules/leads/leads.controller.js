@@ -32,6 +32,20 @@ async function scheduleVisit(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function resendOtp(req, res, next) {
+  try {
+    const result = await service.resendOtp(req.params.id, req.user.id);
+    success(res, result);
+  } catch (err) { next(err); }
+}
+
+async function requestOtpOverride(req, res, next) {
+  try {
+    const result = await service.requestOtpOverride(req.params.id, req.user.id);
+    success(res, result);
+  } catch (err) { next(err); }
+}
+
 async function verifyOtp(req, res, next) {
   try {
     const { otp } = verifyOtpSchema.parse(req.body);
@@ -81,4 +95,4 @@ async function rejectDrop(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { submit, getMyLeads, getLeadById, scheduleVisit, verifyOtp, uploadDocs, closeLead, requestDrop, approveDrop, rejectDrop };
+module.exports = { submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, approveDrop, rejectDrop };

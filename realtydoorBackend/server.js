@@ -18,6 +18,8 @@ const server = app.listen(PORT, () => {
   require('./src/jobs/expiredOtp').start();
   require('./src/jobs/stillDecidingFollowup').start();
   require('./src/jobs/cleanupIncompleteSignups').start();
+  require('./src/jobs/escrowAutoEscalate').start();
+  require('./src/jobs/resetWeeklyViews').start();
 });
 
 process.on('unhandledRejection', (err) => {

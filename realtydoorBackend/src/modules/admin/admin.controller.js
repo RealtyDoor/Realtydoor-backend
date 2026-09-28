@@ -51,7 +51,7 @@ async function assignLead(req, res, next) {
 async function getPendingProperties(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
-    const { data, total } = await service.getPendingProperties(skip, limit);
+    const { data, total } = await service.getPendingProperties(req.query, skip, limit);
     success(res, paginate(data, total, page, limit));
   } catch (err) { next(err); }
 }
@@ -146,9 +146,16 @@ async function getLoans(req, res, next) {
 
 async function updateLoanStatus(req, res, next) {
   try {
-    const { status, adminNote } = updateLoanStatusSchema.parse(req.body);
-    const loan = await service.updateLoanStatus(req.params.id, status, adminNote, req.user.id);
+    const { status, adminNote, ...extraFields } = updateLoanStatusSchema.parse(req.body);
+    const loan = await service.updateLoanStatus(req.params.id, status, adminNote, req.user.id, extraFields);
     success(res, loan, 'Loan status updated');
+  } catch (err) { next(err); }
+}
+
+async function getLoanBankStats(req, res, next) {
+  try {
+    const stats = await service.getLoanBankStats();
+    success(res, stats);
   } catch (err) { next(err); }
 }
 
@@ -181,6 +188,13 @@ async function updateTicket(req, res, next) {
     const { status, vendorName, vendorPhone } = updateTicketSchema.parse(req.body);
     const ticket = await service.updateTicketStatus(req.params.id, status, vendorName, vendorPhone);
     success(res, ticket, 'Ticket updated');
+  } catch (err) { next(err); }
+}
+
+async function getTicketStats(req, res, next) {
+  try {
+    const stats = await service.getTicketStats();
+    success(res, stats);
   } catch (err) { next(err); }
 }
 
@@ -439,8 +453,8 @@ module.exports = {
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   getPendingKyc, verifyKyc,
   getRevenue, getAuditLogs, getPartnerMetrics,
-  getTickets, getTicket, updateTicket,
-  getLoans, updateLoanStatus,
+  getTickets, getTicket, updateTicket, getTicketStats,
+  getLoans, updateLoanStatus, getLoanBankStats,
   getUsers, changeUserRole, getUserById, suspendUser,
   getPartnerById,
   getPropertyById,

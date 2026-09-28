@@ -13,6 +13,10 @@ const {
   raiseDisputeSchema,
   rateLeadSchema,
   updateConsentSchema,
+  reopenTicketSchema,
+  verifyTicketSchema,
+  ticketCommentSchema,
+  cancelLeadSchema,
 } = require('./users.validator');
 
 async function requestPhoneOtp(req, res, next) {
@@ -43,6 +47,14 @@ async function rateLead(req, res, next) {
     const data = rateLeadSchema.parse(req.body);
     const lead = await service.rateLead(req.user.id, req.params.leadId, data);
     success(res, lead, 'Rating submitted');
+  } catch (err) { next(err); }
+}
+
+async function cancelLead(req, res, next) {
+  try {
+    const data = cancelLeadSchema.parse(req.body);
+    const result = await service.cancelLead(req.user.id, req.params.id, data);
+    success(res, result, 'Inquiry cancelled');
   } catch (err) { next(err); }
 }
 
@@ -109,8 +121,39 @@ async function getMyTicketById(req, res, next) {
 
 async function verifyTicket(req, res, next) {
   try {
-    const ticket = await service.verifyTicket(req.user.id, req.params.id);
+    const data = verifyTicketSchema.parse(req.body);
+    const ticket = await service.verifyTicket(req.user.id, req.params.id, data);
     success(res, ticket, 'Ticket verified and closed');
+  } catch (err) { next(err); }
+}
+
+async function reopenTicket(req, res, next) {
+  try {
+    const { reason } = reopenTicketSchema.parse(req.body);
+    const ticket = await service.reopenTicket(req.user.id, req.params.id, reason);
+    success(res, ticket, 'Ticket reopened');
+  } catch (err) { next(err); }
+}
+
+async function withdrawTicket(req, res, next) {
+  try {
+    await service.withdrawTicket(req.user.id, req.params.id);
+    success(res, null, 'Ticket withdrawn');
+  } catch (err) { next(err); }
+}
+
+async function getTicketComments(req, res, next) {
+  try {
+    const comments = await service.getTicketComments(req.user.id, req.params.id);
+    success(res, comments);
+  } catch (err) { next(err); }
+}
+
+async function addTicketComment(req, res, next) {
+  try {
+    const data = ticketCommentSchema.parse(req.body);
+    const comment = await service.addTicketComment(req.user.id, req.params.id, data);
+    created(res, comment, 'Comment posted');
   } catch (err) { next(err); }
 }
 
@@ -182,10 +225,11 @@ async function getMyDisputes(req, res, next) {
 }
 
 module.exports = {
-  requestPhoneOtp, verifyPhoneOtp, getMyLeads, rateLead, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getMyLeads, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
   updateConsent,
   getDocuments, uploadDocument, getSubscriptions,
   raiseTicket, getMyTickets, getMyTicketById, verifyTicket,
+  reopenTicket, withdrawTicket, getTicketComments, addTicketComment,
   createLoanApplication, getMyLoanApplications, getLoanApplicationById,
   requestVideoTour, getMyVideoTours,
   raiseDispute, getMyDisputes,
