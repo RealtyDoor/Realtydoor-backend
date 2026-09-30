@@ -1,24 +1,24 @@
 // ─── PROPERTY ─────────────────────────────────────────────────────────────────
 
 model Property {
-  id              String         @id @default(auto()) @map("_id") @db.ObjectId
-  title           String
-  slug            String         @unique
-  description     String
-  price           Float?
-  previousPrice   Int?
-  priceChange6m   Int?
-  monthlyRent     Float?
-  priceNegotiable Boolean        @default(false)
-  propertyType    PropertyType
-  listingType     ListingType    @default(SALE)
-  propertyStatus  PropertyStatus @default(READY_TO_MOVE)
-  publishStatus   PublishStatus  @default(PENDING_APPROVAL)
-  rejectionNote   String?
-  adminEditNote   String?
-  isFeatured      Boolean        @default(false)
-  isFeaturedProject Boolean      @default(false)
-  isB2BOnly       Boolean        @default(false)
+  id                String         @id @default(auto()) @map("_id") @db.ObjectId
+  title             String
+  slug              String         @unique
+  description       String
+  price             Float?
+  previousPrice     Int?
+  priceChange6m     Int?
+  monthlyRent       Float?
+  priceNegotiable   Boolean        @default(false)
+  propertyType      PropertyType
+  listingType       ListingType    @default(SALE)
+  propertyStatus    PropertyStatus @default(READY_TO_MOVE)
+  publishStatus     PublishStatus  @default(PENDING_APPROVAL)
+  rejectionNote     String?
+  adminEditNote     String?
+  isFeatured        Boolean        @default(false)
+  isFeaturedProject Boolean        @default(false)
+  isB2BOnly         Boolean        @default(false)
 
   // Physical details
   bhk            Int?
@@ -35,8 +35,20 @@ model Property {
   possessionDate DateTime?
 
   // Demand signals
-  unitsLeft      Int?
-  viewsThisWeek  Int      @default(0)
+  unitsLeft     Int?
+  viewsThisWeek Int  @default(0)
+
+  // Project-level details (developer-led projects/townships, e.g. isFeaturedProject
+  // listings) — distinct from plotArea, which is per-unit, not the project's
+  // total footprint. All optional: a regular single-unit listing leaves these unset.
+  // No stored `rating` field here deliberately — a partner self-reporting
+  // their own project's rating would be misleading; rating is computed live
+  // from real PropertyReview rows instead (see properties.service.js).
+  developer     String?
+  landAreaValue Float?
+  landAreaUnit  String? // "acres", "sqft", etc. — free text, matches furnishing/facing convention
+  openSpacePct  Int?
+  totalUnits    Int?
 
   // Location
   address         String
@@ -61,7 +73,7 @@ model Property {
   floorPlanUrl    String?
   virtualTourUrl  String?
   videoUrl        String?
-  documents       Json[]   // [{ name, url, uploadedAt }] — brochure, sale agreement, RERA cert, etc.
+  documents       Json[] // [{ name, url, uploadedAt }] — brochure, sale agreement, RERA cert, etc.
 
   // Amenities
   amenities       String[]

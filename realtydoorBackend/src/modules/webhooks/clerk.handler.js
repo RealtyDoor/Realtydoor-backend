@@ -56,18 +56,20 @@ async function clerkWebhook(req, res) {
         logger.info('[ClerkWebhook] user.updated for unsynced clerkId — skipping', { clerkId: data.id });
       } else {
         const email = data.email_addresses?.[0]?.email_address;
-        const name  = [data.first_name, data.last_name].filter(Boolean).join(' ') || email;
         const metadataPhone = data.public_metadata?.phone;
-        const metadataRole  = data.public_metadata?.role;
 
         await prisma.user.update({
           where: { id: existing.id },
           data: {
-            name,
-            email,
-            profileImageUrl: data.image_url || null,
+            // name/profileImageUrl are owned by PATCH /user/profile once a
+            // row exists — this handler only ever fires for an existing row
+            // (see the `if (!existing)` branch above), so it must never
+            // overwrite them, same rule as /auth/sync's syncUser.
+            ...(email ? { email } : {}),
             ...(metadataPhone ? { phone: metadataPhone } : {}),
-            ...(metadataRole && metadataRole !== existing.role ? { role: metadataRole } : {}),
+            // role is DB-authoritative — this handler only ever touches an
+            // existing row, so publicMetadata.role must never be applied
+            // here at all (it only seeds a brand-new row, in syncUser).
           },
         });
         logger.info('[ClerkWebhook] user.updated synced', { clerkId: data.id });

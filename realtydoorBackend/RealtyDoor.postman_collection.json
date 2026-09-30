@@ -187,12 +187,14 @@
                 {
                   "key": "minPrice",
                   "value": "",
-                  "disabled": true
+                  "disabled": true,
+                  "description": "Filters monthlyRent instead of price when listingType is RENT or LEASE"
                 },
                 {
                   "key": "maxPrice",
                   "value": "",
-                  "disabled": true
+                  "disabled": true,
+                  "description": "Same monthlyRent/price switch as minPrice"
                 },
                 {
                   "key": "furnishing",
@@ -247,7 +249,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"price\":8500000,\"monthlyRent\":null,\"propertyType\":\"FLAT\",\"listingType\":\"SALE\",\"propertyStatus\":\"READY_TO_MOVE\",\"bhk\":3,\"carpetArea\":1200,\"locality\":\"Baner\",\"city\":\"Pune\",\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"],\"coverImageIndex\":0,\"isVerified\":true,\"isFeatured\":true,\"reraNumber\":\"P52100012345\",\"createdAt\":\"2026-05-01T10:00:00.000Z\"}],\"pagination\":{\"total\":4,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+              "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"price\":8500000,\"monthlyRent\":null,\"propertyType\":\"FLAT\",\"listingType\":\"SALE\",\"propertyStatus\":\"READY_TO_MOVE\",\"bhk\":3,\"carpetArea\":1200,\"locality\":\"Baner\",\"city\":\"Pune\",\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"],\"coverImageIndex\":0,\"isVerified\":true,\"isFeatured\":true,\"reraNumber\":\"P52100012345\",\"createdAt\":\"2026-05-01T10:00:00.000Z\",\"balconies\":null,\"furnishing\":\"Semi-Furnished\",\"facing\":\"East\",\"previousPrice\":null,\"priceChange6m\":null,\"unitsLeft\":null,\"viewsThisWeek\":12,\"builtUpArea\":1450,\"ageOfProperty\":2,\"floorNumber\":4,\"totalFloors\":12}],\"pagination\":{\"total\":4,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
             }
           ]
         },
@@ -310,7 +312,8 @@
                 "properties",
                 "{{propertySlug}}"
               ]
-            }
+            },
+            "description": "isB2BOnly listings 404 here too now (previously only excluded from search, not the direct slug fetch). Top-level flat fields are unchanged; property/propertyDetailsComparison/localityInsights are new, additive, nested views of the same data — see API.md for the full field-by-field notes on what is/isn't modeled (parking, legalVerified, agent stats, and project-level comparison fields are always null, never fabricated)."
           },
           "response": [
             {
@@ -329,7 +332,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"data\":{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"description\":\"Spacious 3 BHK apartment in the heart of Baner with premium amenities, ample parking, and excellent connectivity to Hinjewadi IT Park.\",\"price\":8500000,\"propertyType\":\"FLAT\",\"listingType\":\"SALE\",\"propertyStatus\":\"READY_TO_MOVE\",\"publishStatus\":\"APPROVED\",\"bhk\":3,\"bathrooms\":2,\"carpetArea\":1200,\"builtUpArea\":1450,\"floorNumber\":4,\"totalFloors\":12,\"furnishing\":\"Semi-Furnished\",\"facing\":\"East\",\"address\":\"Skyline Heights, Plot 12, Baner Road\",\"locality\":\"Baner\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"pincode\":\"411045\",\"latitude\":18.5596,\"longitude\":73.7769,\"nearbyLandmarks\":[\"D-Mart Baner\",\"Orchid School\",\"Baner Metro Station\"],\"isVerified\":true,\"reraNumber\":\"P52100012345\",\"bankApprovals\":[\"SBI\",\"HDFC\",\"ICICI\"],\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"],\"amenities\":[\"Gymnasium\",\"Swimming Pool\",\"24x7 Security\",\"CCTV\",\"Power Backup\"],\"partner\":{\"companyName\":\"RealtyPro Solutions\",\"partnerSubType\":\"AGENT\"},\"createdAt\":\"2026-05-01T10:00:00.000Z\",\"updatedAt\":\"2026-05-10T08:30:00.000Z\"}}"
+              "body": "{\"success\":true,\"data\":{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"description\":\"Spacious 3 BHK apartment in the heart of Baner with premium amenities, ample parking, and excellent connectivity to Hinjewadi IT Park.\",\"price\":8500000,\"propertyType\":\"FLAT\",\"listingType\":\"SALE\",\"propertyStatus\":\"READY_TO_MOVE\",\"publishStatus\":\"APPROVED\",\"bhk\":3,\"bathrooms\":2,\"carpetArea\":1200,\"builtUpArea\":1450,\"floorNumber\":4,\"totalFloors\":12,\"furnishing\":\"Semi-Furnished\",\"facing\":\"East\",\"address\":\"Skyline Heights, Plot 12, Baner Road\",\"locality\":\"Baner\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"pincode\":\"411045\",\"latitude\":18.5596,\"longitude\":73.7769,\"nearbyLandmarks\":[\"D-Mart Baner\",\"Orchid School\",\"Baner Metro Station\"],\"isVerified\":true,\"reraNumber\":\"P52100012345\",\"bankApprovals\":[\"SBI\",\"HDFC\",\"ICICI\"],\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"],\"amenities\":[\"Gymnasium\",\"Swimming Pool\",\"24x7 Security\",\"CCTV\",\"Power Backup\"],\"partner\":{\"id\":\"664partner1234567890abcd\",\"name\":\"Sunetra\",\"companyName\":\"RealtyPro Solutions\",\"partnerSubType\":\"AGENT\",\"kycStatus\":\"VERIFIED\",\"profileImageUrl\":null},\"createdAt\":\"2026-05-01T10:00:00.000Z\",\"updatedAt\":\"2026-05-10T08:30:00.000Z\",\"property\":{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"propertyType\":\"FLAT\",\"listingType\":\"SALE\",\"status\":\"APPROVED\",\"location\":{\"address\":\"Skyline Heights, Plot 12, Baner Road\",\"locality\":\"Baner\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"country\":\"India\",\"pincode\":\"411045\"},\"pricing\":{\"minPrice\":8500000,\"maxPrice\":8500000,\"monthlyRent\":null,\"priceNegotiable\":true,\"currency\":\"INR\",\"pricePerSqft\":7083},\"configuration\":{\"bhk\":3,\"bathrooms\":2,\"balconies\":null,\"facing\":\"East\",\"furnishing\":\"Semi-Furnished\"},\"area\":{\"carpetArea\":1200,\"builtUpArea\":1450,\"plotArea\":null,\"carpetEfficiency\":83,\"unit\":\"sqft\"},\"floorDetails\":{\"floorNumber\":4,\"totalFloors\":12},\"propertyAge\":null,\"parking\":null,\"description\":\"Spacious 3 BHK apartment in the heart of Baner with premium amenities, ample parking, and excellent connectivity to Hinjewadi IT Park.\",\"media\":{\"coverImage\":\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\",\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"],\"totalImages\":1,\"videoTour\":{\"available\":false,\"url\":null},\"virtualTour\":{\"available\":false,\"url\":null},\"floorPlanUrl\":null},\"verification\":{\"realtyDoorVerified\":true,\"reraVerified\":true,\"reraNumber\":\"P52100012345\",\"legalVerified\":null,\"loanApproved\":true,\"bankApprovals\":[\"SBI\",\"HDFC\",\"ICICI\"]},\"badges\":[\"REALTYDOOR_VERIFIED\",\"BANK_APPROVED\"],\"amenities\":[\"Gymnasium\",\"Swimming Pool\",\"24x7 Security\",\"CCTV\",\"Power Backup\"],\"societyFeatures\":[],\"propertyMetrics\":{\"carpetEfficiency\":83,\"unitsRemaining\":null,\"weeklyViews\":12,\"priceIncreaseLast6Months\":null},\"agent\":{\"id\":\"664partner1234567890abcd\",\"name\":\"Sunetra\",\"companyName\":\"RealtyPro Solutions\",\"designation\":\"AGENT\",\"verified\":true,\"profileImage\":null},\"timestamps\":{\"createdAt\":\"2026-05-01T10:00:00.000Z\",\"updatedAt\":\"2026-05-10T08:30:00.000Z\"},\"projectDetails\":{\"developer\":\"Purvankara Limited\",\"projectStatus\":\"PRE_LAUNCH\",\"rating\":4.5,\"ratingCount\":2,\"landArea\":{\"value\":3.2,\"unit\":\"acres\"},\"openSpace\":80,\"totalUnits\":260}},\"propertyDetailsComparison\":{\"title\":\"Similar Properties\",\"properties\":[{\"id\":\"664peer1234567890abcdef\",\"name\":\"2 BHK Flat in Aundh\",\"slug\":\"2-bhk-flat-in-aundh-1717000001000\",\"location\":{\"locality\":\"Aundh\",\"city\":\"Pune\"},\"image\":\"https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800\",\"propertyType\":\"FLAT\",\"basicInformation\":{\"developer\":\"Aashrithaa Developers\",\"projectStatus\":\"UNDER_CONSTRUCTION\",\"rating\":4.2,\"ratingCount\":14,\"propertyType\":\"FLAT\",\"landArea\":{\"value\":5,\"unit\":\"acres\"},\"openSpace\":70,\"totalUnits\":400}}]},\"localityInsights\":{\"locality\":\"Baner\",\"lastUpdated\":\"2026-05-01T00:00:00.000Z\",\"market\":{\"averagePrice\":5490,\"currency\":\"INR\",\"priceUnit\":\"sqft\",\"oneYearAppreciation\":8.4,\"rentYield\":3.2,\"estimatedMonthlyRent\":35000},\"nearbyPlaces\":[{\"name\":\"D-Mart Baner\"},{\"name\":\"Orchid School\"},{\"name\":\"Baner Metro Station\"}]}}}"
             },
             {
               "name": "404 – Not Found",
@@ -363,7 +366,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"3 BHK Flat in Baner\",\n  \"description\": \"Spacious 3 BHK apartment in the heart of Baner with premium amenities, ample parking, and excellent connectivity to Hinjewadi IT Park.\",\n  \"price\": 8500000,\n  \"propertyType\": \"FLAT\",\n  \"listingType\": \"SALE\",\n  \"propertyStatus\": \"READY_TO_MOVE\",\n  \"bhk\": 3,\n  \"bathrooms\": 2,\n  \"carpetArea\": 1200,\n  \"builtUpArea\": 1450,\n  \"floorNumber\": 4,\n  \"totalFloors\": 12,\n  \"ageOfProperty\": 2,\n  \"furnishing\": \"Semi-Furnished\",\n  \"facing\": \"East\",\n  \"address\": \"Skyline Heights, Plot 12, Baner Road\",\n  \"locality\": \"Baner\",\n  \"city\": \"Pune\",\n  \"state\": \"Maharashtra\",\n  \"pincode\": \"411045\",\n  \"latitude\": 18.5596,\n  \"longitude\": 73.7769,\n  \"nearbyLandmarks\": [\"D-Mart Baner\", \"Orchid School\", \"Baner Metro Station\"],\n  \"reraNumber\": \"P52100012345\",\n  \"bankApprovals\": [\"SBI\", \"HDFC\", \"ICICI\"],\n  \"amenities\": [\"Gymnasium\", \"Swimming Pool\", \"24x7 Security\", \"Power Backup\"]\n}",
+              "raw": "{\n  \"title\": \"3 BHK Flat in Baner\",\n  \"description\": \"Spacious 3 BHK apartment in the heart of Baner with premium amenities, ample parking, and excellent connectivity to Hinjewadi IT Park.\",\n  \"price\": 8500000,\n  \"propertyType\": \"FLAT\",\n  \"listingType\": \"SALE\",\n  \"propertyStatus\": \"READY_TO_MOVE\",\n  \"bhk\": 3,\n  \"bathrooms\": 2,\n  \"carpetArea\": 1200,\n  \"builtUpArea\": 1450,\n  \"floorNumber\": 4,\n  \"totalFloors\": 12,\n  \"ageOfProperty\": 2,\n  \"furnishing\": \"Semi-Furnished\",\n  \"facing\": \"East\",\n  \"address\": \"Skyline Heights, Plot 12, Baner Road\",\n  \"locality\": \"Baner\",\n  \"city\": \"Pune\",\n  \"state\": \"Maharashtra\",\n  \"pincode\": \"411045\",\n  \"latitude\": 18.5596,\n  \"longitude\": 73.7769,\n  \"nearbyLandmarks\": [\n    \"D-Mart Baner\",\n    \"Orchid School\",\n    \"Baner Metro Station\"\n  ],\n  \"reraNumber\": \"P52100012345\",\n  \"bankApprovals\": [\n    \"SBI\",\n    \"HDFC\",\n    \"ICICI\"\n  ],\n  \"amenities\": [\n    \"Gymnasium\",\n    \"Swimming Pool\",\n    \"24x7 Security\",\n    \"Power Backup\"\n  ],\n  \"developer\": \"Purvankara Limited\",\n  \"landAreaValue\": 3.2,\n  \"landAreaUnit\": \"acres\",\n  \"openSpacePct\": 80,\n  \"totalUnits\": 260\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -379,7 +382,8 @@
                 "api",
                 "properties"
               ]
-            }
+            },
+            "description": " propertyStatus now also accepts PRE_LAUNCH. developer/landAreaValue/landAreaUnit/openSpacePct/totalUnits are project-level fields for a developer-led project listing (pair with isFeaturedProject) — no rating field, since rating is always computed live from real PropertyReview rows, never partner-self-reported."
           },
           "response": [
             {

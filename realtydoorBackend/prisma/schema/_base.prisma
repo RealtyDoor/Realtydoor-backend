@@ -48,6 +48,7 @@ enum PublishStatus {
 }
 
 enum PropertyStatus {
+  PRE_LAUNCH
   READY_TO_MOVE
   UNDER_CONSTRUCTION
   SOLD
@@ -87,11 +88,11 @@ enum EscrowStatus {
 }
 
 enum BuyerFeedbackStatus {
-  PENDING          // WhatsApp sent, awaiting reply
-  VERIFIED_CLOSED  // Buyer confirmed deal is done
+  PENDING // WhatsApp sent, awaiting reply
+  VERIFIED_CLOSED // Buyer confirmed deal is done
   VERIFIED_DROPPED // Buyer confirmed they are not proceeding
-  STILL_DECIDING   // Buyer replied "still deciding"
-  NO_RESPONSE      // 48h passed, no WhatsApp reply — Admin flagged
+  STILL_DECIDING // Buyer replied "still deciding"
+  NO_RESPONSE // 48h passed, no WhatsApp reply — Admin flagged
 }
 
 enum PaymentStatus {
@@ -159,8 +160,8 @@ enum LoanStatus {
 }
 
 enum OtpPurpose {
-  SIGNUP          // new-account creation (name + email carried in payload)
-  LOGIN           // existing-account phone login
+  SIGNUP // new-account creation (name + email carried in payload)
+  LOGIN // existing-account phone login
   GOOGLE_COMPLETE // linking + verifying phone after a Google sign-in
-  PROFILE_VERIFY  // lazy phone verification for an already-authenticated user
+  PROFILE_VERIFY // lazy phone verification for an already-authenticated user
 }

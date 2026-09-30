@@ -6,6 +6,7 @@ const logger = require('../../lib/logger');
 const otpAuth = require('../../lib/otpAuth');
 const { setUserRole, syncUserFields } = require('../../lib/clerkAdmin');
 const { computeOnboardingComplete } = require('../../lib/onboarding');
+const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -94,6 +95,13 @@ async function createAccount({ name, email, phone, isNRI = false, marketingOptIn
         clerkId: clerkUser.id, error: delErr.message,
       });
     });
+    // signupOtp already checked for a duplicate phone before sending the
+    // OTP, but two signups for the same number can both pass that check
+    // before either writes — the DB-level partial unique index is the real
+    // backstop for that race; surface it the same way the pre-check does.
+    if (isPhoneUniqueViolation(err)) {
+      throw new ApiError(409, 'An account with this email or phone already exists.', { code: 'ALREADY_REGISTERED' });
+    }
     throw err;
   }
 
@@ -181,6 +189,14 @@ async function loginVerify({ phone, code }) {
 
 // ─── B5: Google flow — sync + onboarding + phone completion ──────────────────
 
+// Thin wrapper for POST /auth/sync, which only has a raw token. authenticate
+// (middleware/auth.js) already has a verified payload/clerkId by the time it
+// needs this on its missing-row path, so it calls syncUserByClerkId directly
+// instead — avoiding a second, redundant clerk.verifyToken call for every
+// first-request-after-signup. This function holds no logic of its own beyond
+// that verify-then-fetch step, specifically so there is only ever one copy
+// of the actual sync logic (in syncUserByClerkId) for the two callers to
+// drift apart from.
 async function syncUser(token) {
   // Only a genuine token-verification failure is a 401 — everything else
   // below (DB errors, Clerk API errors) is a real server error and should
@@ -192,9 +208,11 @@ async function syncUser(token) {
     throw new ApiError(401, 'Invalid or expired session.');
   }
   const clerkId = payload.sub;
-
   const clerkUser = await clerk.users.getUser(clerkId);
+  return syncUserByClerkId(clerkId, clerkUser);
+}
 
+async function syncUserByClerkId(clerkId, clerkUser) {
   const email = clerkUser.emailAddresses?.[0]?.emailAddress;
   const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ') || email;
   const phone = clerkUser.phoneNumbers?.[0]?.phoneNumber || null;
@@ -227,7 +245,13 @@ async function syncUser(token) {
     throw new ApiError(403, 'Your account has been suspended. Contact support@realtydoor.in');
   }
 
-  const resolvedRole = clerkRole || existing?.role || 'USER';
+  // DB is the sole authority on role once a row exists — Clerk's
+  // publicMetadata.role only ever seeds a brand-new row. Previously this was
+  // `clerkRole || existing?.role`, which let anything that could set Clerk
+  // metadata (dashboard edit, a compromised API key, a bug) silently
+  // override an admin-set DB role on every resync — directly contradicting
+  // middleware/auth.js's "trust the DB, never the token" rule.
+  const resolvedRole = existing?.role || clerkRole || 'USER';
   const phoneToWrite = phone || undefined;
 
   // Guard against two different accounts ending up with the same phone (e.g.
@@ -268,6 +292,14 @@ async function syncUser(token) {
       ? await prisma.user.update({ where: { id: existing.id }, data: writeData })
       : await prisma.user.create({ data: writeData });
   } catch (err) {
+    // The phone check above (findFirst) has the same TOCTOU race as every
+    // other phone-write call site — two concurrent syncs claiming the same
+    // number can both pass it before either writes. The partial unique index
+    // is the real backstop; surface it as the same clean error the pre-check
+    // throws, rather than a raw P2002.
+    if (isPhoneUniqueViolation(err)) {
+      throw new ApiError(409, 'This phone number is already linked to another account.', { code: 'PHONE_IN_USE' });
+    }
     if (err.code === 'P2002') {
       const found = await prisma.user.findFirst({ where: { OR: [{ clerkId }, { email }] } });
       if (!found) throw err;
@@ -306,7 +338,16 @@ async function googlePhoneVerify(currentUser, { phone, code }) {
   const dup = await prisma.user.findFirst({ where: { phone, NOT: { id: currentUser.id } } });
   if (dup) throw new ApiError(409, 'This number is already linked to another account.', { code: 'PHONE_IN_USE' });
 
-  await syncUserFields(currentUser.id, { phone });
+  try {
+    await syncUserFields(currentUser.id, { phone });
+  } catch (err) {
+    // Same TOCTOU race as the check above — someone else could have claimed
+    // this number between the findFirst and this write.
+    if (isPhoneUniqueViolation(err)) {
+      throw new ApiError(409, 'This number is already linked to another account.', { code: 'PHONE_IN_USE' });
+    }
+    throw err;
+  }
   const user = await prisma.user.update({
     where: { id: currentUser.id },
     data: { phoneVerified: true, phoneVerifiedAt: new Date() },
@@ -322,6 +363,7 @@ module.exports = {
   loginOtp,
   loginVerify,
   syncUser,
+  syncUserByClerkId,
   googlePhoneOtp,
   googlePhoneVerify,
 };

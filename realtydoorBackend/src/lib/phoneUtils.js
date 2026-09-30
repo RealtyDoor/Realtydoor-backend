@@ -49,4 +49,15 @@ const phoneField = z.string().transform((val, ctx) => {
   return normalized;
 });
 
-module.exports = { maskPhone, formatPhone, normalizePhone, phoneField };
+// Backed by a partial unique index on User.phone (scripts/createPhoneUniqueIndex.js,
+// name: phone_unique_partial — not expressible as a native Prisma @unique on
+// Mongo since a plain unique index would reject a second null phone). Every
+// call site that writes phone after its own findFirst-based duplicate check
+// still has a TOCTOU race window; this lets each one catch the DB-level
+// backstop and turn it into the same clean 409 PHONE_IN_USE the check itself
+// throws, instead of a raw unhandled P2002.
+function isPhoneUniqueViolation(err) {
+  return err?.code === 'P2002' && err?.meta?.target === 'phone_unique_partial';
+}
+
+module.exports = { maskPhone, formatPhone, normalizePhone, phoneField, isPhoneUniqueViolation };

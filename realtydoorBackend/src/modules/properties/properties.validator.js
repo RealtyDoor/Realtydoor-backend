@@ -9,7 +9,9 @@ const createPropertySchema = z.object({
   priceNegotiable: z.boolean().optional(),
   propertyType: z.enum(['FLAT', 'INDEPENDENT_HOUSE', 'VILLA', 'PLOT', 'COMMERCIAL_OFFICE', 'RETAIL_SHOP']),
   listingType: z.enum(['SALE', 'RENT', 'LEASE']),
-  propertyStatus: z.enum(['READY_TO_MOVE', 'UNDER_CONSTRUCTION']).optional(),
+  // SOLD/RENTED are deliberately not partner-settable here — same as before,
+  // only PRE_LAUNCH is newly added for project-status reporting.
+  propertyStatus: z.enum(['PRE_LAUNCH', 'READY_TO_MOVE', 'UNDER_CONSTRUCTION']).optional(),
   bhk: z.number().int().min(1).max(10).optional(),
   bathrooms: z.number().int().min(1).optional(),
   carpetArea: z.number().positive().optional(),
@@ -35,6 +37,14 @@ const createPropertySchema = z.object({
   societyFeatures: z.array(z.string()).optional(),
   metaTitle: z.string().max(60).optional(),
   metaDescription: z.string().max(160).optional(),
+
+  // Project-level details — for a developer-led project/township listing
+  // (see isFeaturedProject), not a regular single-unit listing.
+  developer: z.string().max(200).optional(),
+  landAreaValue: z.number().positive().optional(),
+  landAreaUnit: z.string().max(20).optional(),
+  openSpacePct: z.number().int().min(0).max(100).optional(),
+  totalUnits: z.number().int().positive().optional(),
 });
 
 const searchSchema = paginationSchema.extend({

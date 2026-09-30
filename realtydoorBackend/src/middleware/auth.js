@@ -34,16 +34,22 @@ async function authenticate(req, res, next) {
       // fetches, client fetches, Postman, any future mobile client) — so
       // creating the row here, on demand, with the exact same logic as
       // POST /auth/sync (collision checks, consent stamping, etc. — see
-      // auth.service.js's syncUser), covers all of them from one place.
-      // Without this, every one of those call sites would need its own
-      // 401-then-sync-then-retry handling, and a replayed POST/PATCH body
-      // on retry risks a double-submit. This also means a suspended/collided
-      // user's real error (EXISTING_USER, PHONE_IN_USE, EMAIL_REQUIRED, a
-      // suspension 403) can now surface from whichever route they hit first,
-      // not only from /auth/sync — syncUser already throws the same coded
-      // ApiErrors either way, so the response shape doesn't change, only
-      // which endpoint the client happens to see it from.
-      const synced = await authService.syncUser(token);
+      // auth.service.js's syncUserByClerkId), covers all of them from one
+      // place. Without this, every one of those call sites would need its
+      // own 401-then-sync-then-retry handling, and a replayed POST/PATCH
+      // body on retry risks a double-submit. This also means a
+      // suspended/collided user's real error (EXISTING_USER, PHONE_IN_USE,
+      // EMAIL_REQUIRED, a suspension 403) can now surface from whichever
+      // route they hit first, not only from /auth/sync — the sync logic
+      // already throws the same coded ApiErrors either way, so the response
+      // shape doesn't change, only which endpoint the client happens to see
+      // it from.
+      //
+      // Calls syncUserByClerkId (not syncUser) with the clerkId/payload
+      // already verified two lines above — syncUser itself would re-verify
+      // the same token from scratch, a redundant Clerk call on this path.
+      const clerkUser = await clerk.users.getUser(clerkId);
+      const synced = await authService.syncUserByClerkId(clerkId, clerkUser);
       req.user = { ...synced.user, role: synced.user.role, onboardingComplete: synced.onboardingComplete };
       return next();
     }

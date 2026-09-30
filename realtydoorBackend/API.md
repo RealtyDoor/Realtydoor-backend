@@ -394,10 +394,10 @@ Search published, non-B2B properties.
 | `locality` | string | Case-insensitive contains |
 | `propertyType` | string | `FLAT` · `INDEPENDENT_HOUSE` · `VILLA` · `PLOT` · `COMMERCIAL_OFFICE` · `RETAIL_SHOP` |
 | `listingType` | string | `SALE` · `RENT` · `LEASE` |
-| `propertyStatus` | string | `READY_TO_MOVE` · `UNDER_CONSTRUCTION` |
+| `propertyStatus` | string | `PRE_LAUNCH` · `READY_TO_MOVE` · `UNDER_CONSTRUCTION` · `SOLD` · `RENTED` |
 | `bhk` | number | Number of bedrooms |
-| `minPrice` | number | Min price (₹) |
-| `maxPrice` | number | Max price (₹) |
+| `minPrice` | number | Min price (₹) — filters `monthlyRent` instead of `price` when `listingType` is `RENT` or `LEASE` |
+| `maxPrice` | number | Max price (₹) — same `monthlyRent`/`price` switch as `minPrice` |
 | `minArea` | number | Min carpet area (sq ft) |
 | `maxArea` | number | Max carpet area (sq ft) |
 | `furnishing` | string | Free text e.g. `Furnished` |
@@ -440,7 +440,11 @@ Search published, non-B2B properties.
         "previousPrice": 9000000,
         "priceChange6m": -5,
         "unitsLeft": 3,
-        "viewsThisWeek": 12
+        "viewsThisWeek": 12,
+        "builtUpArea": 1400,
+        "ageOfProperty": 2,
+        "floorNumber": 4,
+        "totalFloors": 10
       }
     ],
     "pagination": {
@@ -455,7 +459,7 @@ Search published, non-B2B properties.
 }
 ```
 
-`previousPrice`, `priceChange6m`, `unitsLeft`, `balconies` are all `null` until an admin sets them on the listing. `viewsThisWeek` increments on every `GET /api/properties/:slug` and resets to `0` every Monday at midnight.
+`previousPrice`, `priceChange6m`, `unitsLeft`, `balconies` are all `null` until an admin sets them on the listing. `viewsThisWeek` increments on every `GET /api/properties/:slug` and resets to `0` every Monday at midnight. `builtUpArea`, `ageOfProperty`, `floorNumber`, `totalFloors` are included specifically for the property detail page's peer-comparison logic (it fetches this same endpoint for similar listings and computes "better/below average" tags from them).
 
 ---
 
@@ -504,71 +508,76 @@ Note: this list is cached for 10 minutes (`FEATURED_PROPERTIES` key) — a cache
 
 ### GET /api/properties/:slug
 
-Full property detail for a single approved listing.
+Full property detail for a single approved listing. `isB2BOnly` listings 404 here the same as a search — a direct slug link can no longer be used to bypass the public/B2B separation.
 
 **Auth:** Public
 
 **Response `200`:**
+
+The top-level response keeps every existing flat field exactly as before (`price`, `bhk`, `locality`, `partner.companyName`, etc. — unchanged, so nothing already reading this shape needs to change). `partner` now also includes `id`, `name`, `kycStatus`, and `profileImageUrl` (previously only `companyName`/`partnerSubType`).
+
+Three keys are new, additive, and built from the same underlying data — nested for a newer consumer that wants a structured shape instead of the flat one:
 
 ```json
 {
   "success": true,
   "message": "Success",
   "data": {
-    "id": "64abc...",
-    "title": "3 BHK Flat in Baner",
-    "slug": "3-bhk-flat-in-baner-1700000000000",
-    "description": "Spacious 3 BHK with great amenities...",
-    "price": 8500000,
-    "monthlyRent": null,
-    "priceNegotiable": true,
-    "propertyType": "FLAT",
-    "listingType": "SALE",
-    "propertyStatus": "READY_TO_MOVE",
-    "publishStatus": "APPROVED",
-    "isFeatured": false,
-    "isVerified": true,
-    "bhk": 3,
-    "bathrooms": 2,
-    "carpetArea": 1200,
-    "builtUpArea": 1400,
-    "plotArea": null,
-    "floorNumber": 4,
-    "totalFloors": 10,
-    "ageOfProperty": 2,
-    "furnishing": "Semi-Furnished",
-    "facing": "East",
-    "possessionDate": null,
-    "address": "Plot 12, Baner Road",
-    "locality": "Baner",
-    "city": "Pune",
-    "state": "Maharashtra",
-    "pincode": "411045",
-    "latitude": 18.5596,
-    "longitude": 73.7769,
-    "nearbyLandmarks": ["D-Mart", "Orchid School"],
-    "reraNumber": "P52100012345",
-    "bankApprovals": ["SBI", "HDFC"],
-    "images": ["https://cdn.realtydoor.in/prop1.jpg"],
-    "coverImageIndex": 0,
-    "floorPlanUrl": null,
-    "virtualTourUrl": null,
-    "videoUrl": null,
-    "amenities": ["Gym", "Swimming Pool", "24x7 Security"],
-    "societyFeatures": ["Club House", "Children's Play Area"],
-    "metaTitle": null,
-    "metaDescription": null,
-    "createdAt": "2024-01-10T00:00:00.000Z",
-    "updatedAt": "2024-01-15T00:00:00.000Z",
-    "partner": {
-      "companyName": "RealtyPro Solutions",
-      "partnerSubType": "AGENT"
+    "...(all existing flat fields, unchanged)...": "...",
+    "partner": { "id": "64partner...", "name": "Sunetra", "companyName": "RealtyPro Solutions", "partnerSubType": "AGENT", "kycStatus": "VERIFIED", "profileImageUrl": null },
+
+    "property": {
+      "id": "64abc...", "title": "3 BHK Flat in Baner", "propertyType": "FLAT", "listingType": "SALE", "status": "APPROVED",
+      "location": { "address": "Plot 12, Baner Road", "locality": "Baner", "city": "Pune", "state": "Maharashtra", "country": "India", "pincode": "411045" },
+      "pricing": { "minPrice": 8500000, "maxPrice": 8500000, "monthlyRent": null, "priceNegotiable": true, "currency": "INR", "pricePerSqft": 7083 },
+      "configuration": { "bhk": 3, "bathrooms": 2, "balconies": null, "facing": "East", "furnishing": "Semi-Furnished" },
+      "area": { "carpetArea": 1200, "builtUpArea": 1400, "plotArea": null, "carpetEfficiency": 86, "unit": "sqft" },
+      "floorDetails": { "floorNumber": 4, "totalFloors": 10 },
+      "propertyAge": { "value": 2, "unit": "years" },
+      "parking": null,
+      "description": "Spacious 3 BHK with great amenities...",
+      "media": {
+        "coverImage": "https://cdn.realtydoor.in/prop1.jpg", "images": ["https://cdn.realtydoor.in/prop1.jpg"], "totalImages": 1,
+        "videoTour": { "available": false, "url": null }, "virtualTour": { "available": false, "url": null }, "floorPlanUrl": null
+      },
+      "verification": { "realtyDoorVerified": true, "reraVerified": true, "reraNumber": "P52100012345", "legalVerified": null, "loanApproved": true, "bankApprovals": ["SBI", "HDFC"] },
+      "badges": ["FEATURED", "REALTYDOOR_VERIFIED", "BANK_APPROVED"],
+      "amenities": ["Gym", "Swimming Pool", "24x7 Security"],
+      "societyFeatures": ["Club House", "Children's Play Area"],
+      "propertyMetrics": { "carpetEfficiency": 86, "unitsRemaining": null, "weeklyViews": 12, "priceIncreaseLast6Months": null },
+      "agent": { "id": "64partner...", "name": "Sunetra", "companyName": "RealtyPro Solutions", "designation": "AGENT", "verified": true, "profileImage": null },
+      "projectDetails": { "developer": "Purvankara Limited", "projectStatus": "PRE_LAUNCH", "rating": 4.5, "ratingCount": 2, "landArea": { "value": 3.2, "unit": "acres" }, "openSpace": 80, "totalUnits": 260 },
+      "timestamps": { "createdAt": "2024-01-10T00:00:00.000Z", "updatedAt": "2024-01-15T00:00:00.000Z" }
+    },
+
+    "propertyDetailsComparison": {
+      "title": "Similar Properties",
+      "properties": [{
+        "id": "64peer...", "name": "Aashrithaa Serene", "slug": "aashrithaa-serene-...",
+        "location": { "locality": "Hoskote", "city": "Bengaluru" }, "image": "https://cdn.realtydoor.in/peer1.jpg",
+        "basicInformation": { "developer": "Aashrithaa Developers", "projectStatus": "UNDER_CONSTRUCTION", "rating": 4.2, "ratingCount": 14, "propertyType": "PLOT", "landArea": { "value": 5, "unit": "acres" }, "openSpace": 70, "totalUnits": 400 }
+      }]
+    },
+
+    "localityInsights": {
+      "locality": "Baner", "lastUpdated": "2026-05-01T00:00:00.000Z",
+      "market": { "averagePrice": 5490, "currency": "INR", "priceUnit": "sqft", "oneYearAppreciation": 8.4, "rentYield": 3.2, "estimatedMonthlyRent": 35000 },
+      "nearbyPlaces": [{ "name": "D-Mart" }, { "name": "Orchid School" }]
     }
   }
 }
 ```
 
-**Errors:** `404` if not found or not approved.
+Notes on the nested `property` section:
+- `pricing.minPrice`/`maxPrice` are always equal — this schema stores one price per listing, not a range (a true range would need a multi-unit "project" concept this codebase doesn't model).
+- `parking` and `verification.legalVerified` are always `null` — not modeled anywhere; never fabricated.
+- `propertyMetrics.unitsRemaining`/`priceIncreaseLast6Months` (mirroring `unitsLeft`/`priceChange6m`) are always `null` today — nothing in the codebase writes to those fields yet.
+- `agent` has no `experienceYears`, `designation` (beyond `partnerSubType`), `rating`, or `statistics` — not modeled on the partner profile. Real partner ratings exist (`Lead.buyerRating`) but are only surfaced via the partner's own `GET /partner/ratings`, not joined into this public response.
+- `verification.reraVerified` reflects only whether a RERA number is on file, not a separately-audited verified status — there's no distinct field for that.
+- **`projectDetails`** (on `property`) and **`propertyDetailsComparison.properties[].basicInformation`** (on each peer) carry the same fields: `developer`, `projectStatus` (mirrors `propertyStatus`, now including `PRE_LAUNCH`), `rating`/`ratingCount`, `landArea` (`{value, unit}`), `openSpace` (%), `totalUnits`. `developer`/`landArea`/`openSpace`/`totalUnits` are partner-settable at creation (see `POST /api/properties`) and are `null` for a regular listing that was never given them. `rating`/`ratingCount` are **never** partner-settable — computed live from real, moderated `PropertyReview` rows (unapproved reviews are excluded); `null`/`0` when there are no approved reviews yet.
+- `localityInsights` is `null` when no admin-curated `LocalityInsight` row exists yet for that city/locality (same graceful fallback as the existing locality panel) — it's the same model/data as `GET /locality-insights/insight`, just remapped field names, not a second data source.
+
+**Errors:** `404` if not found, not approved, or `isB2BOnly`.
 
 ---
 
@@ -608,13 +617,22 @@ Create a new property listing (submitted for admin review).
   "nearbyLandmarks": ["D-Mart", "Orchid School"],
   "amenities": ["Gym", "Swimming Pool"],
   "societyFeatures": ["Club House"],
-  "reraNumber": "P52100012345"
+  "reraNumber": "P52100012345",
+  "developer": "Purvankara Limited",
+  "landAreaValue": 3.2,
+  "landAreaUnit": "acres",
+  "openSpacePct": 80,
+  "totalUnits": 260
 }
 ```
 
 Fields `publishStatus`, `isVerified`, `partnerId` are silently stripped.
 
 `furnishing` and `facing` are optional — if omitted, they default to `"Unfurnished"` and `"East"` respectively.
+
+`propertyStatus` now also accepts `PRE_LAUNCH`, in addition to `READY_TO_MOVE`/`UNDER_CONSTRUCTION`.
+
+`developer`, `landAreaValue`/`landAreaUnit`, `openSpacePct`, `totalUnits` are project-level fields — meaningful for a developer-led project/township listing (typically paired with `isFeaturedProject`), left unset for a regular single-unit listing. There's deliberately no `rating` field here: a partner can't self-report their own project's rating — it's computed live from real `PropertyReview` rows instead (see `GET /api/properties/:slug`'s `property.projectDetails.rating`).
 
 **Response `201`:**
 
@@ -5125,7 +5143,7 @@ Delete a platform config key permanently.
 `PENDING_APPROVAL` · `APPROVED` · `REJECTED` · `ARCHIVED`
 
 ### PropertyStatus
-`READY_TO_MOVE` · `UNDER_CONSTRUCTION` · `SOLD` · `RENTED`
+`PRE_LAUNCH` · `READY_TO_MOVE` · `UNDER_CONSTRUCTION` · `SOLD` · `RENTED`
 
 ### LeadStatus
 `UNASSIGNED` · `ASSIGNED` · `SITE_VISIT_SCHEDULED` · `SITE_VISIT_DONE` · `CLOSED` · `DROPPED`

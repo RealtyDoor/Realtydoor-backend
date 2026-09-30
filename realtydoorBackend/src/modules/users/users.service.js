@@ -3,6 +3,7 @@ const ApiError = require('../../utils/ApiError');
 const otpAuth = require('../../lib/otpAuth');
 const escrowService = require('../escrow/escrow.service');
 const { getConfigNumber } = require('../config/config.service');
+const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
 
 const DEFAULT_ESCROW_REFUND_WINDOW_HOURS = 48;
 
@@ -34,10 +35,19 @@ async function verifyPhoneOtp(userId, phone, code) {
     throw new ApiError(409, 'Phone number already registered to another account', { code: 'PHONE_IN_USE' });
   }
 
-  await prisma.user.update({
-    where: { id: userId },
-    data: { phone, phoneVerified: true, phoneVerifiedAt: new Date() },
-  });
+  try {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { phone, phoneVerified: true, phoneVerifiedAt: new Date() },
+    });
+  } catch (err) {
+    // Same TOCTOU race as the check above — the DB-level partial unique
+    // index (scripts/createPhoneUniqueIndex.js) is the real backstop.
+    if (isPhoneUniqueViolation(err)) {
+      throw new ApiError(409, 'Phone number already registered to another account', { code: 'PHONE_IN_USE' });
+    }
+    throw err;
+  }
   return { phoneVerified: true, phone };
 }
 
