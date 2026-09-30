@@ -41,21 +41,37 @@ async function refundPayment(paymentId, amountInPaise) {
   return razorpay.payments.refund(paymentId, { amount: amountInPaise });
 }
 
+// Both signature checks below must NEVER throw — a missing or wrong-length
+// `signature` (fully attacker/caller-controlled: a webhook header or request
+// body field) previously reached crypto.timingSafeEqual with mismatched
+// buffer lengths, which throws a RangeError instead of returning false. In
+// the webhook controller that throw escaped as an unhandled promise
+// rejection and crashed the entire process — a single unauthenticated
+// request to a necessarily-public endpoint. Same guard pattern as
+// otpAuth.js's codeMatches.
 function verifyWebhookSignature(rawBody, signature) {
+  if (typeof signature !== 'string' || !signature) return false;
   const expected = crypto
     .createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET)
     .update(rawBody)
     .digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+  const expectedBuf = Buffer.from(expected);
+  const signatureBuf = Buffer.from(signature);
+  if (expectedBuf.length !== signatureBuf.length) return false;
+  return crypto.timingSafeEqual(expectedBuf, signatureBuf);
 }
 
 function verifyPaymentSignature(orderId, paymentId, signature) {
+  if (typeof signature !== 'string' || !signature) return false;
   const body = `${orderId}|${paymentId}`;
   const expected = crypto
     .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
     .update(body)
     .digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+  const expectedBuf = Buffer.from(expected);
+  const signatureBuf = Buffer.from(signature);
+  if (expectedBuf.length !== signatureBuf.length) return false;
+  return crypto.timingSafeEqual(expectedBuf, signatureBuf);
 }
 
 module.exports = {

@@ -5,16 +5,29 @@ const { sendServiceActivated, sendEscrowPaymentFailed } = require('../../lib/ema
 const { createNotification } = require('../../lib/notifications');
 const logger = require('../../lib/logger');
 
+// The entire handler body is one try/catch, including signature verification
+// — this is a public, unauthenticated, internet-facing endpoint (it has to
+// be, to receive real Razorpay webhooks), so nothing in here may ever throw
+// past this function. A single malformed/missing header or an unexpected
+// payload shape must degrade to a clean error response, never an unhandled
+// promise rejection (which server.js treats as fatal and exits the process).
 async function razorpay(req, res) {
-  const signature = req.headers['x-razorpay-signature'];
-
-  if (!verifyWebhookSignature(req.rawBody, signature)) {
-    return res.status(400).json({ error: 'Invalid signature' });
-  }
-
-  const { event, payload } = req.body;
-
+  // Declared here (not via `const` inside the try block) so the catch
+  // block below can actually log which event failed — a `const` declared
+  // inside `try` is out of scope in `catch`, which previously meant any
+  // processing error threw a *second*, independent ReferenceError from
+  // inside the error handler itself, itself unhandled.
+  let event;
   try {
+    const signature = req.headers['x-razorpay-signature'];
+
+    if (!verifyWebhookSignature(req.rawBody, signature)) {
+      return res.status(400).json({ error: 'Invalid signature' });
+    }
+
+    let payload;
+    ({ event, payload } = req.body);
+
     if (event === 'payment.captured') {
       const { order_id: orderId, id: paymentId } = payload.payment.entity;
 
@@ -145,8 +158,38 @@ async function razorpay(req, res) {
     }
 
     if (event === 'transfer.settled') {
-      const { id: transferId } = payload.transfer.entity;
-      const escrow = await prisma.escrowTransaction.findFirst({ where: { razorpayTransferId: transferId } });
+      // `source` is the payment the transfer was made from — Razorpay's own
+      // record of a real, completed transfer, independent of whether our
+      // release() call's own DB write succeeded.
+      const { id: transferId, source: sourcePaymentId } = payload.transfer.entity;
+      let escrow = await prisma.escrowTransaction.findFirst({ where: { razorpayTransferId: transferId } });
+
+      // Reconciliation fallback: escrow.service.js's release() now claims
+      // RELEASED atomically *before* calling Razorpay (so the escrow can
+      // never be stuck showing HELD while money actually moved), but its
+      // final write — persisting razorpayTransferId itself — could still
+      // fail after a successful transfer. That escrow is unreachable by
+      // transferId above; razorpayPaymentId, however, is written back at
+      // confirmPayment time, long before any release, so it's always
+      // reliably present. This is the only remaining signal for that narrow
+      // failure window, so use it to find and backfill the record.
+      if (!escrow && sourcePaymentId) {
+        escrow = await prisma.escrowTransaction.findFirst({ where: { razorpayPaymentId: sourcePaymentId } });
+        if (escrow) {
+          const needsStatusFix = escrow.status !== 'RELEASED';
+          await prisma.escrowTransaction.update({
+            where: { id: escrow.id },
+            data: {
+              razorpayTransferId: transferId,
+              ...(needsStatusFix && { status: 'RELEASED', releasedAt: escrow.releasedAt || new Date() }),
+            },
+          });
+          logger.warn('[RazorpayWebhook] Reconciled escrow via transfer.settled — razorpayTransferId (and possibly status) was missing', {
+            transferId, escrowId: escrow.id, hadWrongStatus: needsStatusFix,
+          });
+        }
+      }
+
       if (escrow) {
         logger.info('[RazorpayWebhook] Escrow transfer settled', { transferId, escrowId: escrow.id });
         await createNotification({

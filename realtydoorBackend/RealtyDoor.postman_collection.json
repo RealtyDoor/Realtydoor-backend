@@ -4898,7 +4898,8 @@
                     "{{escrowId}}",
                     "release"
                   ]
-                }
+                },
+                "description": "Either sellerAccountId (real Razorpay transfer) or manualTransferConfirmed: true + a note (payout made outside Razorpay) is required. The release is atomic — a concurrent duplicate request gets 400 instead of triggering a second transfer, and a failed Razorpay call rolls the escrow back to HELD."
               },
               "response": [
                 {
@@ -4936,6 +4937,34 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":false,\"message\":\"Cannot release escrow with status REFUNDED\"}"
+                },
+                {
+                  "name": "400 – Race / Already Released",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"This escrow was already released or refunded\"}"
+                },
+                {
+                  "name": "400 – No Transfer Method",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"Provide sellerAccountId for a Razorpay transfer, or set manualTransferConfirmed to true if the payout was made outside Razorpay\"}"
                 }
               ]
             },
@@ -4956,7 +4985,8 @@
                     "{{escrowId}}",
                     "refund"
                   ]
-                }
+                },
+                "description": " Same atomic-claim protection as release — a race between two refund calls (or a refund racing a release) leaves only one winner."
               },
               "response": [
                 {
@@ -4976,6 +5006,20 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":true,\"message\":\"Escrow refunded\",\"data\":{\"id\":\"66bbb111ccc222ddd333eee4\",\"status\":\"REFUNDED\",\"refundedAt\":\"2026-05-19T12:30:00.000Z\"}}"
+                },
+                {
+                  "name": "400 – Race / Already Released",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"This escrow was already released or refunded\"}"
                 }
               ]
             }
@@ -9677,7 +9721,8 @@
                 "webhooks",
                 "razorpay"
               ]
-            }
+            },
+            "description": "Looked up first by razorpayTransferId. If not found, falls back to razorpayPaymentId (payload.transfer.entity.source) and backfills razorpayTransferId (and status, if still HELD) — this is the reconciliation path for the narrow case where release()'s own final write of razorpayTransferId failed after a real Razorpay transfer succeeded."
           },
           "response": [
             {

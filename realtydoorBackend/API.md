@@ -2629,7 +2629,7 @@ Confirm a service subscription payment after Razorpay checkout. Idempotent — s
 
 ### POST /api/escrow/create-order
 
-Create a Razorpay escrow order (token advance). Only one active escrow (`PAYMENT_PENDING` or `HELD`) per lead.
+Create a Razorpay escrow order (token advance). Only one active escrow (`PAYMENT_PENDING` or `HELD`) per lead — enforced by a real DB-level partial unique index (`scripts/createEscrowLeadUniqueIndex.js`), not just an application check, so two concurrent requests for the same lead can't both create an order.
 
 **Auth:** USER + phone verified
 
@@ -3829,7 +3829,9 @@ Release a HELD escrow to seller via Razorpay. Requires `HELD` status + captured 
 }
 ```
 
-All fields optional. Omitting `sellerAccountId` skips Razorpay transfer.
+Either `sellerAccountId` (a real Razorpay transfer is made) **or** `manualTransferConfirmed: true` with a required `note` (the payout was made outside Razorpay — e.g. bank transfer) must be provided. Previously `sellerAccountId` was silently optional with no alternative, meaning an escrow could be marked `RELEASED` with no real transfer of any kind and no record of why.
+
+The release is atomic: if two requests for the same escrow race, only one succeeds — the other gets `400 "This escrow was already released or refunded"` before any Razorpay call is made, so a double-click or retry can never trigger two transfers. If the Razorpay transfer call itself fails, the escrow is rolled back to `HELD` (not left stuck `RELEASED` with no money moved) and the error is returned.
 
 **Response `200`:**
 
@@ -3841,7 +3843,7 @@ All fields optional. Omitting `sellerAccountId` skips Razorpay transfer.
 }
 ```
 
-**Errors:** `400` not HELD · `400` payment not captured.
+**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race) · `400` neither `sellerAccountId` nor `manualTransferConfirmed` provided.
 
 ---
 
@@ -3853,13 +3855,15 @@ Refund a HELD escrow to buyer. Sends buyer notification.
 
 **Request Body:** _(none)_
 
+Same atomic-claim protection as release above — a race between two refund requests (or a refund racing a release) leaves only one winner, and a failed Razorpay refund call rolls the escrow back to `HELD` instead of leaving it stuck.
+
 **Response `200`:**
 
 ```json
 { "success": true, "message": "Escrow refunded", "data": { "id": "64esc...", "status": "REFUNDED", "refundedAt": "..." } }
 ```
 
-**Errors:** `400` not HELD · `400` payment not captured.
+**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race).
 
 ---
 
