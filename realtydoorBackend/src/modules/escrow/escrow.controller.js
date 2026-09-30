@@ -13,6 +13,13 @@ async function createOrder(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getEscrowById(req, res, next) {
+  try {
+    const escrow = await service.getById(req.params.id, req.user.id);
+    success(res, escrow);
+  } catch (err) { next(err); }
+}
+
 async function releaseEscrow(req, res, next) {
   try {
     const releaseData = releaseEscrowSchema.parse(req.body);
@@ -57,4 +64,4 @@ async function verifyPayment(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { createOrder, verifyPayment, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats };
+module.exports = { createOrder, getEscrowById, verifyPayment, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats };

@@ -54,7 +54,19 @@ async function verifyPhoneOtp(userId, phone, code) {
 async function getMyLeads(userId) {
   return prisma.lead.findMany({
     where: { buyerId: userId },
-    include: { property: { select: { title: true, slug: true, city: true, images: true } } },
+    include: {
+      property: { select: { title: true, slug: true, city: true, images: true } },
+      // Buyers previously had no way to see their own escrow status at all —
+      // not here, and not through any dedicated endpoint either (see
+      // GET /api/escrow/:id, added alongside this).
+      escrowTransactions: {
+        select: {
+          id: true, amount: true, currency: true, status: true,
+          heldAt: true, releasedAt: true, refundedAt: true, failedAt: true, createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      },
+    },
     orderBy: { createdAt: 'desc' },
   });
 }

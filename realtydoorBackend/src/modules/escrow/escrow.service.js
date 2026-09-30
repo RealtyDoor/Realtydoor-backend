@@ -9,6 +9,23 @@ const { isEscrowLeadUniqueViolation } = require('../../lib/escrowUtils');
 
 const DEFAULT_MIN_ESCROW_AMOUNT = 50000;
 
+// Buyer-scoped lookup — for polling status right after a Checkout attempt,
+// or refreshing later. Buyers previously had no way to check escrow status
+// at all: not through this, and getMyLeads didn't include it either.
+async function getById(escrowId, buyerId) {
+  const escrow = await prisma.escrowTransaction.findUnique({
+    where: { id: escrowId },
+    select: {
+      id: true, leadId: true, razorpayOrderId: true, amount: true, currency: true,
+      status: true, heldAt: true, releasedAt: true, refundedAt: true, failedAt: true,
+      createdAt: true, buyerId: true,
+    },
+  });
+  if (!escrow || escrow.buyerId !== buyerId) throw new ApiError(404, 'Escrow not found');
+  const { buyerId: _buyerId, ...safe } = escrow;
+  return safe;
+}
+
 async function createOrder(leadId, buyerId, amountInRupees) {
   const lead = await prisma.lead.findUnique({ where: { id: leadId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
@@ -228,4 +245,4 @@ async function getEscrowStats() {
   };
 }
 
-module.exports = { createOrder, confirmPayment, release, refund, getAllEscrow, getEscrowStats };
+module.exports = { createOrder, getById, confirmPayment, release, refund, getAllEscrow, getEscrowStats };

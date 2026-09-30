@@ -1345,11 +1345,20 @@ All inquiries submitted by the authenticated user.
         "slug": "3-bhk-flat-in-baner-...",
         "city": "Pune",
         "images": ["https://cdn.realtydoor.in/prop1.jpg"]
-      }
+      },
+      "escrowTransactions": [
+        {
+          "id": "64esc...", "amount": 50000, "currency": "INR", "status": "HELD",
+          "heldAt": "2024-01-16T00:00:00.000Z", "releasedAt": null, "refundedAt": null, "failedAt": null,
+          "createdAt": "2024-01-15T12:00:00.000Z"
+        }
+      ]
     }
   ]
 }
 ```
+
+`escrowTransactions` is empty if no token advance has ever been paid on this lead, newest first otherwise. See `GET /api/escrow/:id` for polling a single escrow's status directly (e.g. right after a Razorpay Checkout attempt).
 
 ---
 
@@ -2700,6 +2709,31 @@ Confirm an escrow payment after Razorpay checkout. Idempotent — safe to call m
 ```
 
 **Errors:** `400` invalid signature · `404` order not found.
+
+---
+
+### GET /api/escrow/:id
+
+Fetch a single escrow's current status — for polling right after a Checkout attempt, or refreshing later, without needing the full leads list. Scoped to the authenticated buyer; another user's escrow (or a nonexistent id) both return a plain `404`, never a `403` — so this endpoint can't be used to probe whether a given escrow id exists.
+
+**Auth:** USER (must be the escrow's own buyer)
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "id": "64esc...", "leadId": "64lead...", "razorpayOrderId": "order_xxx",
+    "amount": 50000, "currency": "INR", "status": "HELD",
+    "heldAt": "2024-01-16T00:00:00.000Z", "releasedAt": null, "refundedAt": null, "failedAt": null,
+    "createdAt": "2024-01-15T12:00:00.000Z"
+  }
+}
+```
+
+**Errors:** `404` not found, or not owned by the requesting user.
 
 ---
 
