@@ -6,9 +6,9 @@ async function createNotification({ userId, title, message, type, linkUrl }) {
   });
 }
 
-async function broadcastNotification({ userIds, title, message, type }) {
+async function broadcastNotification({ userIds, title, message, type, linkUrl }) {
   return prisma.notification.createMany({
-    data: userIds.map((userId) => ({ userId, title, message, type })),
+    data: userIds.map((userId) => ({ userId, title, message, type, linkUrl: linkUrl || null })),
   });
 }
 

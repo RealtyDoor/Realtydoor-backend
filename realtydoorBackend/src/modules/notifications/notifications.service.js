@@ -23,6 +23,11 @@ async function markAllRead(userId) {
   });
 }
 
+async function getUnreadCount(userId) {
+  const count = await prisma.notification.count({ where: { userId, isRead: false } });
+  return { count };
+}
+
 async function broadcast({ roles, title, message, type }) {
   const where = {};
   if (roles?.length) where.role = { in: roles };
@@ -30,4 +35,4 @@ async function broadcast({ roles, title, message, type }) {
   return broadcastNotification({ userIds: users.map((u) => u.id), title, message, type });
 }
 
-module.exports = { getMyNotifications, markRead, markAllRead, broadcast };
+module.exports = { getMyNotifications, markRead, markAllRead, getUnreadCount, broadcast };

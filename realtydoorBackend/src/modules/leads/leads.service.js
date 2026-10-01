@@ -9,7 +9,7 @@ const { sendLeadAssigned } = require('../../lib/email');
 const { createAuditLog } = require('../../lib/auditLog');
 
 async function submitLead(data, buyerId) {
-  const property = await prisma.property.findUnique({ where: { id: data.propertyId }, select: { id: true, publishStatus: true } });
+  const property = await prisma.property.findUnique({ where: { id: data.propertyId }, select: { id: true, title: true, publishStatus: true } });
   if (!property) throw new ApiError(404, 'Property not found');
   if (property.publishStatus !== 'APPROVED') throw new ApiError(400, 'This property is not currently available for enquiry');
 
@@ -39,13 +39,13 @@ async function submitLead(data, buyerId) {
   });
 
   const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
-  await Promise.all(admins.map((admin) => createNotification({
-    userId: admin.id,
+  await broadcastNotification({
+    userIds: admins.map((admin) => admin.id),
     title: 'New Unassigned Lead',
-    message: `${data.buyerName} enquired about a property.`,
+    message: `${data.buyerName} enquired about "${property.title}".`,
     type: 'LEAD_NEW',
     linkUrl: `/admin/leads/${lead.id}`,
-  })));
+  });
 
   return lead;
 }

@@ -6,6 +6,7 @@ const { requireUser } = require('../../middleware/requireRole');
 router.use(authenticate, requireUser);
 
 router.get('/', ctrl.getMyNotifications);
+router.get('/unread-count', ctrl.getUnreadCount);
 router.patch('/:id/read', ctrl.markRead);
 router.patch('/read-all', ctrl.markAllRead);
 

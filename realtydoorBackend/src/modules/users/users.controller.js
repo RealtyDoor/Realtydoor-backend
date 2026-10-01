@@ -42,6 +42,13 @@ async function getMyLeads(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getMyLead(req, res, next) {
+  try {
+    const lead = await service.getMyLead(req.user.id, req.params.id);
+    success(res, lead);
+  } catch (err) { next(err); }
+}
+
 async function rateLead(req, res, next) {
   try {
     const data = rateLeadSchema.parse(req.body);
@@ -225,7 +232,7 @@ async function getMyDisputes(req, res, next) {
 }
 
 module.exports = {
-  requestPhoneOtp, verifyPhoneOtp, getMyLeads, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyLead, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
   updateConsent,
   getDocuments, uploadDocument, getSubscriptions,
   raiseTicket, getMyTickets, getMyTicketById, verifyTicket,

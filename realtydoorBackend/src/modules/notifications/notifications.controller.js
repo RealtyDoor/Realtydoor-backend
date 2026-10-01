@@ -25,6 +25,13 @@ async function markAllRead(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getUnreadCount(req, res, next) {
+  try {
+    const result = await service.getUnreadCount(req.user.id);
+    success(res, result);
+  } catch (err) { next(err); }
+}
+
 async function broadcast(req, res, next) {
   try {
     const data = broadcastSchema.parse(req.body);
@@ -33,4 +40,4 @@ async function broadcast(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { getMyNotifications, markRead, markAllRead, broadcast };
+module.exports = { getMyNotifications, markRead, markAllRead, getUnreadCount, broadcast };

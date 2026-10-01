@@ -91,9 +91,9 @@ async function assignLead(leadId, partnerId, adminId, ip) {
     await createNotification({
       userId: lead.buyerId,
       title: 'Your Inquiry is Being Processed',
-      message: `Your inquiry for "${lead.property.title}" has been matched with a verified partner. You will be contacted shortly.`,
+      message: `Your inquiry for "${lead.property.title}" has been assigned to ${partner.name} (${partner.phone}).`,
       type: 'LEAD_ASSIGNED',
-      linkUrl: '/dashboard/leads',
+      linkUrl: `/user/inquiries/${leadId}`,
     });
   }
   sendLeadInquiryConfirmed(lead.buyerEmail, lead.property.title).catch(() => {});
