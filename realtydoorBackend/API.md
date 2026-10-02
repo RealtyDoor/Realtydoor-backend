@@ -444,7 +444,9 @@ Search published, non-B2B properties.
         "builtUpArea": 1400,
         "ageOfProperty": 2,
         "floorNumber": 4,
-        "totalFloors": 10
+        "totalFloors": 10,
+        "latitude": 18.5581,
+        "longitude": 73.8099
       }
     ],
     "pagination": {
@@ -459,7 +461,7 @@ Search published, non-B2B properties.
 }
 ```
 
-`previousPrice`, `priceChange6m`, `unitsLeft`, `balconies` are all `null` until an admin sets them on the listing. `viewsThisWeek` increments on every `GET /api/properties/:slug` and resets to `0` every Monday at midnight. `builtUpArea`, `ageOfProperty`, `floorNumber`, `totalFloors` are included specifically for the property detail page's peer-comparison logic (it fetches this same endpoint for similar listings and computes "better/below average" tags from them).
+`previousPrice`, `priceChange6m`, `unitsLeft`, `balconies` are all `null` until an admin sets them on the listing. `viewsThisWeek` increments on every `GET /api/properties/:slug` and resets to `0` every Monday at midnight. `builtUpArea`, `ageOfProperty`, `floorNumber`, `totalFloors` are included specifically for the property detail page's peer-comparison logic (it fetches this same endpoint for similar listings and computes "better/below average" tags from them). `latitude`/`longitude` are `null` until set on the listing (via `POST`/`PATCH /api/properties`) — included here (not just on the detail page) so the listing page can render a map with a pin per result without an extra round trip per property.
 
 ---
 
@@ -496,7 +498,9 @@ Returns up to 12 featured approved listings.
       "previousPrice": null,
       "priceChange6m": null,
       "unitsLeft": null,
-      "viewsThisWeek": 4
+      "viewsThisWeek": 4,
+      "latitude": 18.5362,
+      "longitude": 73.8938
     }
   ]
 }

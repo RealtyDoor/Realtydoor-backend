@@ -249,7 +249,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"price\":8500000,\"monthlyRent\":null,\"propertyType\":\"FLAT\",\"listingType\":\"SALE\",\"propertyStatus\":\"READY_TO_MOVE\",\"bhk\":3,\"carpetArea\":1200,\"locality\":\"Baner\",\"city\":\"Pune\",\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"],\"coverImageIndex\":0,\"isVerified\":true,\"isFeatured\":true,\"reraNumber\":\"P52100012345\",\"createdAt\":\"2026-05-01T10:00:00.000Z\",\"balconies\":null,\"furnishing\":\"Semi-Furnished\",\"facing\":\"East\",\"previousPrice\":null,\"priceChange6m\":null,\"unitsLeft\":null,\"viewsThisWeek\":12,\"builtUpArea\":1450,\"ageOfProperty\":2,\"floorNumber\":4,\"totalFloors\":12}],\"pagination\":{\"total\":4,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+              "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"price\":8500000,\"monthlyRent\":null,\"propertyType\":\"FLAT\",\"listingType\":\"SALE\",\"propertyStatus\":\"READY_TO_MOVE\",\"bhk\":3,\"carpetArea\":1200,\"locality\":\"Baner\",\"city\":\"Pune\",\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"],\"coverImageIndex\":0,\"isVerified\":true,\"isFeatured\":true,\"reraNumber\":\"P52100012345\",\"createdAt\":\"2026-05-01T10:00:00.000Z\",\"balconies\":null,\"furnishing\":\"Semi-Furnished\",\"facing\":\"East\",\"previousPrice\":null,\"priceChange6m\":null,\"unitsLeft\":null,\"viewsThisWeek\":12,\"builtUpArea\":1450,\"ageOfProperty\":2,\"floorNumber\":4,\"totalFloors\":12,\"latitude\":18.5596,\"longitude\":73.7769}],\"pagination\":{\"total\":4,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
             }
           ]
         },
@@ -290,7 +290,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"data\":[{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"price\":8500000,\"propertyType\":\"FLAT\",\"listingType\":\"SALE\",\"bhk\":3,\"carpetArea\":1200,\"locality\":\"Baner\",\"city\":\"Pune\",\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"],\"isVerified\":true,\"isFeatured\":true}]}"
+              "body": "{\"success\":true,\"data\":[{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"price\":8500000,\"propertyType\":\"FLAT\",\"listingType\":\"SALE\",\"bhk\":3,\"carpetArea\":1200,\"locality\":\"Baner\",\"city\":\"Pune\",\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"],\"isVerified\":true,\"isFeatured\":true,\"latitude\":18.5362,\"longitude\":73.8938}]}"
             }
           ]
         },

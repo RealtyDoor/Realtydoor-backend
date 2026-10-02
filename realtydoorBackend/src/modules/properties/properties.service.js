@@ -81,6 +81,9 @@ async function searchProperties(query, skip, limit, page) {
         // same search endpoint for peers and was silently getting undefined
         // for these three without them in the select.
         builtUpArea: true, ageOfProperty: true, floorNumber: true, totalFloors: true,
+        // Needed for a map view (pins for every result on the listing page)
+        // without round-tripping to the per-property detail endpoint.
+        latitude: true, longitude: true,
       },
     }),
     prisma.property.count({ where }),
@@ -411,6 +414,7 @@ async function getFeaturedProperties() {
       propertyType: true, listingType: true, bhk: true, balconies: true, locality: true, city: true,
       images: true, coverImageIndex: true, isVerified: true, facing: true, furnishing: true,
       previousPrice: true, priceChange6m: true, unitsLeft: true, viewsThisWeek: true,
+      latitude: true, longitude: true,
     },
   }));
 }
