@@ -78,9 +78,16 @@ async function createOrder(leadId, buyerId, amountInRupees) {
   return { escrow, razorpayOrder: order };
 }
 
-async function confirmPayment(razorpayOrderId, razorpayPaymentId) {
+// buyerId is only passed by the buyer-facing verify-payment controller — the
+// Razorpay webhook calls this with no buyerId (it's already authenticated by
+// the HMAC signature, not a caller identity). A forged signature can't pass
+// verifyPaymentSignature(), so this check is defense-in-depth rather than the
+// primary guard: it stops an authenticated user from confirming an order ID
+// that isn't theirs, which a valid signature alone wouldn't prevent since
+// signatures aren't scoped to the account making the HTTP request.
+async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null) {
   const escrow = await prisma.escrowTransaction.findUnique({ where: { razorpayOrderId } });
-  if (!escrow) throw new ApiError(404, 'Escrow order not found');
+  if (!escrow || (buyerId && escrow.buyerId !== buyerId)) throw new ApiError(404, 'Escrow order not found');
   if (escrow.status === 'HELD') return escrow;
   return prisma.escrowTransaction.update({
     where: { razorpayOrderId },

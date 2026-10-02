@@ -974,9 +974,12 @@ All leads assigned to the authenticated partner. Phone **and email** are masked 
   "data": [
     {
       "id": "64lead...",
+      "refCode": "RD-L-000123",
       "buyerName": "Suresh Mehta",
       "buyerEmail": "suXXXXX@example.com",
       "buyerPhone": "+91XXXXXX3210",
+      "buyerRef": "RD-U-000045",
+      "buyerPhoneVerified": true,
       "status": "ASSIGNED",
       "isOtpVerified": false,
       "assignedAt": "2024-01-15T12:00:00.000Z",
@@ -991,6 +994,8 @@ All leads assigned to the authenticated partner. Phone **and email** are masked 
   ]
 }
 ```
+
+`buyerRef` (the buyer's own user `refCode`) and `buyerPhoneVerified` back the frontend's "Verified buyer" badge — note this is the *account's* phone verification state, independent of `isOtpVerified` (which is this specific lead's site-visit OTP gate). `adminNotes` is never included in a partner-facing lead, regardless of OTP state.
 
 ---
 
@@ -1008,8 +1013,11 @@ Single lead detail. Full property record included.
   "message": "Success",
   "data": {
     "id": "64lead...",
+    "refCode": "RD-L-000123",
     "buyerName": "Suresh Mehta",
     "buyerPhone": "+91XXXXXX3210",
+    "buyerRef": "RD-U-000045",
+    "buyerPhoneVerified": true,
     "status": "ASSIGNED",
     "isOtpVerified": false,
     "siteVisitScheduledAt": null,
@@ -1137,7 +1145,7 @@ Upload visit notes and files for a lead.
 | `visitPhotos` | file[] | Up to 10 site photos |
 | `closureDocs` | file[] | Up to 5 closure documents |
 
-**Response `200`:**
+**Response `200`:** the updated lead, same sanitized shape as `GET /api/leads/partner/:id` (masked `buyerPhone`/`buyerEmail` until `isOtpVerified`, `buyerRef`/`buyerPhoneVerified` included, `adminNotes`/`siteVisitOTP` stripped — previously this returned the raw, unmasked lead with the live OTP still on it, regardless of verification state).
 
 ```json
 {
@@ -1147,7 +1155,9 @@ Upload visit notes and files for a lead.
     "id": "64lead...",
     "visitNotes": "Buyer was very interested.",
     "visitPhotoUrls": ["https://..."],
-    "closureDocumentUrls": ["https://..."]
+    "closureDocumentUrls": ["https://..."],
+    "buyerPhone": "+91XXXXXX3210",
+    "buyerEmail": "suXXXXX@example.com"
   }
 }
 ```
@@ -2732,7 +2742,9 @@ Confirm an escrow payment after Razorpay checkout. Idempotent — safe to call m
 }
 ```
 
-**Errors:** `400` invalid signature · `404` order not found.
+`razorpayOrderId` must belong to the authenticated caller — an order ID that exists but belongs to a different user's escrow 404s the same way a nonexistent one does.
+
+**Errors:** `400` invalid signature · `404` order not found or not yours.
 
 ---
 

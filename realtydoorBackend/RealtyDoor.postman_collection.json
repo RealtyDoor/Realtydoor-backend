@@ -1097,7 +1097,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"data\":[{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerEmail\":\"suXXXXX@example.com\",\"buyerPhone\":\"+91 90000 XXXXX\",\"status\":\"ASSIGNED\",\"isOtpVerified\":false,\"siteVisitScheduledAt\":null,\"property\":{\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"locality\":\"Baner\",\"city\":\"Pune\"},\"createdAt\":\"2026-05-19T11:30:00.000Z\"}]}"
+              "body": "{\"success\":true,\"data\":[{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerEmail\":\"suXXXXX@example.com\",\"buyerPhone\":\"+91 90000 XXXXX\",\"status\":\"ASSIGNED\",\"isOtpVerified\":false,\"siteVisitScheduledAt\":null,\"property\":{\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"locality\":\"Baner\",\"city\":\"Pune\"},\"createdAt\":\"2026-05-19T11:30:00.000Z\",\"refCode\":\"RD-L-000123\",\"buyerRef\":\"RD-U-000045\",\"buyerPhoneVerified\":true}]}"
             }
           ]
         },
@@ -1136,7 +1136,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"data\":{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerEmail\":\"suXXXXX@example.com\",\"buyerPhone\":\"+91 90000 XXXXX\",\"buyerMessage\":\"I am interested in this property.\",\"status\":\"ASSIGNED\",\"isOtpVerified\":false,\"siteVisitScheduledAt\":null,\"visitNotes\":null,\"property\":{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"locality\":\"Baner\",\"city\":\"Pune\",\"price\":8500000},\"createdAt\":\"2026-05-19T11:30:00.000Z\"}}"
+              "body": "{\"success\":true,\"data\":{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerEmail\":\"suXXXXX@example.com\",\"buyerPhone\":\"+91 90000 XXXXX\",\"buyerMessage\":\"I am interested in this property.\",\"status\":\"ASSIGNED\",\"isOtpVerified\":false,\"siteVisitScheduledAt\":null,\"visitNotes\":null,\"property\":{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"locality\":\"Baner\",\"city\":\"Pune\",\"price\":8500000},\"createdAt\":\"2026-05-19T11:30:00.000Z\",\"refCode\":\"RD-L-000123\",\"buyerRef\":\"RD-U-000045\",\"buyerPhoneVerified\":true}}"
             },
             {
               "name": "404 – Not Found",
@@ -1484,7 +1484,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"message\":\"Documentation uploaded\",\"data\":{\"id\":\"665def456abc789012345678\",\"visitPhotoUrls\":[\"https://res.cloudinary.com/realtydoor/image/upload/v1/realtydoor/tickets/visit1.jpg\"],\"closureDocumentUrls\":[],\"visitNotes\":\"Buyer liked the property. Wants to negotiate on price.\"}}"
+              "body": "{\"success\":true,\"message\":\"Documentation uploaded\",\"data\":{\"id\":\"665def456abc789012345678\",\"visitPhotoUrls\":[\"https://res.cloudinary.com/realtydoor/image/upload/v1/realtydoor/tickets/visit1.jpg\"],\"closureDocumentUrls\":[],\"visitNotes\":\"Buyer liked the property. Wants to negotiate on price.\",\"buyerPhone\":\"+91XXXXXX3210\",\"buyerEmail\":\"suXXXXX@example.com\"}}"
             }
           ]
         },
@@ -7509,7 +7509,7 @@
                 "verify-payment"
               ]
             },
-            "description": "Field names are camelCase (razorpayOrderId/razorpayPaymentId/razorpaySignature) — not the snake_case Razorpay uses in its own client-side handler callback (razorpay_order_id etc.); map them when wiring up the Checkout handler."
+            "description": "Field names are camelCase (razorpayOrderId/razorpayPaymentId/razorpaySignature) — not the snake_case Razorpay uses in its own client-side handler callback (razorpay_order_id etc.); map them when wiring up the Checkout handler. razorpayOrderId must belong to the authenticated caller — 404s the same way a nonexistent order would otherwise."
           },
           "response": [
             {

@@ -117,20 +117,34 @@ async function submitLead(data, user) {
   return sanitizeLeadForBuyer(lead);
 }
 
+// `buyer` is only present when the caller's query included it (getPartnerLeads/
+// getPartnerLeadById do; a bare prisma.lead.update() result, like uploadDocs
+// returns, does not) — buyerRef/buyerPhoneVerified just come out undefined
+// (and get dropped by JSON.stringify) in that case, same as if the fields
+// never existed.
 function sanitizeLeadForPartner(lead) {
+  const { buyer, ...rest } = lead;
   return {
-    ...lead,
+    ...rest,
     buyerPhone: formatContact(lead.buyerPhone, lead.isOtpVerified, maskPhone),
     buyerEmail: formatContact(lead.buyerEmail, lead.isOtpVerified, maskEmail),
+    buyerRef: buyer?.refCode,
+    buyerPhoneVerified: buyer?.phoneVerified,
     siteVisitOTP: undefined, // never expose OTP in response
+    adminNotes: undefined, // admin-internal, never expose to partner
   };
 }
+
+const PARTNER_LEAD_BUYER_SELECT = { select: { refCode: true, phoneVerified: true } };
 
 async function getPartnerLeads(partnerId) {
   // Rule 2: Partner sees only their assigned leads
   const leads = await prisma.lead.findMany({
     where: { assignedPartnerId: partnerId },
-    include: { property: { select: { title: true, slug: true, locality: true, city: true } } },
+    include: {
+      property: { select: { title: true, slug: true, locality: true, city: true } },
+      buyer: PARTNER_LEAD_BUYER_SELECT,
+    },
     orderBy: { createdAt: 'desc' },
   });
   return leads.map(sanitizeLeadForPartner);
@@ -139,7 +153,7 @@ async function getPartnerLeads(partnerId) {
 async function getPartnerLeadById(leadId, partnerId) {
   const lead = await prisma.lead.findFirst({
     where: { id: leadId, assignedPartnerId: partnerId },
-    include: { property: true },
+    include: { property: true, buyer: PARTNER_LEAD_BUYER_SELECT },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
   return sanitizeLeadForPartner(lead);
@@ -264,7 +278,11 @@ async function uploadDocs(leadId, partnerId, data, fileUrls) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
 
-  return prisma.lead.update({
+  // Previously returned the raw update result — unmasked buyerPhone/
+  // buyerEmail and the live siteVisitOTP, regardless of isOtpVerified. A
+  // partner could call this right after assignment (no OTP needed) to read
+  // both the buyer's real contact details and the site-visit OTP itself.
+  const updated = await prisma.lead.update({
     where: { id: leadId },
     data: {
       visitNotes: data.visitNotes,
@@ -273,6 +291,7 @@ async function uploadDocs(leadId, partnerId, data, fileUrls) {
       ...(fileUrls.closureDocs ? { closureDocumentUrls: { push: fileUrls.closureDocs } } : {}),
     },
   });
+  return sanitizeLeadForPartner(updated);
 }
 
 async function closeLead(leadId, partnerId) {

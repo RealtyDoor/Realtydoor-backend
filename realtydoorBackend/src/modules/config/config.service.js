@@ -3,13 +3,23 @@ const ApiError = require('../../utils/ApiError');
 const { withCache, cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 
+// Keys the frontend depends on unconditionally (no code-level fallback of its
+// own, unlike e.g. max_active_inquiries/max_inquiries_per_day which always
+// read through getConfigNumber(key, fallback) below). An environment seeded
+// before a key like this existed won't have the PlatformConfig row until an
+// admin adds one or someone runs the seed's upsert — until then, this fills
+// the gap. Any real row in the DB always wins; this only covers an absence.
+const PUBLIC_CONFIG_DEFAULTS = {
+  telecaller_phone: '+919844412345',
+};
+
 async function getPublicConfig() {
   return withCache(CACHE_KEYS.PUBLIC_CONFIG, 1800, async () => {
     const entries = await prisma.platformConfig.findMany({
       where: { isPublic: true },
       select: { key: true, value: true },
     });
-    return Object.fromEntries(entries.map((e) => [e.key, e.value]));
+    return { ...PUBLIC_CONFIG_DEFAULTS, ...Object.fromEntries(entries.map((e) => [e.key, e.value])) };
   });
 }
 

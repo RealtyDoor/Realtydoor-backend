@@ -59,7 +59,7 @@ async function verifyPayment(req, res, next) {
     if (!verifyPaymentSignature(razorpayOrderId, razorpayPaymentId, razorpaySignature)) {
       throw new ApiError(400, 'Invalid payment signature');
     }
-    const escrow = await service.confirmPayment(razorpayOrderId, razorpayPaymentId);
+    const escrow = await service.confirmPayment(razorpayOrderId, razorpayPaymentId, req.user.id);
     success(res, escrow, 'Payment verified');
   } catch (err) { next(err); }
 }

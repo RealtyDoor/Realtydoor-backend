@@ -13,8 +13,10 @@
  *   node scripts/backfillRefCodes.js           # dry run — reports how many rows need a refCode
  *   node scripts/backfillRefCodes.js --apply   # assigns them
  *
- * After this completes (and only after — see createRefCodeUniqueIndex.js),
- * refCode is safe to make unique, since no row is left with refCode: null.
+ * After this completes (and only after), add `@unique` to refCode on both
+ * User and Lead in their schema files and run `npx prisma db push` — safe at
+ * that point since no row is left without a refCode (Mongo's unique index
+ * rejects a second `null`, not a second real value).
  */
 
 require('dotenv').config();
