@@ -1365,7 +1365,12 @@ All inquiries submitted by the authenticated user.
         "title": "3 BHK Flat in Baner",
         "slug": "3-bhk-flat-in-baner-...",
         "city": "Pune",
-        "images": ["https://cdn.realtydoor.in/prop1.jpg"]
+        "locality": "Baner",
+        "images": ["https://cdn.realtydoor.in/prop1.jpg"],
+        "price": 10500000,
+        "builtUpArea": 1400,
+        "carpetArea": 1200,
+        "bhk": 3
       },
       "escrowTransactions": [
         {
@@ -1382,7 +1387,7 @@ All inquiries submitted by the authenticated user.
 }
 ```
 
-`assignedPartner` is `null` until a partner is assigned. **It never includes the partner's phone or email** — the buyer never dials the partner directly; the frontend's "Contact agent" action should call the shared telecaller number from `GET /api/config/public`'s `telecaller_phone` instead. `escrowTransactions` is empty if no token advance has ever been paid on this lead, newest first otherwise. A number of internal-only fields (admin/partner notes, OTP attempt count, commission/invoice fields, drop-request fields) are stripped from every lead returned to a buyer. See `GET /api/escrow/:id` for polling a single escrow's status directly (e.g. right after a Razorpay Checkout attempt).
+`assignedPartner` is `null` until a partner is assigned. **It never includes the partner's phone or email** — the buyer never dials the partner directly; the frontend's "Contact agent" action should call the shared telecaller number from `GET /api/config/public`'s `telecaller_phone` instead. `property.locality`/`price`/`builtUpArea`/`carpetArea`/`bhk` back the inquiry page's summary lines (e.g. "Whitefield · ₹1.05Cr · 1,840 sqft" and "Agent · Whitefield"). `escrowTransactions` is empty if no token advance has ever been paid on this lead, newest first otherwise. A number of internal-only fields (admin/partner notes, OTP attempt count, commission/invoice fields, drop-request fields) are stripped from every lead returned to a buyer. See `GET /api/escrow/:id` for polling a single escrow's status directly (e.g. right after a Razorpay Checkout attempt).
 
 ---
 

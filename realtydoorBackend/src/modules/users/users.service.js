@@ -60,7 +60,10 @@ async function verifyPhoneOtp(userId, phone, code) {
 // preferredCity, which is a *buyer's* onboarding preference and means
 // nothing here); companyName is the real, useful identifying field instead.
 const BUYER_LEAD_INCLUDE = {
-  property: { select: { title: true, slug: true, city: true, images: true } },
+  // locality/price/builtUpArea/carpetArea/bhk back the inquiry page's summary
+  // lines ("Whitefield · ₹1.05Cr · 1,840 sqft" and "Agent · Whitefield") —
+  // without them those lines have nothing to render on real data.
+  property: { select: { title: true, slug: true, city: true, locality: true, images: true, price: true, builtUpArea: true, carpetArea: true, bhk: true } },
   // Buyers previously had no way to see their own escrow status at all —
   // not here, and not through any dedicated endpoint either (see
   // GET /api/escrow/:id, added alongside this).
