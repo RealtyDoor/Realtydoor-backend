@@ -10,6 +10,7 @@ const {
 } = require('../../lib/email');
 const { sendLeadAssignedNotice } = require('../../lib/wati');
 const { setUserRole } = require('../../lib/clerkAdmin');
+const { ROLES } = require('../../utils/validators');
 const logger = require('../../lib/logger');
 const { cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
@@ -459,9 +460,7 @@ async function getAllUsers(filters, skip, limit) {
 
 async function changeUserRole(targetUserId, newRole, adminId, ip) {
   if (targetUserId === adminId) throw new ApiError(400, 'Cannot change your own role');
-
-  const VALID_ROLES = ['USER', 'PARTNER', 'ADMIN'];
-  if (!VALID_ROLES.includes(newRole)) throw new ApiError(400, 'Invalid role');
+  if (!ROLES.includes(newRole)) throw new ApiError(400, 'Invalid role');
 
   const user = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!user) throw new ApiError(404, 'User not found');
@@ -472,17 +471,33 @@ async function changeUserRole(targetUserId, newRole, adminId, ip) {
     select: { id: true, name: true, email: true, role: true, clerkId: true },
   });
 
-  await setUserRole(user.clerkId, newRole).catch((err) =>
-    logger.warn('[changeUserRole] Clerk publicMetadata sync failed', { clerkId: user.clerkId, error: err.message })
-  );
+  // The DB role is already authoritative here (every backend auth check reads
+  // it, never Clerk's), but anything that trusts Clerk's own copy directly —
+  // e.g. a frontend portal gate reading publicMetadata.role — would keep
+  // showing the old role until this sync succeeds. One immediate retry (same
+  // pattern as auth.service.js's createAccount sign-in token) cuts how often
+  // a transient Clerk blip leaves that copy stale; a failure that survives
+  // the retry is logged at `error` (not the original silent `warn`) and
+  // flagged in the response so the admin UI can surface it, not just a log line.
+  let clerkSyncFailed = false;
+  try {
+    await setUserRole(user.clerkId, newRole);
+  } catch (firstErr) {
+    try {
+      await setUserRole(user.clerkId, newRole);
+    } catch (err) {
+      clerkSyncFailed = true;
+      logger.error('[changeUserRole] Clerk publicMetadata sync failed after retry', { clerkId: user.clerkId, error: err.message });
+    }
+  }
 
   await createAuditLog({
     adminId, action: 'ROLE_CHANGED', targetType: 'User', targetId: targetUserId,
-    before: { role: user.role }, after: { role: newRole },
+    before: { role: user.role }, after: { role: newRole, clerkSyncFailed },
     ipAddress: ip,
   });
 
-  return updated;
+  return { ...updated, ...(clerkSyncFailed && { clerkSyncFailed }) };
 }
 
 async function suspendUser(targetUserId, suspend, reason, adminId, ip) {

@@ -1,5 +1,5 @@
 const { z } = require('zod');
-const { objectId } = require('../../utils/validators');
+const { objectId, roleEnum } = require('../../utils/validators');
 
 const assignLeadSchema = z.object({
   partnerId: objectId,
@@ -32,9 +32,7 @@ const updateLoanStatusSchema = z.object({
 });
 
 const changeUserRoleSchema = z.object({
-  role: z.enum(['USER', 'PARTNER', 'ADMIN'], {
-    errorMap: () => ({ message: 'role must be USER, PARTNER, or ADMIN' }),
-  }),
+  role: roleEnum,
 });
 
 const editPropertySchema = z.object({
