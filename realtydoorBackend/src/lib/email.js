@@ -55,6 +55,14 @@ async function sendKycRejected(email, note) {
   });
 }
 
+async function sendEscrowHeld(email, amount) {
+  return send({
+    to: email,
+    subject: 'Token Advance Received',
+    html: `<p>Your token advance of <strong>₹${Number(amount).toLocaleString('en-IN')}</strong> has been received and is held securely until your deal closes.</p>`,
+  });
+}
+
 async function sendEscrowRefunded(email, amount) {
   return send({
     to: email,
@@ -95,6 +103,7 @@ module.exports = {
   sendKycVerified,
   sendServiceActivated,
   sendKycRejected,
+  sendEscrowHeld,
   sendEscrowRefunded,
   sendEscrowPaymentFailed,
   sendLoanStatusUpdate,

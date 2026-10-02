@@ -3921,7 +3921,7 @@ Full partner profile drill-down including all leads and listings.
 
 ### PATCH /api/admin/escrow/:id/release
 
-Release a HELD escrow to seller via Razorpay. Requires `HELD` status + captured payment.
+Release a HELD escrow. `sellerDetails` gets a RazorpayX Payout for the escrow amount net of `partnerShare`/`platformFee` (direct bank transfer — no seller Razorpay onboarding required); `partnerDetails` additionally pays `partnerShare` out as a second payout. `platformFee` is never paid out anywhere — it's simply the portion held back in the RazorpayX account. Requires `HELD` status + captured payment.
 
 **Auth:** ADMIN
 
@@ -3929,16 +3929,31 @@ Release a HELD escrow to seller via Razorpay. Requires `HELD` status + captured 
 
 ```json
 {
-  "sellerAccountId": "acc_...",
+  "sellerDetails": {
+    "name": "Seller Name",
+    "email": "seller@example.com",
+    "phone": "+919800000000",
+    "ifsc": "HDFC0000123",
+    "accountNumber": "50100xxxxxxxx"
+  },
+  "partnerDetails": {
+    "name": "Partner Name",
+    "email": "partner@example.com",
+    "phone": "+919800000001",
+    "ifsc": "ICIC0000456",
+    "accountNumber": "60200xxxxxxxx"
+  },
   "partnerShare": 5000,
   "platformFee": 2000,
   "note": "Release approved."
 }
 ```
 
-Either `sellerAccountId` (a real Razorpay transfer is made) **or** `manualTransferConfirmed: true` with a required `note` (the payout was made outside Razorpay — e.g. bank transfer) must be provided. Previously `sellerAccountId` was silently optional with no alternative, meaning an escrow could be marked `RELEASED` with no real transfer of any kind and no record of why.
+Either `sellerDetails` (a real RazorpayX payout is made to that bank account, for `amount - partnerShare - platformFee`) **or** `manualTransferConfirmed: true` with a required `note` (the payout was made outside Razorpay — e.g. bank transfer) must be provided. Previously this was silently optional with no alternative, meaning an escrow could be marked `RELEASED` with no real transfer of any kind and no record of why. `partnerShare + platformFee` must be less than the escrow amount.
 
-The release is atomic: if two requests for the same escrow race, only one succeeds — the other gets `400 "This escrow was already released or refunded"` before any Razorpay call is made, so a double-click or retry can never trigger two transfers. If the Razorpay transfer call itself fails, the escrow is rolled back to `HELD` (not left stuck `RELEASED` with no money moved) and the error is returned.
+`partnerDetails` is optional and independent of `sellerDetails` — if omitted, `partnerShare` is still recorded on the escrow (held back from the seller's payout) but no automated payout is made for it, same as before; provide `partnerDetails` (with a positive `partnerShare`) to also pay the partner directly via RazorpayX.
+
+The release is atomic: if two requests for the same escrow race, only one succeeds — the other gets `400 "This escrow was already released or refunded"` before any Razorpay call is made, so a double-click or retry can never trigger two payouts. Each payout also passes the escrowId as its `reference_id`, which RazorpayX itself treats as an idempotency key — including across the seller and partner payouts separately. If either payout call fails, the escrow is rolled back to `HELD` (not left stuck `RELEASED` with no money moved) and the error is returned; a retry after a partial failure safely skips re-paying whichever leg already succeeded.
 
 **Response `200`:**
 
@@ -3950,7 +3965,7 @@ The release is atomic: if two requests for the same escrow race, only one succee
 }
 ```
 
-**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race) · `400` neither `sellerAccountId` nor `manualTransferConfirmed` provided.
+**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race) · `400` neither `sellerDetails` nor `manualTransferConfirmed` provided.
 
 ---
 

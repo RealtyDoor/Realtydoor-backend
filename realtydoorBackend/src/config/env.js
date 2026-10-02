@@ -9,7 +9,7 @@ const envSchema = z.object({
   RAZORPAY_KEY_ID: z.string().min(1),
   RAZORPAY_KEY_SECRET: z.string().min(1),
   RAZORPAY_WEBHOOK_SECRET: z.string().min(1),
-  RAZORPAY_ROUTE_ACCOUNT_ID: z.string().min(1),
+  RAZORPAYX_ACCOUNT_NUMBER: z.string().min(1),
   WATI_API_ENDPOINT: z.string().url(),
   WATI_ACCESS_TOKEN: z.string().min(1),
   WATI_WEBHOOK_TOKEN: z.string().optional(),

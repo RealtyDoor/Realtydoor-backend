@@ -85,6 +85,12 @@ enum EscrowStatus {
   REFUNDED
   FAILED
   CANCELLED
+  // A RazorpayX payout for this escrow was accepted (escrow went RELEASED)
+  // but later failed/reversed asynchronously per a payout.failed/reversed
+  // webhook — money didn't fully reach its destination. Needs manual admin
+  // review; release()/refund() both reject anything that isn't HELD, so this
+  // status deliberately blocks the normal retry path until someone looks.
+  HELD_PAYOUT_FAILED
 }
 
 enum BuyerFeedbackStatus {

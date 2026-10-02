@@ -9,7 +9,12 @@ async function createOrder(req, res, next) {
   try {
     const { leadId, amount } = createOrderSchema.parse(req.body);
     const result = await service.createOrder(leadId, req.user.id, amount);
-    created(res, result, 'Escrow order created');
+    const message = result.alreadyPaid
+      ? 'Payment already received for this escrow'
+      : result.resumed
+        ? 'Resuming your existing escrow order'
+        : 'Escrow order created';
+    created(res, result, message);
   } catch (err) { next(err); }
 }
 

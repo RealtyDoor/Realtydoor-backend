@@ -4951,7 +4951,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"sellerAccountId\": \"acc_xxxxxxxxxxxxxxxx\",\n  \"partnerShare\": 80000,\n  \"platformFee\": 20000,\n  \"note\": \"Allocation letter verified. Releasing payment to builder.\"\n}",
+                  "raw": "{\n  \"sellerDetails\": {\n    \"name\": \"Seller Name\",\n    \"email\": \"seller@example.com\",\n    \"phone\": \"+919800000000\",\n    \"ifsc\": \"HDFC0000123\",\n    \"accountNumber\": \"50100xxxxxxxx\"\n  },\n  \"partnerDetails\": {\n    \"name\": \"Partner Name\",\n    \"email\": \"partner@example.com\",\n    \"phone\": \"+919800000001\",\n    \"ifsc\": \"ICIC0000456\",\n    \"accountNumber\": \"60200xxxxxxxx\"\n  },\n  \"partnerShare\": 80000,\n  \"platformFee\": 20000,\n  \"note\": \"Allocation letter verified. Releasing payment to builder.\"\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -4971,7 +4971,7 @@
                     "release"
                   ]
                 },
-                "description": "Either sellerAccountId (real Razorpay transfer) or manualTransferConfirmed: true + a note (payout made outside Razorpay) is required. The release is atomic — a concurrent duplicate request gets 400 instead of triggering a second transfer, and a failed Razorpay call rolls the escrow back to HELD."
+                "description": "Either sellerDetails (a real RazorpayX payout to that bank account) or manualTransferConfirmed: true + a note (payout made outside Razorpay) is required. The release is atomic — a concurrent duplicate request gets 400 instead of triggering a second payout, and a failed RazorpayX call rolls the escrow back to HELD."
               },
               "response": [
                 {
@@ -5036,7 +5036,7 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":false,\"message\":\"Provide sellerAccountId for a Razorpay transfer, or set manualTransferConfirmed to true if the payout was made outside Razorpay\"}"
+                  "body": "{\"success\":false,\"message\":\"Provide sellerDetails for a RazorpayX payout, or set manualTransferConfirmed to true if the payout was made outside Razorpay\"}"
                 }
               ]
             },

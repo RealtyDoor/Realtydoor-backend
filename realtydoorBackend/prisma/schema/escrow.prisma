@@ -1,6 +1,8 @@
 // ─── ESCROW TRANSACTION ───────────────────────────────────────────────────────
 // Mandatory token advance for every deal closure (PRD §5 — Leakage 3, Rule 6).
-// Uses Razorpay Route to hold → release to seller or refund to buyer.
+// Collects into the RealtyDoor RazorpayX current account, then releases to
+// the seller via a RazorpayX Payout (direct bank transfer, no Route
+// onboarding) or refunds to the buyer via the original Payment Gateway charge.
 // A Lead cannot be marked CLOSED unless an EscrowTransaction { status: HELD } exists.
 
 model EscrowTransaction {
@@ -10,7 +12,9 @@ model EscrowTransaction {
   buyerId           String       @db.ObjectId
   razorpayOrderId    String       @unique
   razorpayPaymentId  String?
-  razorpayTransferId String?
+  razorpayTransferId String?      // legacy Route transfer id — pre-RazorpayX-migration releases only
+  razorpayPayoutId   String?      // seller/primary payout
+  razorpayPartnerPayoutId String? // optional second payout, when partnerDetails is given at release
   razorpayRefundId   String?
 
   amount    Float

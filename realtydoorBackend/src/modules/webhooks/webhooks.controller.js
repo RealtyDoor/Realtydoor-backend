@@ -2,7 +2,7 @@ const { verifyWebhookSignature } = require('../../lib/razorpay');
 const { confirmPayment } = require('../escrow/escrow.service');
 const prisma = require('../../lib/prisma');
 const { sendServiceActivated, sendEscrowPaymentFailed } = require('../../lib/email');
-const { createNotification } = require('../../lib/notifications');
+const { createNotification, broadcastNotification } = require('../../lib/notifications');
 const logger = require('../../lib/logger');
 
 // The entire handler body is one try/catch, including signature verification
@@ -87,6 +87,18 @@ async function razorpay(req, res) {
 
       const escrow = await prisma.escrowTransaction.findUnique({ where: { razorpayOrderId: orderId } });
       if (escrow) {
+        // Only ever downgrade a still-pending escrow. payment.failed reports
+        // one attempt against this order_id; Razorpay webhook delivery can
+        // retry/redeliver and arrive out of order, so without this check a
+        // stale payment.failed arriving after a *different*, successful
+        // attempt was already confirmed (HELD) would silently corrupt it back
+        // to FAILED — hiding real captured money from release()/refund() and
+        // telling the buyer their successful payment failed.
+        if (escrow.status !== 'PAYMENT_PENDING') {
+          logger.warn('[RazorpayWebhook] payment.failed for a non-pending escrow — ignoring', { escrowId: escrow.id, status: escrow.status });
+          return res.json({ status: 'ok' });
+        }
+
         await prisma.escrowTransaction.update({
           where: { razorpayOrderId: orderId },
           data: { status: 'FAILED', failedAt: new Date() },
@@ -198,6 +210,54 @@ async function razorpay(req, res) {
           message: 'The token advance for your property deal has been successfully transferred to the seller.',
           type: 'ESCROW_RELEASED',
           linkUrl: `/user/inquiries/${escrow.leadId}`,
+        });
+      }
+    }
+
+    // A RazorpayX payout created during release() returned success
+    // synchronously (so the escrow was already marked RELEASED) but then
+    // failed or was reversed afterward — the money didn't actually reach the
+    // seller/partner. There's no safe automatic recovery here (the seller's
+    // payout may or may not have already landed elsewhere), so this flags the
+    // escrow for manual review instead of silently leaving it RELEASED with
+    // no money moved, or guessing at a revert that could race a legitimate retry.
+    if (event === 'payout.failed' || event === 'payout.reversed') {
+      const { id: payoutId, status, status_details: statusDetails } = payload.payout.entity;
+      const escrow = await prisma.escrowTransaction.findFirst({
+        where: { OR: [{ razorpayPayoutId: payoutId }, { razorpayPartnerPayoutId: payoutId }] },
+      });
+
+      // Re-checking status in (RELEASED, HELD_PAYOUT_FAILED) rather than just
+      // RELEASED — a release() with both seller and partner payouts can have
+      // each leg fail independently. Without this, the first leg's failure
+      // flips status to HELD_PAYOUT_FAILED, and the second leg's own failure
+      // webhook would silently no-op instead of being recorded. The payoutId
+      // check in adminNote is what makes a duplicate delivery of the *same*
+      // webhook a no-op instead.
+      if (escrow && ['RELEASED', 'HELD_PAYOUT_FAILED'].includes(escrow.status) && !escrow.adminNote?.includes(payoutId)) {
+        const leg = escrow.razorpayPayoutId === payoutId ? 'seller' : 'partner';
+        const reason = statusDetails?.description || status;
+
+        await prisma.escrowTransaction.update({
+          where: { id: escrow.id },
+          data: {
+            status: 'HELD_PAYOUT_FAILED',
+            adminNote: `${escrow.adminNote ? `${escrow.adminNote} | ` : ''}${leg} payout ${status} (${payoutId}): ${reason} — needs manual review`,
+          },
+        });
+
+        const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
+        if (admins.length > 0) {
+          await broadcastNotification({
+            userIds: admins.map((a) => a.id),
+            title: 'Escrow payout failed',
+            message: `The ${leg} payout for an escrow of ₹${escrow.amount.toLocaleString('en-IN')} ${status === 'reversed' ? 'was reversed' : 'failed'}: ${reason}. Needs manual review.`,
+            type: 'ESCROW_PAYOUT_FAILED',
+          });
+        }
+
+        logger.error('[RazorpayWebhook] Escrow payout failed/reversed after release — flagged for manual review', {
+          payoutId, escrowId: escrow.id, leg, status, reason,
         });
       }
     }
