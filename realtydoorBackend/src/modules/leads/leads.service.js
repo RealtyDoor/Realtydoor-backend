@@ -1,59 +1,127 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
-const { formatPhone } = require('../../lib/phoneUtils');
+const { formatContact, maskPhone, maskEmail } = require('../../lib/phoneUtils');
 const { generate, expiresAt, isExpired, isLocked, lockUntil, maxAttemptsReached } = require('../../lib/otp');
 const { sendSiteVisitOtp } = require('../../lib/wati');
 const { createNotification, broadcastNotification } = require('../../lib/notifications');
 const logger = require('../../lib/logger');
 const { sendLeadAssigned } = require('../../lib/email');
 const { createAuditLog } = require('../../lib/auditLog');
+const { getConfigNumber } = require('../config/config.service');
+const { nextRefCode } = require('../../lib/refCode');
 
-async function submitLead(data, buyerId) {
+const DEFAULT_MAX_ACTIVE_INQUIRIES = 5;
+const DEFAULT_MAX_INQUIRIES_PER_DAY = 3;
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+// The actual UTC instant corresponding to 00:00:00 IST "today" — regardless
+// of what timezone the server process itself runs in. The old code used
+// `new Date().setHours(0,0,0,0)`, which is the server's *local* midnight —
+// silently wrong (off by 5.5 hours) the moment this runs on a UTC host,
+// which every production box is.
+function startOfTodayIST() {
+  const shifted = new Date(Date.now() + IST_OFFSET_MS);
+  const istMidnightAsUtc = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
+  return new Date(istMidnightAsUtc - IST_OFFSET_MS);
+}
+
+// Internal-only fields a buyer never needs: admin/partner free-text notes,
+// OTP attempt bookkeeping, and the full commission/drop-request workflow
+// state. siteVisitOTP is deliberately kept — the buyer is the one who reads
+// it out to the partner at the site-visit gate.
+const BUYER_HIDDEN_LEAD_FIELDS = [
+  'adminNotes', 'partnerNotes', 'visitNotes', 'otpAttempts',
+  'platformCommissionPct', 'commissionAmountPaise', 'commissionStatus', 'invoiceUrl', 'invoicedAt', 'collectedAt',
+  'dropRequestedByPartner', 'dropRequestNote', 'dropRequestedAt', 'droppedReason', 'droppedAt', 'droppedByAdminId',
+];
+
+function sanitizeLeadForBuyer(lead) {
+  if (!lead) return lead;
+  const clean = { ...lead };
+  for (const field of BUYER_HIDDEN_LEAD_FIELDS) delete clean[field];
+  return clean;
+}
+
+async function submitLead(data, user) {
   const property = await prisma.property.findUnique({ where: { id: data.propertyId }, select: { id: true, title: true, publishStatus: true } });
   if (!property) throw new ApiError(404, 'Property not found');
   if (property.publishStatus !== 'APPROVED') throw new ApiError(400, 'This property is not currently available for enquiry');
 
-  const existing = await prisma.lead.findFirst({
-    where: { propertyId: data.propertyId, buyerPhone: data.buyerPhone, status: { not: 'DROPPED' } },
+  // Re-keyed on the authenticated buyer, not a client-typed phone number
+  // that doesn't have to belong to whoever is actually submitting.
+  const existingForProperty = await prisma.lead.findFirst({
+    where: { propertyId: data.propertyId, buyerId: user.id, status: { not: 'DROPPED' } },
   });
-  if (existing) throw new ApiError(409, 'You have already submitted an enquiry for this property');
+  if (existingForProperty) throw new ApiError(409, 'You have already submitted an enquiry for this property');
 
-  // Rate limit: 30-min cooldown between any submissions from the same phone
-  const cooloffCutoff = new Date(Date.now() - 30 * 60 * 1000);
-  const recentLead = await prisma.lead.findFirst({
-    where: { buyerPhone: data.buyerPhone, createdAt: { gte: cooloffCutoff } },
-    orderBy: { createdAt: 'desc' },
+  const maxActive = await getConfigNumber('max_active_inquiries', DEFAULT_MAX_ACTIVE_INQUIRIES);
+  const activeCount = await prisma.lead.count({
+    where: { buyerId: user.id, status: { notIn: ['CLOSED', 'DROPPED'] } },
   });
-  if (recentLead) throw new ApiError(429, 'Please wait 30 minutes before submitting another inquiry');
+  if (activeCount >= maxActive) {
+    throw new ApiError(429, `You can have at most ${maxActive} active inquiries. Close or cancel one to send another.`, { code: 'ACTIVE_INQUIRY_LIMIT' });
+  }
 
-  // Rate limit: max 5 inquiries per calendar day per phone
-  const dayStart = new Date();
-  dayStart.setHours(0, 0, 0, 0);
+  const todayStart = startOfTodayIST();
+  const maxDaily = await getConfigNumber('max_inquiries_per_day', DEFAULT_MAX_INQUIRIES_PER_DAY);
   const todayCount = await prisma.lead.count({
-    where: { buyerPhone: data.buyerPhone, createdAt: { gte: dayStart } },
+    where: { buyerId: user.id, createdAt: { gte: todayStart } },
   });
-  if (todayCount >= 5) throw new ApiError(429, 'Maximum 5 inquiries allowed per day');
+  if (todayCount >= maxDaily) {
+    throw new ApiError(429, `You can submit at most ${maxDaily} inquiries per day.`, { code: 'DAILY_INQUIRY_LIMIT' });
+  }
 
+  // Name/email/phone are always a snapshot of the verified account, never
+  // client input — buyerName/buyerEmail/buyerPhone are no longer accepted
+  // in the request body at all (leads.validator.js), closing the gap where
+  // a submitted phone didn't have to match the authenticated buyer's own.
+  const refCode = await nextRefCode('lead');
   const lead = await prisma.lead.create({
-    data: { ...data, status: 'UNASSIGNED', ...(buyerId && { buyerId }) },
+    data: {
+      refCode,
+      propertyId: data.propertyId,
+      buyerMessage: data.buyerMessage,
+      buyerName: data.buyerName || user.name,
+      buyerEmail: user.email,
+      buyerPhone: user.phone,
+      buyerId: user.id,
+      status: 'UNASSIGNED',
+    },
   });
+
+  // Race guard: two simultaneous submissions from the same buyer can both
+  // pass the counts above before either writes — Mongo gives no cheap
+  // cross-document transaction here. Recheck after creating and undo this
+  // lead if it pushed either count over the limit, so a retry correctly
+  // sees the real 429 instead of a phantom extra inquiry sitting in the DB.
+  const activeRecount = await prisma.lead.count({ where: { buyerId: user.id, status: { notIn: ['CLOSED', 'DROPPED'] } } });
+  if (activeRecount > maxActive) {
+    await prisma.lead.delete({ where: { id: lead.id } });
+    throw new ApiError(429, `You can have at most ${maxActive} active inquiries. Close or cancel one to send another.`, { code: 'ACTIVE_INQUIRY_LIMIT' });
+  }
+  const dailyRecount = await prisma.lead.count({ where: { buyerId: user.id, createdAt: { gte: todayStart } } });
+  if (dailyRecount > maxDaily) {
+    await prisma.lead.delete({ where: { id: lead.id } });
+    throw new ApiError(429, `You can submit at most ${maxDaily} inquiries per day.`, { code: 'DAILY_INQUIRY_LIMIT' });
+  }
 
   const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
-  await broadcastNotification({
-    userIds: admins.map((admin) => admin.id),
+  await Promise.all(admins.map((admin) => createNotification({
+    userId: admin.id,
     title: 'New Unassigned Lead',
-    message: `${data.buyerName} enquired about "${property.title}".`,
+    message: `${lead.refCode} · ${lead.buyerName} enquired about "${property.title}".`,
     type: 'LEAD_NEW',
     linkUrl: `/admin/leads/${lead.id}`,
-  });
+  })));
 
-  return lead;
+  return sanitizeLeadForBuyer(lead);
 }
 
 function sanitizeLeadForPartner(lead) {
   return {
     ...lead,
-    buyerPhone: formatPhone(lead.buyerPhone, lead.isOtpVerified),
+    buyerPhone: formatContact(lead.buyerPhone, lead.isOtpVerified, maskPhone),
+    buyerEmail: formatContact(lead.buyerEmail, lead.isOtpVerified, maskEmail),
     siteVisitOTP: undefined, // never expose OTP in response
   };
 }
@@ -327,4 +395,4 @@ async function adminRejectDrop(leadId, adminId, ip) {
   return { message: 'Drop request rejected. Partner notified.' };
 }
 
-module.exports = { submitLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop };
+module.exports = { submitLead, sanitizeLeadForBuyer, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop };

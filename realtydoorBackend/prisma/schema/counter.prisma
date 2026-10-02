@@ -1,0 +1,10 @@
+// ─── COUNTER ──────────────────────────────────────────────────────────────────
+// Backs lib/refCode.js's atomic, human-readable reference codes (RD-U-000123,
+// RD-L-000123). id is the counter's kind ("user" | "lead"); seq is incremented
+// via Mongo's atomic $inc on every call — safe under concurrency without a
+// cross-document transaction.
+
+model Counter {
+  id  String @id @map("_id")
+  seq Int    @default(0)
+}

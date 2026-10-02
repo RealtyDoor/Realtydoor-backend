@@ -27,8 +27,14 @@ async function getById(escrowId, buyerId) {
 }
 
 async function createOrder(leadId, buyerId, amountInRupees) {
-  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  // Scoped to buyerId, not just id — previously any authenticated user could
+  // create (and pay into) an escrow order for *any* lead by guessing/reusing
+  // a leadId, since the lookup had no ownership check at all.
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.status !== 'SITE_VISIT_DONE') {
+    throw new ApiError(400, 'Escrow can only be created after the site visit is done');
+  }
 
   const existing = await prisma.escrowTransaction.findFirst({
     where: { leadId, status: { in: ['HELD', 'PAYMENT_PENDING'] } },

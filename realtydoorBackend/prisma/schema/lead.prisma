@@ -4,28 +4,30 @@
 // siteVisitOTP is cleared from DB after successful verification.
 
 model Lead {
-  id               String     @id @default(auto()) @map("_id") @db.ObjectId
-  buyerName        String
-  buyerEmail       String
-  buyerPhone       String
-  buyerId          String?    @db.ObjectId
-  buyerMessage     String?
-  propertyId       String     @db.ObjectId
-  property         Property   @relation(fields: [propertyId], references: [id])
-  status           LeadStatus @default(UNASSIGNED)
-  assignedPartnerId String?   @db.ObjectId
-  assignedPartner  User?      @relation("PartnerLeads", fields: [assignedPartnerId], references: [id])
-  assignedAt       DateTime?
-  adminNotes       String?
+  id                String     @id @default(auto()) @map("_id") @db.ObjectId
+  refCode           String?   @unique // RD-L-000123 — see User.refCode's comment; backfilled, now unique
+  buyerName         String
+  buyerEmail        String
+  buyerPhone        String
+  buyerId           String?    @db.ObjectId
+  buyer             User?      @relation("BuyerLeads", fields: [buyerId], references: [id])
+  buyerMessage      String?
+  propertyId        String     @db.ObjectId
+  property          Property   @relation(fields: [propertyId], references: [id])
+  status            LeadStatus @default(UNASSIGNED)
+  assignedPartnerId String?    @db.ObjectId
+  assignedPartner   User?      @relation("PartnerLeads", fields: [assignedPartnerId], references: [id])
+  assignedAt        DateTime?
+  adminNotes        String?
 
   // OTP anti-leakage (PRD §5 — Rules 1, 2, 3)
   siteVisitScheduledAt DateTime?
-  siteVisitOTP         String?    // cleared after verification
+  siteVisitOTP         String? // cleared after verification
   otpGeneratedAt       DateTime?
-  otpExpiresAt         DateTime?  // = otpGeneratedAt + OTP_EXPIRY_MINUTES
-  otpAttempts          Int        @default(0)
-  otpLockedUntil       DateTime?  // set after OTP_MAX_ATTEMPTS failures
-  isOtpVerified        Boolean    @default(false)
+  otpExpiresAt         DateTime? // = otpGeneratedAt + OTP_EXPIRY_MINUTES
+  otpAttempts          Int       @default(0)
+  otpLockedUntil       DateTime? // set after OTP_MAX_ATTEMPTS failures
+  isOtpVerified        Boolean   @default(false)
   otpVerifiedAt        DateTime?
 
   // Partner's request for Admin to unlock a locked OTP (§12.3) — a real,

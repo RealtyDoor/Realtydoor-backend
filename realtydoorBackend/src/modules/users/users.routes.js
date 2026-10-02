@@ -6,6 +6,7 @@ const { requireOnboarded } = require('../../middleware/requireOnboarded');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { userDocUploader } = require('../../lib/fileUpload');
 const { otpLimiter } = require('../../middleware/rateLimiter');
+const { validateObjectId } = require('../../middleware/validateObjectId');
 
 router.use(authenticate, requireUser);
 
@@ -29,7 +30,7 @@ router.post('/verify-phone/otp', otpLimiter, ctrl.verifyPhoneOtp);
 
 // Inquiries tracker
 router.get('/leads', ctrl.getMyLeads);
-router.get('/leads/:id', ctrl.getMyLead);
+router.get('/leads/:id', validateObjectId('id'), ctrl.getMyLead);
 router.post('/leads/:leadId/rating', ctrl.rateLead);
 router.post('/leads/:id/cancel', ctrl.cancelLead);
 

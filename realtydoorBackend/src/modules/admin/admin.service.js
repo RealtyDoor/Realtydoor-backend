@@ -16,6 +16,25 @@ const CACHE_KEYS = require('../../lib/cacheKeys');
 
 // ─── LEAD MANAGEMENT ─────────────────────────────────────────────────────────
 
+// Admin sees full buyer identity (unlike the buyer-facing or partner-facing
+// sanitizers) — refCode plus enough to act on a real person: contact details,
+// phone-verification state, account age, and how many inquiries they've
+// submitted in total (a quick signal for spotting abuse of the per-buyer
+// limits in leads.service.js).
+const ADMIN_LEAD_BUYER_INCLUDE = {
+  select: {
+    id: true, refCode: true, name: true, email: true, phone: true,
+    phoneVerified: true, phoneVerifiedAt: true, createdAt: true,
+    _count: { select: { buyerLeads: true } },
+  },
+};
+
+function flattenBuyerInquiryCount(lead) {
+  if (!lead?.buyer) return lead;
+  const { _count, ...buyer } = lead.buyer;
+  return { ...lead, buyer, inquiryCount: _count?.buyerLeads ?? 0 };
+}
+
 async function getLeadById(leadId) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
@@ -23,16 +42,22 @@ async function getLeadById(leadId) {
       property:        { select: { title: true, slug: true, city: true, locality: true } },
       assignedPartner: { select: { name: true, email: true, phone: true, companyName: true } },
       escrowTransactions: { orderBy: { createdAt: 'desc' } },
+      buyer: ADMIN_LEAD_BUYER_INCLUDE,
     },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
-  return lead;
+  return flattenBuyerInquiryCount(lead);
 }
 
 async function getAllLeads(filters, skip, limit) {
   const where = {};
   if (filters.status) where.status = filters.status;
   if (filters.partnerId) where.assignedPartnerId = filters.partnerId;
+  if (filters.search) where.OR = [
+    { refCode:    { contains: filters.search, mode: 'insensitive' } },
+    { buyerName:  { contains: filters.search, mode: 'insensitive' } },
+    { buyerEmail: { contains: filters.search, mode: 'insensitive' } },
+  ];
 
   const [data, total] = await Promise.all([
     prisma.lead.findMany({
@@ -41,12 +66,13 @@ async function getAllLeads(filters, skip, limit) {
       include: {
         property: { select: { title: true, slug: true, city: true } },
         assignedPartner: { select: { name: true, email: true } },
+        buyer: ADMIN_LEAD_BUYER_INCLUDE,
       },
     }),
     prisma.lead.count({ where }),
   ]);
 
-  return { data, total };
+  return { data: data.map(flattenBuyerInquiryCount), total };
 }
 
 async function assignLead(leadId, partnerId, adminId, ip) {
@@ -86,12 +112,15 @@ async function assignLead(leadId, partnerId, adminId, ip) {
   sendLeadAssignedNotice(partner.phone, partner.name).catch(() => {});
   sendLeadAssigned(partner.email, { buyerName: lead.buyerName, propertyTitle: lead.property.title }).catch(() => {});
 
-  // Buyer: in-app notification (if registered) + email
+  // Buyer: in-app notification (if registered) + email. Never the partner's
+  // phone — "Contact agent" always dials the shared telecaller number
+  // instead (platform config key telecaller_phone); the buyer only gets the
+  // partner's identity (name/company), not a way to reach them directly.
   if (lead.buyerId) {
     await createNotification({
       userId: lead.buyerId,
       title: 'Your Inquiry is Being Processed',
-      message: `Your inquiry for "${lead.property.title}" has been assigned to ${partner.name} (${partner.phone}).`,
+      message: `Your inquiry ${lead.refCode} for "${lead.property.title}" has been assigned to ${partner.companyName || partner.name}. Use Contact agent to reach our team.`,
       type: 'LEAD_ASSIGNED',
       linkUrl: `/user/inquiries/${leadId}`,
     });
@@ -411,14 +440,15 @@ async function getAllUsers(filters, skip, limit) {
   const where = {};
   if (filters.role)   where.role = filters.role;
   if (filters.search) where.OR   = [
-    { name:  { contains: filters.search, mode: 'insensitive' } },
-    { email: { contains: filters.search, mode: 'insensitive' } },
+    { name:    { contains: filters.search, mode: 'insensitive' } },
+    { email:   { contains: filters.search, mode: 'insensitive' } },
+    { refCode: { contains: filters.search, mode: 'insensitive' } },
   ];
 
   const [data, total] = await Promise.all([
     prisma.user.findMany({
       where, skip, take: limit,
-      select: { id: true, name: true, email: true, phone: true, phoneVerified: true, role: true, kycStatus: true, partnerSubType: true, createdAt: true },
+      select: { id: true, refCode: true, name: true, email: true, phone: true, phoneVerified: true, role: true, kycStatus: true, partnerSubType: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
     }),
     prisma.user.count({ where }),

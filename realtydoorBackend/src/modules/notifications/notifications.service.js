@@ -12,14 +12,14 @@ async function getMyNotifications(userId, skip, limit) {
 async function markRead(userId, notificationId) {
   return prisma.notification.updateMany({
     where: { id: notificationId, userId },
-    data: { isRead: true },
+    data: { isRead: true, readAt: new Date() },
   });
 }
 
 async function markAllRead(userId) {
   return prisma.notification.updateMany({
     where: { userId, isRead: false },
-    data: { isRead: true },
+    data: { isRead: true, readAt: new Date() },
   });
 }
 

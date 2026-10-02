@@ -4,6 +4,7 @@ const otpAuth = require('../../lib/otpAuth');
 const escrowService = require('../escrow/escrow.service');
 const { getConfigNumber } = require('../config/config.service');
 const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
+const { sanitizeLeadForBuyer } = require('../leads/leads.service');
 
 const DEFAULT_ESCROW_REFUND_WINDOW_HOURS = 48;
 
@@ -51,12 +52,13 @@ async function verifyPhoneOtp(userId, phone, code) {
   return { phoneVerified: true, phone };
 }
 
-// Minimum partner fields for a buyer to see once a lead is assigned — never
-// email or KYC data. The plan this was built from also asked for a partner
-// "city", but User has no such field for a partner (only preferredCity,
-// which is a *buyer's* onboarding preference and means nothing here) —
-// companyName is used instead, as a real field that's actually useful for
-// identifying who the buyer is talking to.
+// Minimum partner fields for a buyer to see once a lead is assigned — no
+// phone (final decision: the partner's phone is never exposed to the buyer
+// at all; "Contact agent" always dials the shared telecaller number instead,
+// see platform config key telecaller_phone), no email, no KYC/bank fields.
+// No "city" either — User has no such field for a partner (only
+// preferredCity, which is a *buyer's* onboarding preference and means
+// nothing here); companyName is the real, useful identifying field instead.
 const BUYER_LEAD_INCLUDE = {
   property: { select: { title: true, slug: true, city: true, images: true } },
   // Buyers previously had no way to see their own escrow status at all —
@@ -70,28 +72,30 @@ const BUYER_LEAD_INCLUDE = {
     orderBy: { createdAt: 'desc' },
   },
   assignedPartner: {
-    select: { id: true, name: true, phone: true, profileImageUrl: true, companyName: true },
+    select: { id: true, name: true, profileImageUrl: true, companyName: true },
   },
 };
 
 async function getMyLeads(userId) {
-  return prisma.lead.findMany({
+  const leads = await prisma.lead.findMany({
     where: { buyerId: userId },
     include: BUYER_LEAD_INCLUDE,
     orderBy: { createdAt: 'desc' },
   });
+  return leads.map(sanitizeLeadForBuyer);
 }
 
 // Single-lead detail for a buyer — findFirst scoped to buyerId, so another
 // user's lead id (or a nonexistent one) both give the same 404, not a 403
-// that would confirm the id exists.
+// that would confirm the id exists. :id is validated as an ObjectId at the
+// route layer, so a malformed id 400s instead of reaching Prisma at all.
 async function getMyLead(userId, id) {
   const lead = await prisma.lead.findFirst({
     where: { id, buyerId: userId },
     include: BUYER_LEAD_INCLUDE,
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
-  return lead;
+  return sanitizeLeadForBuyer(lead);
 }
 
 const RATEABLE_STATUSES = ['SITE_VISIT_DONE', 'CLOSED'];
@@ -104,7 +108,7 @@ async function rateLead(userId, leadId, { rating, comment }) {
   }
   if (lead.buyerRating != null) throw new ApiError(409, 'You have already rated this partner for this lead');
 
-  return prisma.lead.update({
+  const updated = await prisma.lead.update({
     where: { id: leadId },
     data: {
       buyerRating:        rating,
@@ -112,6 +116,7 @@ async function rateLead(userId, leadId, { rating, comment }) {
       buyerRatedAt:        new Date(),
     },
   });
+  return sanitizeLeadForBuyer(updated);
 }
 
 async function cancelLead(userId, leadId, { reason, reasonLabel }) {

@@ -5,7 +5,7 @@ const service = require('./leads.service');
 async function submit(req, res, next) {
   try {
     const data = submitLeadSchema.parse(req.body);
-    const lead = await service.submitLead(data, req.user.id);
+    const lead = await service.submitLead(data, req.user);
     created(res, lead, "We'll reach out within 24 hours");
   } catch (err) { next(err); }
 }

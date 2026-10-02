@@ -97,7 +97,7 @@ async function razorpay(req, res) {
           title: 'Token Advance Payment Failed',
           message: 'Your token advance payment could not be processed. Please retry from your dashboard.',
           type: 'PAYMENT_FAILED',
-          linkUrl: '/dashboard/leads',
+          linkUrl: `/user/inquiries/${escrow.leadId}`,
         });
 
         const buyer = await prisma.user.findUnique({ where: { id: escrow.buyerId }, select: { email: true } });
@@ -137,7 +137,7 @@ async function razorpay(req, res) {
           title: 'Token Advance Refunded',
           message: `Your token advance of ${amountRupees} has been refunded.`,
           type: 'PAYMENT_REFUNDED',
-          linkUrl: '/dashboard/leads',
+          linkUrl: `/user/inquiries/${escrow.leadId}`,
         });
       }
 
@@ -197,7 +197,7 @@ async function razorpay(req, res) {
           title: 'Token Advance Transferred to Seller',
           message: 'The token advance for your property deal has been successfully transferred to the seller.',
           type: 'ESCROW_RELEASED',
-          linkUrl: '/dashboard/leads',
+          linkUrl: `/user/inquiries/${escrow.leadId}`,
         });
       }
     }

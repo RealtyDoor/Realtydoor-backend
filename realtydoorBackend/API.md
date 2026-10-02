@@ -921,13 +921,16 @@ Submit a buyer inquiry.
 {
   "propertyId": "64abc...",
   "buyerName": "Suresh Mehta",
-  "buyerEmail": "suresh@example.com",
-  "buyerPhone": "+919876543210",
   "buyerMessage": "Interested in a site visit this weekend."
 }
 ```
 
-`buyerMessage` is optional.
+`buyerName` and `buyerMessage` are both optional. `buyerEmail`/`buyerPhone` are **no longer accepted from the client** — they're always snapshotted server-side from the authenticated, phone-verified account (`req.user.email`/`req.user.phone`), so a submitted contact value can never diverge from the account actually making the request. If `buyerName` is omitted, the account's own `name` is used.
+
+**Limits** (platform config, see `GET /api/config/public` and admin config endpoints):
+- `max_active_inquiries` (default 5) — total leads for this buyer not yet `CLOSED`/`DROPPED`.
+- `max_inquiries_per_day` (default 3) — leads submitted since 00:00 IST today.
+- One inquiry per buyer per property still applies (unchanged).
 
 **Response `201`:**
 
@@ -937,6 +940,7 @@ Submit a buyer inquiry.
   "message": "We'll reach out within 24 hours",
   "data": {
     "id": "64lead...",
+    "refCode": "RD-L-000123",
     "buyerName": "Suresh Mehta",
     "buyerEmail": "suresh@example.com",
     "buyerPhone": "+919876543210",
@@ -947,11 +951,13 @@ Submit a buyer inquiry.
 }
 ```
 
+**Errors:** `400` if either limit is exceeded, or a duplicate inquiry already exists for this property; `403` if the account's phone isn't verified.
+
 ---
 
 ### GET /api/leads/partner
 
-All leads assigned to the authenticated partner. Phone is masked until OTP is verified.
+All leads assigned to the authenticated partner. Phone **and email** are masked until OTP is verified (previously only phone was masked — email leaked in full).
 
 **Auth:** PARTNER + KYC verified
 
@@ -965,7 +971,7 @@ All leads assigned to the authenticated partner. Phone is masked until OTP is ve
     {
       "id": "64lead...",
       "buyerName": "Suresh Mehta",
-      "buyerEmail": "suresh@example.com",
+      "buyerEmail": "suXXXXX@example.com",
       "buyerPhone": "+91XXXXXX3210",
       "status": "ASSIGNED",
       "isOtpVerified": false,
@@ -1012,7 +1018,7 @@ Single lead detail. Full property record included.
 }
 ```
 
-`buyerPhone` is unmasked once `isOtpVerified` is `true`.  
+`buyerPhone` and `buyerEmail` are both unmasked once `isOtpVerified` is `true`, masked before that.  
 **Errors:** `404` not found or not assigned to this partner.
 
 ---
@@ -1337,6 +1343,7 @@ All inquiries submitted by the authenticated user.
   "data": [
     {
       "id": "64lead...",
+      "refCode": "RD-L-000123",
       "buyerName": "Suresh Mehta",
       "status": "ASSIGNED",
       "createdAt": "2024-01-15T10:00:00.000Z",
@@ -1352,13 +1359,26 @@ All inquiries submitted by the authenticated user.
           "heldAt": "2024-01-16T00:00:00.000Z", "releasedAt": null, "refundedAt": null, "failedAt": null,
           "createdAt": "2024-01-15T12:00:00.000Z"
         }
-      ]
+      ],
+      "assignedPartner": {
+        "id": "64partner...", "name": "Rajdeep Kumar", "profileImageUrl": null, "companyName": "RealtyPro Solutions"
+      }
     }
   ]
 }
 ```
 
-`escrowTransactions` is empty if no token advance has ever been paid on this lead, newest first otherwise. See `GET /api/escrow/:id` for polling a single escrow's status directly (e.g. right after a Razorpay Checkout attempt).
+`assignedPartner` is `null` until a partner is assigned. **It never includes the partner's phone or email** — the buyer never dials the partner directly; the frontend's "Contact agent" action should call the shared telecaller number from `GET /api/config/public`'s `telecaller_phone` instead. `escrowTransactions` is empty if no token advance has ever been paid on this lead, newest first otherwise. A number of internal-only fields (admin/partner notes, OTP attempt count, commission/invoice fields, drop-request fields) are stripped from every lead returned to a buyer. See `GET /api/escrow/:id` for polling a single escrow's status directly (e.g. right after a Razorpay Checkout attempt).
+
+---
+
+### GET /api/user/leads/:id
+
+Single inquiry detail for the authenticated buyer. Same shape and same `assignedPartner`/sanitization rules as the list endpoint above.
+
+**Auth:** USER (must own the lead)
+
+**Errors:** `400` malformed `:id` · `404` not found or not yours (same response for both, so a 404 never confirms whether the id exists).
 
 ---
 
@@ -2638,7 +2658,7 @@ Confirm a service subscription payment after Razorpay checkout. Idempotent — s
 
 ### POST /api/escrow/create-order
 
-Create a Razorpay escrow order (token advance). Only one active escrow (`PAYMENT_PENDING` or `HELD`) per lead — enforced by a real DB-level partial unique index (`scripts/createEscrowLeadUniqueIndex.js`), not just an application check, so two concurrent requests for the same lead can't both create an order.
+Create a Razorpay escrow order (token advance). `leadId` must belong to the authenticated buyer — previously any logged-in user could create (and pay into) an order for *any* lead by id, with no ownership check at all. The lead's `status` must also be `SITE_VISIT_DONE` — escrow can't be created earlier in the flow. Only one active escrow (`PAYMENT_PENDING` or `HELD`) per lead — enforced by a real DB-level partial unique index (`scripts/createEscrowLeadUniqueIndex.js`), not just an application check, so two concurrent requests for the same lead can't both create an order.
 
 **Auth:** USER + phone verified
 
@@ -2673,7 +2693,7 @@ Create a Razorpay escrow order (token advance). Only one active escrow (`PAYMENT
 ```
 
 `payment.captured` webhook moves status to `HELD`.  
-**Errors:** `404` lead not found · `400` active escrow already exists.
+**Errors:** `404` lead not found or not yours · `400` lead isn't `SITE_VISIT_DONE` yet, amount below minimum, or active escrow already exists.
 
 ---
 
@@ -2774,9 +2794,19 @@ Paginated notifications for the authenticated user.
 
 ---
 
+### GET /api/notifications/unread-count
+
+Count of unread notifications for the authenticated user — for a header badge, without paginating the full list.
+
+**Auth:** USER
+
+**Response `200`:** `{ "success": true, "message": "Success", "data": { "count": 3 } }`
+
+---
+
 ### PATCH /api/notifications/:id/read
 
-Mark a notification as read.
+Mark a notification as read. Sets both `isRead: true` and `readAt` to the current time.
 
 **Auth:** USER
 
@@ -2786,7 +2816,7 @@ Mark a notification as read.
 
 ### PATCH /api/notifications/read-all
 
-Mark all unread notifications as read.
+Mark all unread notifications as read. Sets both `isRead: true` and `readAt` to the current time on every affected row.
 
 **Auth:** USER
 
@@ -3359,12 +3389,13 @@ Returns all platform configuration keys that have `isPublic: true`. No authentic
     "support_phone": "+919876543210",
     "support_email": "support@realtydoor.in",
     "rera_disclaimer": "RERA registrations vary by state. Verify before investing.",
-    "platform_name": "RealtyDoor"
+    "platform_name": "RealtyDoor",
+    "telecaller_phone": "+919844412345"
   }
 }
 ```
 
-Returns a flat key → value object. Only keys with `isPublic: true` appear here.
+Returns a flat key → value object. Only keys with `isPublic: true` appear here. `telecaller_phone` is the shared number the frontend's "Contact agent" action should dial — the buyer is never given the assigned partner's own phone number (see `PATCH /api/admin/leads/:id/assign` and `GET /api/user/leads`).
 
 ---
 
@@ -3432,6 +3463,7 @@ All leads (paginated). Filter by status and partner.
 |-------|------|-------------|
 | `status` | string | `UNASSIGNED` · `ASSIGNED` · `SITE_VISIT_SCHEDULED` · `SITE_VISIT_DONE` · `CLOSED` · `DROPPED` |
 | `partnerId` | string | Filter by assigned partner ID |
+| `search` | string | Case-insensitive match against lead `refCode`, `buyerName`, or `buyerEmail` |
 | `page` | number | Default: `1` |
 | `limit` | number | Default: `20` |
 
@@ -3445,6 +3477,7 @@ All leads (paginated). Filter by status and partner.
     "data": [
       {
         "id": "64lead...",
+        "refCode": "RD-L-000123",
         "buyerName": "Suresh Mehta",
         "buyerEmail": "suresh@example.com",
         "buyerPhone": "+919876543210",
@@ -3452,7 +3485,14 @@ All leads (paginated). Filter by status and partner.
         "isOtpVerified": false,
         "createdAt": "2024-01-15T10:00:00.000Z",
         "property": { "title": "3 BHK Flat in Baner", "slug": "...", "city": "Pune" },
-        "assignedPartner": { "name": "Rajdeep Kumar", "email": "rajdeep@example.com" }
+        "assignedPartner": { "name": "Rajdeep Kumar", "email": "rajdeep@example.com" },
+        "buyer": {
+          "id": "64user...", "refCode": "RD-U-000045", "name": "Suresh Mehta",
+          "email": "suresh@example.com", "phone": "+919876543210",
+          "phoneVerified": true, "phoneVerifiedAt": "2024-01-10T08:00:00.000Z",
+          "createdAt": "2024-01-10T08:00:00.000Z"
+        },
+        "inquiryCount": 3
       }
     ],
     "pagination": { "total": 50, "page": 1, "limit": 20, "totalPages": 3, "hasNext": true, "hasPrev": false }
@@ -3460,11 +3500,13 @@ All leads (paginated). Filter by status and partner.
 }
 ```
 
+`buyer` (full identity, unlike every buyer- or partner-facing endpoint) and `inquiryCount` (total leads this buyer has ever submitted, across all statuses — a quick abuse signal against the per-buyer limits on `POST /api/leads`) are admin-only additions. `buyer` is `null` for legacy leads with no linked account (see `scripts/backfillLeadBuyerId.js`).
+
 ---
 
 ### GET /api/admin/leads/:id
 
-Full lead detail including property, assigned partner, and escrow transactions.
+Full lead detail including property, assigned partner, buyer identity, and escrow transactions.
 
 **Auth:** ADMIN
 
@@ -3476,6 +3518,7 @@ Full lead detail including property, assigned partner, and escrow transactions.
   "message": "Success",
   "data": {
     "id": "64lead...",
+    "refCode": "RD-L-000123",
     "buyerName": "Suresh Mehta",
     "buyerPhone": "+919876543210",
     "status": "CLOSED",
@@ -3486,6 +3529,13 @@ Full lead detail including property, assigned partner, and escrow transactions.
     "closureDocumentUrls": ["https://..."],
     "property": { "title": "3 BHK Flat in Baner", "city": "Pune", ... },
     "assignedPartner": { "name": "Rajdeep Kumar", "companyName": "RealtyPro Solutions" },
+    "buyer": {
+      "id": "64user...", "refCode": "RD-U-000045", "name": "Suresh Mehta",
+      "email": "suresh@example.com", "phone": "+919876543210",
+      "phoneVerified": true, "phoneVerifiedAt": "2024-01-10T08:00:00.000Z",
+      "createdAt": "2024-01-10T08:00:00.000Z"
+    },
+    "inquiryCount": 3,
     "escrowTransactions": [
       { "id": "64esc...", "amount": 50000, "status": "HELD", "heldAt": "..." }
     ],
@@ -3539,6 +3589,8 @@ Assign lead to a KYC-verified partner.
   "data": { "id": "64lead...", "status": "ASSIGNED", "assignedPartnerId": "64partner...", "assignedAt": "..." }
 }
 ```
+
+Also sends the buyer an in-app `LEAD_ASSIGNED` notification (`linkUrl: /user/inquiries/:leadId`) naming the partner by `companyName`/`name` only — the partner's phone is never included, in the message or anywhere else the buyer can see. The buyer's own lead detail (`GET /api/user/leads/:id`) likewise never exposes `assignedPartner.phone`; the frontend's "Contact agent" action should dial the shared number from `GET /api/config/public`'s `telecaller_phone` instead.
 
 **Errors:** `404` lead not found · `400` partner not found or not KYC verified.
 
@@ -4301,7 +4353,7 @@ All users (paginated). Filter by role or search.
 | Param | Type | Description |
 |-------|------|-------------|
 | `role` | string | `USER` · `PARTNER` · `ADMIN` |
-| `search` | string | Case-insensitive search on name or email |
+| `search` | string | Case-insensitive search on name, email, or `refCode` |
 | `page` | number | Default: `1` |
 | `limit` | number | Default: `20` |
 
@@ -4315,6 +4367,7 @@ All users (paginated). Filter by role or search.
     "data": [
       {
         "id": "64user...",
+        "refCode": "RD-U-000045",
         "name": "Suresh Mehta",
         "email": "suresh@example.com",
         "phone": "+919876543210",

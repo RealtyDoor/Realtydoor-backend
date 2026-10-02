@@ -7,6 +7,7 @@ const otpAuth = require('../../lib/otpAuth');
 const { setUserRole, syncUserFields } = require('../../lib/clerkAdmin');
 const { computeOnboardingComplete } = require('../../lib/onboarding');
 const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
+const { nextRefCode } = require('../../lib/refCode');
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -67,11 +68,13 @@ async function createAccount({ name, email, phone, isNRI = false, marketingOptIn
   const emailVerified = clerkUser.emailAddresses?.[0]?.verification?.status === 'verified';
 
   const now = new Date();
+  const refCode = await nextRefCode('user');
   let dbUser;
   try {
     dbUser = await prisma.user.create({
       data: {
         clerkId: clerkUser.id,
+        refCode,
         name,
         email,
         phone,
@@ -277,6 +280,7 @@ async function syncUserByClerkId(clerkId, clerkUser) {
     writeData.name = name;
     writeData.profileImageUrl = profileImageUrl;
     writeData.emailVerified = clerkUser.emailAddresses?.[0]?.verification?.status === 'verified';
+    writeData.refCode = await nextRefCode('user');
     // Phone signup stamps consent at account-creation time (completing the
     // signup form is the agreement action). Do the same here so a Google
     // user who never explicitly hits PATCH /user/consent isn't left with a
@@ -304,8 +308,10 @@ async function syncUserByClerkId(clerkId, clerkUser) {
       const found = await prisma.user.findFirst({ where: { OR: [{ clerkId }, { email }] } });
       if (!found) throw err;
       // The row already exists (a concurrent sync created it) — never stomp
-      // its name/photo/emailVerified here, same rule as the normal update path.
-      const { name: _n, profileImageUrl: _p, emailVerified: _e, ...raceData } = writeData;
+      // its name/photo/emailVerified/refCode here, same rule as the normal
+      // update path (the winner of the race already got a refCode; this
+      // loser must not overwrite it with a second, wasted one).
+      const { name: _n, profileImageUrl: _p, emailVerified: _e, refCode: _r, ...raceData } = writeData;
       user = await prisma.user.update({ where: { id: found.id }, data: raceData });
     } else {
       throw err;

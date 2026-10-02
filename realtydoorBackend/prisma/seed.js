@@ -1318,6 +1318,9 @@ async function main() {
     { key: 'platform_commission_pct', value: '2',                                                               description: 'Platform commission % on closed deals',          isPublic: false, updatedByAdminId: admin.id },
     { key: 'escrow_token_min_paise', value: '5000000',                                                          description: 'Minimum token advance in paise (₹50,000)',       isPublic: false, updatedByAdminId: admin.id },
     { key: 'razorpay_webhook_secret', value: 'whsec_seed_placeholder',                                          description: 'Razorpay webhook HMAC signing secret',           isPublic: false, updatedByAdminId: admin.id },
+    { key: 'telecaller_phone',       value: '+919844412345',                                                    description: 'Shared "Contact agent" number shown to buyers (partner phone is never exposed)', isPublic: true, updatedByAdminId: admin.id },
+    { key: 'max_active_inquiries',   value: '5',                                                                description: 'Max simultaneous non-closed inquiries per buyer', isPublic: false, updatedByAdminId: admin.id },
+    { key: 'max_inquiries_per_day',  value: '3',                                                                description: 'Max inquiries a buyer may submit per IST calendar day', isPublic: false, updatedByAdminId: admin.id },
   ];
 
   for (const cData of configDefs) {

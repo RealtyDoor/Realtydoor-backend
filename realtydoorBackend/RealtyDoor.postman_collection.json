@@ -992,7 +992,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"propertyId\": \"{{propertyId}}\",\n  \"buyerName\": \"Suresh Mehta\",\n  \"buyerEmail\": \"user@realtydoor.com\",\n  \"buyerPhone\": \"+919000000003\",\n  \"buyerMessage\": \"I am interested in this property. Can we schedule a visit this weekend?\"\n}",
+              "raw": "{\n  \"propertyId\": \"{{propertyId}}\",\n  \"buyerName\": \"Suresh Mehta\",\n  \"buyerMessage\": \"I am interested in this property. Can we schedule a visit this weekend?\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1027,7 +1027,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"message\":\"We'll reach out within 24 hours\",\"data\":{\"id\":\"665def456abc789012345678\",\"status\":\"UNASSIGNED\",\"propertyId\":\"664abc123def456789012345\",\"buyerName\":\"Suresh Mehta\",\"createdAt\":\"2026-05-19T11:30:00.000Z\"}}"
+              "body": "{\"success\":true,\"message\":\"We'll reach out within 24 hours\",\"data\":{\"id\":\"665def456abc789012345678\",\"refCode\":\"RD-L-000123\",\"status\":\"UNASSIGNED\",\"propertyId\":\"664abc123def456789012345\",\"buyerName\":\"Suresh Mehta\",\"createdAt\":\"2026-05-19T11:30:00.000Z\"}}"
             },
             {
               "name": "403 – Phone Not Verified",
@@ -1046,6 +1046,20 @@
               ],
               "cookie": [],
               "body": "{\"success\":false,\"message\":\"Phone verification required\",\"data\":{\"code\":\"PHONE_NOT_VERIFIED\"}}"
+            },
+            {
+              "name": "400 – Inquiry Limit Exceeded",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"You can have at most 5 active inquiries. Close or cancel one to send another.\",\"data\":null}"
             }
           ]
         },
@@ -1083,7 +1097,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"data\":[{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerEmail\":\"user@realtydoor.com\",\"buyerPhone\":\"+91 90000 XXXXX\",\"status\":\"ASSIGNED\",\"isOtpVerified\":false,\"siteVisitScheduledAt\":null,\"property\":{\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"locality\":\"Baner\",\"city\":\"Pune\"},\"createdAt\":\"2026-05-19T11:30:00.000Z\"}]}"
+              "body": "{\"success\":true,\"data\":[{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerEmail\":\"suXXXXX@example.com\",\"buyerPhone\":\"+91 90000 XXXXX\",\"status\":\"ASSIGNED\",\"isOtpVerified\":false,\"siteVisitScheduledAt\":null,\"property\":{\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"locality\":\"Baner\",\"city\":\"Pune\"},\"createdAt\":\"2026-05-19T11:30:00.000Z\"}]}"
             }
           ]
         },
@@ -1122,7 +1136,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"data\":{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerEmail\":\"user@realtydoor.com\",\"buyerPhone\":\"+91 90000 XXXXX\",\"buyerMessage\":\"I am interested in this property.\",\"status\":\"ASSIGNED\",\"isOtpVerified\":false,\"siteVisitScheduledAt\":null,\"visitNotes\":null,\"property\":{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"locality\":\"Baner\",\"city\":\"Pune\",\"price\":8500000},\"createdAt\":\"2026-05-19T11:30:00.000Z\"}}"
+              "body": "{\"success\":true,\"data\":{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerEmail\":\"suXXXXX@example.com\",\"buyerPhone\":\"+91 90000 XXXXX\",\"buyerMessage\":\"I am interested in this property.\",\"status\":\"ASSIGNED\",\"isOtpVerified\":false,\"siteVisitScheduledAt\":null,\"visitNotes\":null,\"property\":{\"id\":\"664abc123def456789012345\",\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"locality\":\"Baner\",\"city\":\"Pune\",\"price\":8500000},\"createdAt\":\"2026-05-19T11:30:00.000Z\"}}"
             },
             {
               "name": "404 – Not Found",
@@ -1864,7 +1878,7 @@
                 "leads"
               ]
             },
-            "description": " escrowTransactions is empty if no token advance has ever been paid on that lead, newest first otherwise."
+            "description": "assignedPartner is null until a partner is assigned, and never includes phone or email — use GET /api/config/public telecaller_phone for \"Contact agent\". escrowTransactions is empty if no token advance has ever been paid on that lead, newest first otherwise."
           },
           "response": [
             {
@@ -1883,7 +1897,57 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"data\":[{\"id\":\"665def456abc789012345678\",\"status\":\"SITE_VISIT_DONE\",\"buyerMessage\":\"I am interested in this property.\",\"property\":{\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"city\":\"Pune\",\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"]},\"createdAt\":\"2026-05-10T10:00:00.000Z\",\"escrowTransactions\":[{\"id\":\"66bbb111ccc222ddd333eee4\",\"amount\":50000,\"currency\":\"INR\",\"status\":\"HELD\",\"heldAt\":\"2026-05-15T09:05:00.000Z\",\"releasedAt\":null,\"refundedAt\":null,\"failedAt\":null,\"createdAt\":\"2026-05-15T09:00:00.000Z\"}]}]}"
+              "body": "{\"success\":true,\"data\":[{\"id\":\"665def456abc789012345678\",\"status\":\"SITE_VISIT_DONE\",\"buyerMessage\":\"I am interested in this property.\",\"property\":{\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"city\":\"Pune\",\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"]},\"createdAt\":\"2026-05-10T10:00:00.000Z\",\"escrowTransactions\":[{\"id\":\"66bbb111ccc222ddd333eee4\",\"amount\":50000,\"currency\":\"INR\",\"status\":\"HELD\",\"heldAt\":\"2026-05-15T09:05:00.000Z\",\"releasedAt\":null,\"refundedAt\":null,\"failedAt\":null,\"createdAt\":\"2026-05-15T09:00:00.000Z\"}],\"refCode\":\"RD-L-000123\",\"assignedPartner\":{\"id\":\"664partner123abc456def789\",\"name\":\"Rajdeep Kumar\",\"profileImageUrl\":null,\"companyName\":\"RealtyPro Solutions\"}}]}"
+            }
+          ]
+        },
+        {
+          "name": "Get My Inquiry Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/leads/{{leadId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "leads",
+                "{{leadId}}"
+              ]
+            },
+            "description": "Single inquiry detail for the authenticated buyer. Same shape and sanitization as GET /api/user/leads."
+          },
+          "response": [
+            {
+              "name": "200 – Inquiry Detail",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"data\":{\"id\":\"665def456abc789012345678\",\"status\":\"SITE_VISIT_DONE\",\"buyerMessage\":\"I am interested in this property.\",\"property\":{\"title\":\"3 BHK Flat in Baner\",\"slug\":\"skyline-heights-3bhk-baner-1717000000000\",\"city\":\"Pune\",\"images\":[\"https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800\"]},\"createdAt\":\"2026-05-10T10:00:00.000Z\",\"escrowTransactions\":[{\"id\":\"66bbb111ccc222ddd333eee4\",\"amount\":50000,\"currency\":\"INR\",\"status\":\"HELD\",\"heldAt\":\"2026-05-15T09:05:00.000Z\",\"releasedAt\":null,\"refundedAt\":null,\"failedAt\":null,\"createdAt\":\"2026-05-15T09:00:00.000Z\"}],\"refCode\":\"RD-L-000123\",\"assignedPartner\":{\"id\":\"664partner123abc456def789\",\"name\":\"Rajdeep Kumar\",\"profileImageUrl\":null,\"companyName\":\"RealtyPro Solutions\"}}}"
+            },
+            {
+              "name": "404 – Not Found Or Not Yours",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Lead not found\",\"data\":null}"
             }
           ]
         },
@@ -3912,6 +3976,12 @@
                       "disabled": true
                     },
                     {
+                      "key": "search",
+                      "value": "",
+                      "description": "Case-insensitive match against lead refCode, buyerName, or buyerEmail",
+                      "disabled": true
+                    },
+                    {
                       "key": "page",
                       "value": "1"
                     },
@@ -3939,7 +4009,7 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerPhone\":\"+91 90000 XXXXX\",\"status\":\"UNASSIGNED\",\"isOtpVerified\":false,\"property\":{\"title\":\"3 BHK Flat in Baner\",\"city\":\"Pune\"},\"assignedPartner\":null,\"createdAt\":\"2026-05-19T11:30:00.000Z\"}],\"pagination\":{\"total\":24,\"page\":1,\"limit\":20,\"totalPages\":2,\"hasNext\":true,\"hasPrev\":false}}}"
+                  "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerPhone\":\"+91 90000 XXXXX\",\"status\":\"UNASSIGNED\",\"isOtpVerified\":false,\"property\":{\"title\":\"3 BHK Flat in Baner\",\"city\":\"Pune\"},\"assignedPartner\":null,\"createdAt\":\"2026-05-19T11:30:00.000Z\",\"refCode\":\"RD-L-000123\",\"buyer\":{\"id\":\"664user123abc456def789012\",\"refCode\":\"RD-U-000045\",\"name\":\"Suresh Mehta\",\"email\":\"suresh@example.com\",\"phone\":\"+919876543210\",\"phoneVerified\":true,\"phoneVerifiedAt\":\"2026-05-01T08:00:00.000Z\",\"createdAt\":\"2026-05-01T08:00:00.000Z\"},\"inquiryCount\":3}],\"pagination\":{\"total\":24,\"page\":1,\"limit\":20,\"totalPages\":2,\"hasNext\":true,\"hasPrev\":false}}}"
                 }
               ]
             },
@@ -3974,7 +4044,7 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":true,\"data\":{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerPhone\":\"+919000000003\",\"status\":\"CLOSED\",\"isOtpVerified\":true,\"property\":{\"title\":\"3 BHK Flat in Baner\",\"city\":\"Pune\"},\"assignedPartner\":{\"name\":\"Rajdeep Kumar\",\"companyName\":\"RealtyPro Solutions\"},\"escrowTransactions\":[{\"id\":\"66bbb111ccc222ddd333eee4\",\"amount\":100000,\"status\":\"HELD\",\"heldAt\":\"2026-05-16T10:00:00.000Z\"}],\"createdAt\":\"2026-05-19T11:30:00.000Z\"}}"
+                  "body": "{\"success\":true,\"data\":{\"id\":\"665def456abc789012345678\",\"buyerName\":\"Suresh Mehta\",\"buyerPhone\":\"+919000000003\",\"status\":\"CLOSED\",\"isOtpVerified\":true,\"property\":{\"title\":\"3 BHK Flat in Baner\",\"city\":\"Pune\"},\"assignedPartner\":{\"name\":\"Rajdeep Kumar\",\"companyName\":\"RealtyPro Solutions\"},\"escrowTransactions\":[{\"id\":\"66bbb111ccc222ddd333eee4\",\"amount\":100000,\"status\":\"HELD\",\"heldAt\":\"2026-05-16T10:00:00.000Z\"}],\"createdAt\":\"2026-05-19T11:30:00.000Z\",\"refCode\":\"RD-L-000123\",\"buyer\":{\"id\":\"664user123abc456def789012\",\"refCode\":\"RD-U-000045\",\"name\":\"Suresh Mehta\",\"email\":\"suresh@example.com\",\"phone\":\"+919876543210\",\"phoneVerified\":true,\"phoneVerifiedAt\":\"2026-05-01T08:00:00.000Z\",\"createdAt\":\"2026-05-01T08:00:00.000Z\"},\"inquiryCount\":3}}"
                 },
                 {
                   "name": "404 – Not Found",
@@ -4095,7 +4165,8 @@
                     "{{leadId}}",
                     "assign"
                   ]
-                }
+                },
+                "description": "Notifies the buyer in-app (LEAD_ASSIGNED) naming the partner by company/name only — partner phone is never exposed to the buyer; frontend should use config/public telecaller_phone for \"Contact agent\"."
               },
               "response": [
                 {
@@ -5517,7 +5588,7 @@
                     {
                       "key": "search",
                       "value": "",
-                      "description": "Partial match on name or email",
+                      "description": "Partial match on name, email, or refCode",
                       "disabled": true
                     },
                     {
@@ -5548,7 +5619,7 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"6a1a3213aa8de854e8acfad7\",\"name\":\"Rajdeep Kumar\",\"email\":\"partner@realtydoor.com\",\"phone\":\"+919000000002\",\"phoneVerified\":true,\"role\":\"PARTNER\",\"kycStatus\":\"VERIFIED\",\"partnerSubType\":\"AGENT\",\"createdAt\":\"2026-05-01T08:00:00.000Z\"},{\"id\":\"6a1a3213aa8de854e8acfad8\",\"name\":\"Suresh Mehta\",\"email\":\"user@realtydoor.com\",\"phone\":\"+919000000003\",\"phoneVerified\":true,\"role\":\"USER\",\"kycStatus\":\"NOT_SUBMITTED\",\"partnerSubType\":null,\"createdAt\":\"2026-05-01T08:00:00.000Z\"}],\"pagination\":{\"total\":3,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                  "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"6a1a3213aa8de854e8acfad7\",\"name\":\"Rajdeep Kumar\",\"email\":\"partner@realtydoor.com\",\"phone\":\"+919000000002\",\"phoneVerified\":true,\"role\":\"PARTNER\",\"kycStatus\":\"VERIFIED\",\"partnerSubType\":\"AGENT\",\"createdAt\":\"2026-05-01T08:00:00.000Z\",\"refCode\":\"RD-U-000001\"},{\"id\":\"6a1a3213aa8de854e8acfad8\",\"name\":\"Suresh Mehta\",\"email\":\"user@realtydoor.com\",\"phone\":\"+919000000003\",\"phoneVerified\":true,\"role\":\"USER\",\"kycStatus\":\"NOT_SUBMITTED\",\"partnerSubType\":null,\"createdAt\":\"2026-05-01T08:00:00.000Z\",\"refCode\":\"RD-U-000002\"}],\"pagination\":{\"total\":3,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
                 }
               ]
             },
@@ -7549,7 +7620,8 @@
                 "escrow",
                 "create-order"
               ]
-            }
+            },
+            "description": "leadId must belong to the authenticated buyer and be SITE_VISIT_DONE; otherwise 404/400."
           },
           "response": [
             {
@@ -7587,6 +7659,34 @@
               ],
               "cookie": [],
               "body": "{\"success\":false,\"message\":\"Escrow already held for this lead\"}"
+            },
+            {
+              "name": "404 – Lead Not Found Or Not Yours",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Lead not found\",\"data\":null}"
+            },
+            {
+              "name": "400 – Site Visit Not Done Yet",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Escrow can only be created after the site visit is done\",\"data\":null}"
             }
           ]
         }
@@ -8359,6 +8459,41 @@
               ],
               "cookie": [],
               "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"66eee555fff666aaa777bbb1\",\"title\":\"New Lead Assigned\",\"message\":\"A new buyer lead has been assigned to you.\",\"type\":\"LEAD_ASSIGNED\",\"isRead\":false,\"linkUrl\":\"/partner/leads/665def456abc789012345678\",\"createdAt\":\"2026-05-19T11:00:00.000Z\"}],\"pagination\":{\"total\":7,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+            }
+          ]
+        },
+        {
+          "name": "Get Unread Notification Count",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/unread-count",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "unread-count"
+              ]
+            },
+            "description": "Count of unread notifications for the authenticated user — for a header badge, without paginating the full list."
+          },
+          "response": [
+            {
+              "name": "200 – Unread Count",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"count\":3}}"
             }
           ]
         },
@@ -9427,7 +9562,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"support_phone\":\"+919876543210\",\"support_email\":\"support@realtydoor.in\",\"rera_disclaimer\":\"RERA registrations vary by state. Verify before investing.\",\"platform_name\":\"RealtyDoor\"}}"
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"support_phone\":\"+919876543210\",\"support_email\":\"support@realtydoor.in\",\"rera_disclaimer\":\"RERA registrations vary by state. Verify before investing.\",\"platform_name\":\"RealtyDoor\",\"telecaller_phone\":\"+919844412345\"}}"
             }
           ]
         }

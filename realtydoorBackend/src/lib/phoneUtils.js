@@ -17,6 +17,23 @@ function formatPhone(phone, isOtpVerified) {
 }
 
 /**
+ * Same anti-leakage rule, extended to email — a partner previously got the
+ * buyer's real email unconditionally (sanitizeLeadForPartner only ever
+ * masked phone), defeating the "no contact details before the site-visit
+ * OTP" rule for the other half of the contact pair.
+ */
+function maskEmail(email) {
+  if (!email) return email;
+  const at = email.indexOf('@');
+  if (at <= 1) return email; // too short to usefully mask (e.g. "a@b.com")
+  return email.slice(0, 2) + 'XXXXX' + email.slice(at);
+}
+
+function formatContact(value, isOtpVerified, maskFn) {
+  return isOtpVerified ? value : maskFn(value);
+}
+
+/**
  * Normalizes any phone number input to E.164. A number with a leading "+"
  * (or "00" IDD prefix, converted to "+") is parsed as full international
  * input against whatever country it declares. Anything else — a bare
@@ -60,4 +77,4 @@ function isPhoneUniqueViolation(err) {
   return err?.code === 'P2002' && err?.meta?.target === 'phone_unique_partial';
 }
 
-module.exports = { maskPhone, formatPhone, normalizePhone, phoneField, isPhoneUniqueViolation };
+module.exports = { maskPhone, formatPhone, maskEmail, formatContact, normalizePhone, phoneField, isPhoneUniqueViolation };

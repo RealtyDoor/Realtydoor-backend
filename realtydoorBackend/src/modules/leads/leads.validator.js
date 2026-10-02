@@ -1,11 +1,13 @@
 const { z } = require('zod');
-const { indianPhone, objectId } = require('../../utils/validators');
+const { objectId } = require('../../utils/validators');
 
+// buyerName/buyerEmail/buyerPhone are no longer accepted from the client —
+// name/email/phone are always a snapshot of the authenticated, phone-verified
+// account (see leads.service.js's submitLead). Previously a submitted
+// buyerPhone didn't have to match the account making the request at all.
 const submitLeadSchema = z.object({
   propertyId:   objectId,
-  buyerName:    z.string().min(2).max(100),
-  buyerEmail:   z.string().email(),
-  buyerPhone:   indianPhone,
+  buyerName:    z.string().min(2).max(100).optional(),
   buyerMessage: z.string().max(500).optional(),
 });
 
