@@ -27,6 +27,12 @@ async function submitKyc(partnerId, documentUrls) {
   if (!user) throw new ApiError(404, 'User not found');
   if (user.kycStatus === 'VERIFIED') throw new ApiError(400, 'KYC already verified');
   if (user.kycStatus === 'PENDING_REVIEW') throw new ApiError(400, 'KYC is already under review');
+  // Previously unchecked — a client that skipped POST /partner/kyc/consent
+  // entirely could still submit documents with no consent ever recorded.
+  // Checked last, after the status guards: partners verified before this
+  // field existed have no kycConsentAt, and on a resubmit they should hear
+  // "already verified", not be asked for consent they can't usefully give.
+  if (!user.kycConsentAt) throw new ApiError(400, 'KYC consent is required before submitting documents', { code: 'KYC_CONSENT_REQUIRED' });
 
   const updated = await prisma.user.update({
     where: { id: partnerId },
@@ -53,7 +59,7 @@ async function getProfile(partnerId) {
     select: {
       id: true, name: true, email: true, phone: true, companyName: true,
       bio: true, profileImageUrl: true, websiteUrl: true, partnerSubType: true,
-      kycStatus: true, kycRejectionNote: true, kycVerifiedAt: true, createdAt: true,
+      kycStatus: true, kycRejectionNote: true, kycVerifiedAt: true, kycConsentAt: true, createdAt: true,
     },
   });
 }

@@ -3158,6 +3158,42 @@
       "name": "Partners",
       "item": [
         {
+          "name": "Record KYC Consent",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/partner/kyc/consent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "partner",
+                "kyc",
+                "consent"
+              ]
+            },
+            "description": "Must be called before Submit KYC Documents will accept files. Idempotent."
+          },
+          "response": [
+            {
+              "name": "200 – Consent Recorded",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"KYC consent recorded\",\"data\":{\"kycConsentAt\":\"2026-10-03T10:00:00.000Z\"}}"
+            }
+          ]
+        },
+        {
           "name": "Submit KYC Documents",
           "request": {
             "method": "POST",
@@ -3195,7 +3231,8 @@
                 "partner",
                 "kyc"
               ]
-            }
+            },
+            "description": "POST /api/partner/kyc/consent must be called first, or this 400s with KYC_CONSENT_REQUIRED."
           },
           "response": [
             {
@@ -3233,6 +3270,20 @@
               ],
               "cookie": [],
               "body": "{\"success\":false,\"message\":\"KYC already verified\"}"
+            },
+            {
+              "name": "400 – Consent Required",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"KYC consent is required before submitting documents\",\"data\":{\"code\":\"KYC_CONSENT_REQUIRED\"}}"
             }
           ]
         },
@@ -3270,7 +3321,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"data\":{\"id\":\"6a1a3213aa8de854e8acfad7\",\"name\":\"Rajdeep Kumar\",\"email\":\"partner@realtydoor.com\",\"phone\":\"+919000000002\",\"companyName\":\"RealtyPro Solutions\",\"partnerSubType\":\"AGENT\",\"bio\":\"10 years of experience in Pune real estate market.\",\"websiteUrl\":\"https://realtypro.in\",\"kycStatus\":\"VERIFIED\",\"kycVerifiedAt\":\"2026-05-01T08:00:00.000Z\",\"createdAt\":\"2026-05-01T08:00:00.000Z\"}}"
+              "body": "{\"success\":true,\"data\":{\"id\":\"6a1a3213aa8de854e8acfad7\",\"name\":\"Rajdeep Kumar\",\"email\":\"partner@realtydoor.com\",\"phone\":\"+919000000002\",\"companyName\":\"RealtyPro Solutions\",\"partnerSubType\":\"AGENT\",\"bio\":\"10 years of experience in Pune real estate market.\",\"websiteUrl\":\"https://realtypro.in\",\"kycStatus\":\"VERIFIED\",\"kycVerifiedAt\":\"2026-05-01T08:00:00.000Z\",\"createdAt\":\"2026-05-01T08:00:00.000Z\",\"kycConsentAt\":\"2026-10-03T10:00:00.000Z\"}}"
             }
           ]
         },
@@ -8873,7 +8924,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Suresh Mehta\",\n  \"email\": \"suresh@example.com\",\n  \"phone\": \"9000000099\",\n  \"isNRI\": false,\n  \"marketingOptIn\": false\n}",
+              "raw": "{\n  \"name\": \"Suresh Mehta\",\n  \"email\": \"suresh@example.com\",\n  \"phone\": \"9000000099\",\n  \"isNRI\": false,\n  \"marketingOptIn\": false,\n  \"role\": \"USER\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -8892,7 +8943,7 @@
                 "otp"
               ]
             },
-            "description": "New-account signup, step 1. Normalizes phone to E.164, rejects if the email/phone is already registered (DB) or the email exists in Clerk, then sends a 6-digit WhatsApp OTP. Rate-limited per-IP; the per-phone resend cooldown (30s) and hourly cap (3) are enforced in lib/otpAuth.js. isNRI and marketingOptIn are optional (default false) and are applied atomically when the account is created in signup/verify. phone accepts any valid international number (via libphonenumber-js), not just Indian ones — for NRI signups. A bare national number with no + is assumed Indian; a leading + (or 00 IDD prefix) is parsed as full international input."
+            "description": "New-account signup, step 1. Normalizes phone to E.164, rejects if the email/phone is already registered (DB) or the email exists in Clerk, then sends a 6-digit WhatsApp OTP. Rate-limited per-IP; the per-phone resend cooldown (30s) and hourly cap (3) are enforced in lib/otpAuth.js. isNRI and marketingOptIn are optional (default false) and are applied atomically when the account is created in signup/verify. phone accepts any valid international number (via libphonenumber-js), not just Indian ones — for NRI signups. A bare national number with no + is assumed Indian; a leading + (or 00 IDD prefix) is parsed as full international input. role is optional (default USER); pass PARTNER for a direct partner signup, skipping the USER-then-self-upgrade path. ADMIN is rejected."
           },
           "response": [
             {
@@ -9107,7 +9158,7 @@
                 "verify"
               ]
             },
-            "description": "Login step 2. Checks the account is not suspended and is role USER (a PARTNER/ADMIN account gets a 403 WRONG_PORTAL instead — the frontend should route them to the correct portal). On success returns a 60s signInToken."
+            "description": "Login step 2. Checks the account is not suspended and is not ADMIN (USER and PARTNER both sign in through this phone flow; an ADMIN account gets a 403 WRONG_PORTAL instead — admins have no phone-login path). On success returns a 60s signInToken."
           },
           "response": [
             {

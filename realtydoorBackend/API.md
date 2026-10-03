@@ -215,10 +215,12 @@ New-account signup, step 1. Normalizes `phone` to E.164, rejects if the email or
 **Request Body:**
 
 ```json
-{ "name": "Suresh Mehta", "email": "suresh@example.com", "phone": "9000000099", "isNRI": false, "marketingOptIn": false }
+{ "name": "Suresh Mehta", "email": "suresh@example.com", "phone": "9000000099", "isNRI": false, "marketingOptIn": false, "role": "USER" }
 ```
 
 `isNRI` and `marketingOptIn` are both optional (default `false`) — captured here rather than via a follow-up call so nothing is lost if the frontend doesn't make a second request. They're carried through the OTP row and applied when the account is actually created in `/signup/verify`.
+
+`role` is optional (default `"USER"`); the only other accepted value is `"PARTNER"` — this is a direct partner signup, an alternative to signing up as `USER` and self-upgrading via `POST /auth/set-role`. `"ADMIN"` is rejected by the schema; that role is never self-assignable.
 
 **Response `200`:**
 
@@ -232,7 +234,7 @@ New-account signup, step 1. Normalizes `phone` to E.164, rejects if the email or
 
 ### POST /api/auth/signup/verify
 
-New-account signup, step 2. On success, creates the Clerk user (generated username, random strong password, `publicMetadata: { role: "USER", phone }`) and the DB row — `phoneVerified: true`, `phoneVerifiedAt`, `emailVerified` (from Clerk's status at creation time), `isNRI` and `marketingOptIn`/`marketingOptInAt` (from `/signup/otp`), and `termsAcceptedAt`/`privacyAcceptedAt` stamped to now (submitting the signup form is the agreement action per the signup screen's copy) — in one transaction-like step. If the DB write fails, the just-created Clerk user is deleted so nothing is left orphaned. Returns a 60-second Clerk sign-in token for the frontend to complete sign-in with.
+New-account signup, step 2. On success, creates the Clerk user (generated username, random strong password, `publicMetadata: { role, phone }` — `role` is whatever was passed to `/signup/otp`, `"USER"` if omitted) and the DB row — `phoneVerified: true`, `phoneVerifiedAt`, `emailVerified` (from Clerk's status at creation time), `isNRI` and `marketingOptIn`/`marketingOptInAt` (from `/signup/otp`), and `termsAcceptedAt`/`privacyAcceptedAt` stamped to now (submitting the signup form is the agreement action per the signup screen's copy) — in one transaction-like step. If the DB write fails, the just-created Clerk user is deleted so nothing is left orphaned. Returns a 60-second Clerk sign-in token for the frontend to complete sign-in with.
 
 **Auth:** Public
 
@@ -283,7 +285,7 @@ Existing-account login, step 1.
 
 ### POST /api/auth/login/verify
 
-Existing-account login, step 2. Checks the account isn't suspended and is role `USER` before issuing a sign-in token — a `PARTNER`/`ADMIN` account gets `403 WRONG_PORTAL` instead of a token.
+Existing-account login, step 2. Checks the account isn't suspended and isn't `ADMIN` before issuing a sign-in token — `USER` and `PARTNER` both sign in through this phone flow; only an `ADMIN` account gets `403 WRONG_PORTAL` instead of a token (admins have no phone-login path).
 
 **Auth:** Public
 
@@ -2088,11 +2090,27 @@ Ordered by `createdAt` descending.
 
 All `/api/partner/*` routes require `authenticate` + `requirePartner`.
 
+### POST /api/partner/kyc/consent
+
+Record KYC consent. Must be called before `POST /api/partner/kyc` will accept documents. Idempotent — calling it again after consent is already recorded just returns the original timestamp, it doesn't overwrite it.
+
+**Auth:** PARTNER
+
+**Request Body:** _(none)_
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "KYC consent recorded", "data": { "kycConsentAt": "2026-10-03T10:00:00.000Z" } }
+```
+
+---
+
 ### POST /api/partner/kyc
 
 Submit KYC documents for admin review (up to 5 files).
 
-**Auth:** PARTNER (KYC not required to submit)
+**Auth:** PARTNER (KYC not required to submit — consent is, see above)
 
 **Request:** `multipart/form-data`, field name `documents`, up to 5 files.
 
@@ -2106,7 +2124,7 @@ Submit KYC documents for admin review (up to 5 files).
 }
 ```
 
-**Errors:** `400` KYC already VERIFIED.
+**Errors:** `400` KYC already VERIFIED · `400` KYC already under review · `400 KYC_CONSENT_REQUIRED` — `POST /api/partner/kyc/consent` hasn't been called yet. Status is checked before consent, so a partner verified before this field existed still gets "already verified" on a resubmit rather than being asked for consent.
 
 ---
 
@@ -2133,10 +2151,13 @@ Submit KYC documents for admin review (up to 5 files).
     "kycStatus": "VERIFIED",
     "kycRejectionNote": null,
     "kycVerifiedAt": "2024-02-01T00:00:00.000Z",
+    "kycConsentAt": "2026-10-03T10:00:00.000Z",
     "createdAt": "2024-01-01T00:00:00.000Z"
   }
 }
 ```
+
+`kycConsentAt` is `null` until `POST /api/partner/kyc/consent` is called — the frontend should use it to skip re-asking for consent on resume rather than inferring it from `kycStatus`.
 
 ---
 
