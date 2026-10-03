@@ -5,8 +5,16 @@ const compression = require('compression');
 
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 const { requestLogger } = require('./middleware/requestLogger');
+const { defaultLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
+
+// Deployed behind a reverse proxy/load balancer (Render, Railway, Nginx, ALB, …),
+// which sets X-Forwarded-For. Without this, express-rate-limit throws on every
+// request (it refuses to guess client IPs when trust proxy is unset), and req.ip
+// would resolve to the proxy instead of the real client. Adjust the hop count if
+// there's more than one proxy in front of this app (e.g. Cloudflare + ALB → 2).
+app.set('trust proxy', 1);
 
 // ── Security headers ──────────────────────────────────────────────────────────
 app.use(helmet());
@@ -43,8 +51,10 @@ if (process.env.NODE_ENV !== 'test') {
 app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
 
 // ── API routes ────────────────────────────────────────────────────────────────
+// Global baseline rate limit — route-specific limiters (auth, OTP, upload,
+// search) stack tighter caps on top of this for the endpoints that need it.
 const routes = require('./routes');
-app.use('/api', routes);
+app.use('/api', defaultLimiter, routes);
 
 // ── 404 + global error handler ────────────────────────────────────────────────
 app.use(notFound);

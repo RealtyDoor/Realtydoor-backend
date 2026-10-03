@@ -10,9 +10,31 @@ const {
 } = require('../../lib/email');
 const { sendLeadAssignedNotice } = require('../../lib/wati');
 const { setUserRole } = require('../../lib/clerkAdmin');
+const { ROLES } = require('../../utils/validators');
 const logger = require('../../lib/logger');
+const { cacheDel } = require('../../lib/cache');
+const CACHE_KEYS = require('../../lib/cacheKeys');
 
 // ─── LEAD MANAGEMENT ─────────────────────────────────────────────────────────
+
+// Admin sees full buyer identity (unlike the buyer-facing or partner-facing
+// sanitizers) — refCode plus enough to act on a real person: contact details,
+// phone-verification state, account age, and how many inquiries they've
+// submitted in total (a quick signal for spotting abuse of the per-buyer
+// limits in leads.service.js).
+const ADMIN_LEAD_BUYER_INCLUDE = {
+  select: {
+    id: true, refCode: true, name: true, email: true, phone: true,
+    phoneVerified: true, phoneVerifiedAt: true, createdAt: true,
+    _count: { select: { buyerLeads: true } },
+  },
+};
+
+function flattenBuyerInquiryCount(lead) {
+  if (!lead?.buyer) return lead;
+  const { _count, ...buyer } = lead.buyer;
+  return { ...lead, buyer, inquiryCount: _count?.buyerLeads ?? 0 };
+}
 
 async function getLeadById(leadId) {
   const lead = await prisma.lead.findUnique({
@@ -21,16 +43,22 @@ async function getLeadById(leadId) {
       property:        { select: { title: true, slug: true, city: true, locality: true } },
       assignedPartner: { select: { name: true, email: true, phone: true, companyName: true } },
       escrowTransactions: { orderBy: { createdAt: 'desc' } },
+      buyer: ADMIN_LEAD_BUYER_INCLUDE,
     },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
-  return lead;
+  return flattenBuyerInquiryCount(lead);
 }
 
 async function getAllLeads(filters, skip, limit) {
   const where = {};
   if (filters.status) where.status = filters.status;
   if (filters.partnerId) where.assignedPartnerId = filters.partnerId;
+  if (filters.search) where.OR = [
+    { refCode:    { contains: filters.search, mode: 'insensitive' } },
+    { buyerName:  { contains: filters.search, mode: 'insensitive' } },
+    { buyerEmail: { contains: filters.search, mode: 'insensitive' } },
+  ];
 
   const [data, total] = await Promise.all([
     prisma.lead.findMany({
@@ -39,12 +67,13 @@ async function getAllLeads(filters, skip, limit) {
       include: {
         property: { select: { title: true, slug: true, city: true } },
         assignedPartner: { select: { name: true, email: true } },
+        buyer: ADMIN_LEAD_BUYER_INCLUDE,
       },
     }),
     prisma.lead.count({ where }),
   ]);
 
-  return { data, total };
+  return { data: data.map(flattenBuyerInquiryCount), total };
 }
 
 async function assignLead(leadId, partnerId, adminId, ip) {
@@ -84,14 +113,17 @@ async function assignLead(leadId, partnerId, adminId, ip) {
   sendLeadAssignedNotice(partner.phone, partner.name).catch(() => {});
   sendLeadAssigned(partner.email, { buyerName: lead.buyerName, propertyTitle: lead.property.title }).catch(() => {});
 
-  // Buyer: in-app notification (if registered) + email
+  // Buyer: in-app notification (if registered) + email. Never the partner's
+  // phone — "Contact agent" always dials the shared telecaller number
+  // instead (platform config key telecaller_phone); the buyer only gets the
+  // partner's identity (name/company), not a way to reach them directly.
   if (lead.buyerId) {
     await createNotification({
       userId: lead.buyerId,
       title: 'Your Inquiry is Being Processed',
-      message: `Your inquiry for "${lead.property.title}" has been matched with a verified partner. You will be contacted shortly.`,
+      message: `Your inquiry ${lead.refCode} for "${lead.property.title}" has been assigned to ${partner.companyName || partner.name}. Use Contact agent to reach our team.`,
       type: 'LEAD_ASSIGNED',
-      linkUrl: '/dashboard/leads',
+      linkUrl: `/user/inquiries/${leadId}`,
     });
   }
   sendLeadInquiryConfirmed(lead.buyerEmail, lead.property.title).catch(() => {});
@@ -101,15 +133,17 @@ async function assignLead(leadId, partnerId, adminId, ip) {
 
 // ─── PROPERTY APPROVAL ───────────────────────────────────────────────────────
 
-async function getPendingProperties(skip, limit) {
+async function getPendingProperties(filters, skip, limit) {
+  const where = { publishStatus: filters.status || 'PENDING_APPROVAL' };
+
   const [data, total] = await Promise.all([
     prisma.property.findMany({
-      where: { publishStatus: 'PENDING_APPROVAL' },
+      where,
       skip, take: limit,
       include: { partner: { select: { name: true, email: true, companyName: true } } },
       orderBy: { createdAt: 'asc' },
     }),
-    prisma.property.count({ where: { publishStatus: 'PENDING_APPROVAL' } }),
+    prisma.property.count({ where }),
   ]);
   return { data, total };
 }
@@ -141,6 +175,8 @@ async function approveProperty(propertyId, adminId, ip) {
   });
 
   sendPropertyApproved(property.partner.email, property.title).catch(() => {});
+  cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
+  cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
   return updated;
 }
 
@@ -171,6 +207,8 @@ async function rejectProperty(propertyId, note, adminId, ip) {
   });
 
   sendPropertyRejected(property.partner.email, property.title, note).catch(() => {});
+  cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
+  cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
   return updated;
 }
 
@@ -308,6 +346,14 @@ async function editProperty(propertyId, data, adminId, adminName, ip) {
     });
   }
 
+  if (property.publishStatus === 'APPROVED' || updated.publishStatus === 'APPROVED') {
+    cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
+    cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
+    if (updated.city !== property.city || updated.locality !== property.locality) {
+      cacheDel(CACHE_KEYS.localityPage(updated.city, updated.locality));
+    }
+  }
+
   return updated;
 }
 
@@ -315,7 +361,9 @@ async function editProperty(propertyId, data, adminId, adminName, ip) {
 
 async function getAllLoans(filters, skip, limit) {
   const where = {};
-  if (filters.status) where.status = filters.status;
+  if (filters.status) {
+    where.status = Array.isArray(filters.status) ? { in: filters.status } : filters.status;
+  }
   if (filters.userId) where.userId = filters.userId;
 
   const [data, total] = await Promise.all([
@@ -332,20 +380,46 @@ async function getAllLoans(filters, skip, limit) {
   return { data, total };
 }
 
-async function updateLoanStatus(loanId, status, adminNote, adminId) {
+// Per-bank aggregate for the admin loan page's bank cards (§4.3) — real
+// groupBy over the full table, not computed client-side from one page.
+async function getLoanBankStats() {
+  const loans = await prisma.loanApplication.findMany({
+    where: { preferredBank: { not: null } },
+    select: { preferredBank: true, status: true, loanAmountRequestedPaise: true },
+  });
+
+  const byBank = {};
+  for (const loan of loans) {
+    const bank = loan.preferredBank;
+    byBank[bank] ??= { bank, applications: 0, sanctioned: 0, totalRequestedPaise: 0 };
+    byBank[bank].applications += 1;
+    if (['SANCTIONED', 'DISBURSED'].includes(loan.status)) byBank[bank].sanctioned += 1;
+    byBank[bank].totalRequestedPaise += loan.loanAmountRequestedPaise || 0;
+  }
+
+  return Object.values(byBank).map((b) => ({
+    bank: b.bank,
+    applications: b.applications,
+    sanctioned: b.sanctioned,
+    closeRatePct: b.applications ? Math.round((b.sanctioned / b.applications) * 1000) / 10 : 0,
+    avgRequestedPaise: b.applications ? Math.round(b.totalRequestedPaise / b.applications) : 0,
+  }));
+}
+
+async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields = {}) {
   const loan = await prisma.loanApplication.findUnique({
     where: { id: loanId },
     include: { user: { select: { email: true } } },
   });
   if (!loan) throw new ApiError(404, 'Loan application not found');
 
-  const extraFields = {};
-  if (status === 'SANCTIONED') extraFields.sanctionedAt = new Date();
-  if (status === 'DISBURSED')  extraFields.disbursedAt  = new Date();
+  const statusFields = {};
+  if (status === 'SANCTIONED') statusFields.sanctionedAt = new Date();
+  if (status === 'DISBURSED')  statusFields.disbursedAt  = new Date();
 
   const updated = await prisma.loanApplication.update({
     where: { id: loanId },
-    data: { status, adminNote: adminNote || loan.adminNote, ...extraFields },
+    data: { status, adminNote: adminNote || loan.adminNote, ...statusFields, ...extraFields },
   });
 
   await createNotification({
@@ -367,14 +441,15 @@ async function getAllUsers(filters, skip, limit) {
   const where = {};
   if (filters.role)   where.role = filters.role;
   if (filters.search) where.OR   = [
-    { name:  { contains: filters.search, mode: 'insensitive' } },
-    { email: { contains: filters.search, mode: 'insensitive' } },
+    { name:    { contains: filters.search, mode: 'insensitive' } },
+    { email:   { contains: filters.search, mode: 'insensitive' } },
+    { refCode: { contains: filters.search, mode: 'insensitive' } },
   ];
 
   const [data, total] = await Promise.all([
     prisma.user.findMany({
       where, skip, take: limit,
-      select: { id: true, name: true, email: true, phone: true, phoneVerified: true, role: true, kycStatus: true, partnerSubType: true, createdAt: true },
+      select: { id: true, refCode: true, name: true, email: true, phone: true, phoneVerified: true, role: true, kycStatus: true, partnerSubType: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
     }),
     prisma.user.count({ where }),
@@ -385,9 +460,7 @@ async function getAllUsers(filters, skip, limit) {
 
 async function changeUserRole(targetUserId, newRole, adminId, ip) {
   if (targetUserId === adminId) throw new ApiError(400, 'Cannot change your own role');
-
-  const VALID_ROLES = ['USER', 'PARTNER', 'ADMIN'];
-  if (!VALID_ROLES.includes(newRole)) throw new ApiError(400, 'Invalid role');
+  if (!ROLES.includes(newRole)) throw new ApiError(400, 'Invalid role');
 
   const user = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!user) throw new ApiError(404, 'User not found');
@@ -398,17 +471,33 @@ async function changeUserRole(targetUserId, newRole, adminId, ip) {
     select: { id: true, name: true, email: true, role: true, clerkId: true },
   });
 
-  await setUserRole(user.clerkId, newRole).catch((err) =>
-    logger.warn('[changeUserRole] Clerk publicMetadata sync failed', { clerkId: user.clerkId, error: err.message })
-  );
+  // The DB role is already authoritative here (every backend auth check reads
+  // it, never Clerk's), but anything that trusts Clerk's own copy directly —
+  // e.g. a frontend portal gate reading publicMetadata.role — would keep
+  // showing the old role until this sync succeeds. One immediate retry (same
+  // pattern as auth.service.js's createAccount sign-in token) cuts how often
+  // a transient Clerk blip leaves that copy stale; a failure that survives
+  // the retry is logged at `error` (not the original silent `warn`) and
+  // flagged in the response so the admin UI can surface it, not just a log line.
+  let clerkSyncFailed = false;
+  try {
+    await setUserRole(user.clerkId, newRole);
+  } catch (firstErr) {
+    try {
+      await setUserRole(user.clerkId, newRole);
+    } catch (err) {
+      clerkSyncFailed = true;
+      logger.error('[changeUserRole] Clerk publicMetadata sync failed after retry', { clerkId: user.clerkId, error: err.message });
+    }
+  }
 
   await createAuditLog({
     adminId, action: 'ROLE_CHANGED', targetType: 'User', targetId: targetUserId,
-    before: { role: user.role }, after: { role: newRole },
+    before: { role: user.role }, after: { role: newRole, clerkSyncFailed },
     ipAddress: ip,
   });
 
-  return updated;
+  return { ...updated, ...(clerkSyncFailed && { clerkSyncFailed }) };
 }
 
 async function suspendUser(targetUserId, suspend, reason, adminId, ip) {
@@ -446,6 +535,7 @@ async function getTicketById(ticketId) {
     include: {
       user:         { select: { id: true, name: true, email: true, phone: true } },
       subscription: { include: { service: { select: { name: true, category: true } } } },
+      comments:     { orderBy: { createdAt: 'asc' } },
     },
   });
   if (!ticket) throw new ApiError(404, 'Ticket not found');
@@ -454,8 +544,14 @@ async function getTicketById(ticketId) {
 
 async function getAllTickets(filters, skip, limit) {
   const where = {};
-  if (filters.status) where.status = filters.status;
-  if (filters.userId) where.userId = filters.userId;
+  if (filters.status)   where.status   = filters.status;
+  if (filters.userId)   where.userId   = filters.userId;
+  if (filters.category) where.category = filters.category;
+  if (filters.search) where.OR = [
+    { subject:     { contains: filters.search, mode: 'insensitive' } },
+    { description: { contains: filters.search, mode: 'insensitive' } },
+    { vendorName:  { contains: filters.search, mode: 'insensitive' } },
+  ];
 
   const [data, total] = await Promise.all([
     prisma.serviceTicket.findMany({
@@ -469,6 +565,36 @@ async function getAllTickets(filters, skip, limit) {
     prisma.serviceTicket.count({ where }),
   ]);
   return { data, total };
+}
+
+// Fetches the whole table once and computes in JS rather than filtering
+// `vendorName: null` in the query — on MongoDB that filter only matches rows
+// where the field was explicitly set to null, not ones where it was never
+// written at all (confirmed empirically — see escrowAutoEscalate.js), which
+// would silently undercount "unassigned" for most existing tickets.
+async function getTicketStats() {
+  const startOfWeek = new Date();
+  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+
+  const tickets = await prisma.serviceTicket.findMany({
+    select: { status: true, vendorName: true, createdAt: true, resolvedAt: true },
+  });
+
+  const unassigned = tickets.filter((t) => !t.vendorName).length;
+  const inProgress = tickets.filter((t) => t.status === 'IN_PROGRESS').length;
+  const resolvedThisWeek = tickets.filter((t) => t.resolvedAt && t.resolvedAt >= startOfWeek).length;
+  const resolved = tickets.filter((t) => t.resolvedAt);
+  const avgResolutionDays = resolved.length
+    ? resolved.reduce((sum, t) => sum + (t.resolvedAt - t.createdAt) / 86_400_000, 0) / resolved.length
+    : 0;
+
+  return {
+    unassigned,
+    inProgress,
+    resolvedThisWeek,
+    avgResolutionDays: Math.round(avgResolutionDays * 10) / 10,
+  };
 }
 
 const TICKET_TRANSITIONS = {
@@ -574,20 +700,26 @@ async function adminListServices() {
 }
 
 async function adminCreateService(data) {
-  return prisma.service.create({ data });
+  const svc = await prisma.service.create({ data });
+  cacheDel(CACHE_KEYS.SERVICES_LIST);
+  return svc;
 }
 
 async function adminUpdateService(id, data) {
   const svc = await prisma.service.findUnique({ where: { id } });
   if (!svc) throw new ApiError(404, 'Service not found');
-  return prisma.service.update({ where: { id }, data });
+  const updated = await prisma.service.update({ where: { id }, data });
+  cacheDel(CACHE_KEYS.SERVICES_LIST);
+  return updated;
 }
 
 async function adminDeleteService(id) {
   const svc = await prisma.service.findUnique({ where: { id } });
   if (!svc) throw new ApiError(404, 'Service not found');
   // Soft-delete — keeps existing subscriptions resolvable
-  return prisma.service.update({ where: { id }, data: { isActive: false } });
+  const deactivated = await prisma.service.update({ where: { id }, data: { isActive: false } });
+  cacheDel(CACHE_KEYS.SERVICES_LIST);
+  return deactivated;
 }
 
 // ─── PARTNER METRICS ─────────────────────────────────────────────────────────
@@ -723,6 +855,25 @@ async function markContactRead(id) {
   return prisma.contactMessage.update({ where: { id }, data: { isRead: true } });
 }
 
+// ─── NRI LEADS INBOX ────────────────────────────────────────────────────────
+
+async function listNriLeads(filters, skip, limit) {
+  const where = {};
+  if (filters.isRead !== undefined) where.isRead = filters.isRead === 'true';
+
+  const [data, total] = await Promise.all([
+    prisma.nriLead.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
+    prisma.nriLead.count({ where }),
+  ]);
+  return { data, total };
+}
+
+async function markNriLeadRead(id) {
+  const lead = await prisma.nriLead.findUnique({ where: { id } });
+  if (!lead) throw new ApiError(404, 'NRI lead not found');
+  return prisma.nriLead.update({ where: { id }, data: { isRead: true } });
+}
+
 // ─── TEAM MEMBER CRUD ─────────────────────────────────────────────────────────
 
 async function adminListTeam() {
@@ -753,13 +904,14 @@ module.exports = {
   getPendingKyc, verifyKyc,
   getRevenueSummary,
   getAuditLogs,
-  getAllTickets, getTicketById, updateTicketStatus,
-  getAllLoans, updateLoanStatus,
+  getAllTickets, getTicketById, updateTicketStatus, getTicketStats,
+  getAllLoans, updateLoanStatus, getLoanBankStats,
   getAllUsers, changeUserRole, suspendUser,
   getPartnerMetrics, getPartnerById,
   adminListServices, adminCreateService, adminUpdateService, adminDeleteService,
   getPropertyByIdAdmin, getKycByUserId, getUserByIdAdmin,
   listContactMessages, markContactRead,
+  listNriLeads, markNriLeadRead,
   adminListTeam, adminCreateTeamMember, adminUpdateTeamMember, adminDeleteTeamMember,
   adminListDocuments, adminVerifyDocument,
   listVideoTours, updateVideoTour, uploadVideoTourFile,

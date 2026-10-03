@@ -1,5 +1,5 @@
 const { z } = require('zod');
-const { objectId } = require('../../utils/validators');
+const { objectId, roleEnum } = require('../../utils/validators');
 
 const assignLeadSchema = z.object({
   partnerId: objectId,
@@ -25,12 +25,14 @@ const updateLoanStatusSchema = z.object({
     'SENT_TO_BANK', 'AWAITING_SANCTION', 'SANCTIONED', 'DISBURSED', 'REJECTED',
   ], { errorMap: () => ({ message: 'Invalid loan status' }) }),
   adminNote: z.string().max(1000).optional(),
+  interestRatePct:   z.number().positive().max(100).optional(),
+  tenureMonths:      z.number().int().positive().optional(),
+  emiPaise:          z.number().int().positive().optional(),
+  sanctionLetterUrl: z.string().url().optional(),
 });
 
 const changeUserRoleSchema = z.object({
-  role: z.enum(['USER', 'PARTNER', 'ADMIN'], {
-    errorMap: () => ({ message: 'role must be USER, PARTNER, or ADMIN' }),
-  }),
+  role: roleEnum,
 });
 
 const editPropertySchema = z.object({

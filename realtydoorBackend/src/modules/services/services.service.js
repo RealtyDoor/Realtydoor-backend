@@ -1,12 +1,14 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { createOrder } = require('../../lib/razorpay');
+const { withCache } = require('../../lib/cache');
+const CACHE_KEYS = require('../../lib/cacheKeys');
 
 async function getAllServices() {
-  return prisma.service.findMany({
+  return withCache(CACHE_KEYS.SERVICES_LIST, 900, () => prisma.service.findMany({
     where: { isActive: true },
     orderBy: { sortOrder: 'asc' },
-  });
+  }));
 }
 
 async function createServiceOrder(userId, serviceId) {

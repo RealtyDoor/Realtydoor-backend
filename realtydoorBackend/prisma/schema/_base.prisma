@@ -48,6 +48,7 @@ enum PublishStatus {
 }
 
 enum PropertyStatus {
+  PRE_LAUNCH
   READY_TO_MOVE
   UNDER_CONSTRUCTION
   SOLD
@@ -84,14 +85,20 @@ enum EscrowStatus {
   REFUNDED
   FAILED
   CANCELLED
+  // A RazorpayX payout for this escrow was accepted (escrow went RELEASED)
+  // but later failed/reversed asynchronously per a payout.failed/reversed
+  // webhook — money didn't fully reach its destination. Needs manual admin
+  // review; release()/refund() both reject anything that isn't HELD, so this
+  // status deliberately blocks the normal retry path until someone looks.
+  HELD_PAYOUT_FAILED
 }
 
 enum BuyerFeedbackStatus {
-  PENDING          // WhatsApp sent, awaiting reply
-  VERIFIED_CLOSED  // Buyer confirmed deal is done
+  PENDING // WhatsApp sent, awaiting reply
+  VERIFIED_CLOSED // Buyer confirmed deal is done
   VERIFIED_DROPPED // Buyer confirmed they are not proceeding
-  STILL_DECIDING   // Buyer replied "still deciding"
-  NO_RESPONSE      // 48h passed, no WhatsApp reply — Admin flagged
+  STILL_DECIDING // Buyer replied "still deciding"
+  NO_RESPONSE // 48h passed, no WhatsApp reply — Admin flagged
 }
 
 enum PaymentStatus {
@@ -156,4 +163,11 @@ enum LoanStatus {
   SANCTIONED
   DISBURSED
   REJECTED
+}
+
+enum OtpPurpose {
+  SIGNUP // new-account creation (name + email carried in payload)
+  LOGIN // existing-account phone login
+  GOOGLE_COMPLETE // linking + verifying phone after a Google sign-in
+  PROFILE_VERIFY // lazy phone verification for an already-authenticated user
 }

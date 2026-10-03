@@ -3,19 +3,44 @@
 // partnerSubType is informational only — does NOT control permissions (PRD §2.1)
 
 model User {
-  id            String          @id @default(auto()) @map("_id") @db.ObjectId
-  clerkId       String          @unique
-  name          String
-  email         String          @unique
+  id                  String    @id @default(auto()) @map("_id") @db.ObjectId
+  clerkId             String    @unique
+  refCode             String?   @unique // RD-U-000123 — assigned by lib/refCode.js at creation; backfilled for pre-existing rows via scripts/backfillRefCodes.js, so every row now has one (every future row gets one at creation too)
+  name                String
+  email               String    @unique
   phone               String?
   phoneVerifiedAt     DateTime?
   phoneVerified       Boolean   @default(false)
+  phoneVerifyDeadline DateTime? // grace period for pre-migration users without a verified phone (B9 backfill)
+  emailVerified       Boolean   @default(false)
+  // Deprecated — superseded by the PhoneOtp table. Code no longer reads/writes
+  // these; kept only so a rollback isn't destructive. Dropped in a follow-up
+  // migration once this deploy is confirmed stable (B9).
   phoneOtp            String?
   phoneOtpExpiresAt   DateTime?
   phoneOtpAttempts    Int       @default(0)
   phoneOtpLockedUntil DateTime?
-  role          Role            @default(USER)
-  isNRI         Boolean         @default(false)
+  role                Role      @default(USER)
+  isNRI               Boolean   @default(false)
+
+  // Profile & settings (buyer-facing)
+  address  String?
+  language String? @default("en") // "en" | "kn" | "hi"
+
+  // Buyer notification preferences (distinct from the partner notif* fields below)
+  notifPush           Boolean @default(true)
+  notifEmail          Boolean @default(true)
+  notifWhatsapp       Boolean @default(true)
+  notifMarketing      Boolean @default(false)
+  notifVisitReminders Boolean @default(true)
+
+  // Onboarding preferences — collected on the mandatory "let's get started"
+  // step right after Google + phone verification (FRONTEND_HANDOFF_SPEC.md §8.4)
+  buyerType     String? // "BUYER" | "RENTER" | "INVESTOR"
+  preferredCity String?
+  budget        String?
+  bhk           String[]
+  timeline      String? // "NOW" | "3_6_MONTHS" | "BROWSING"
 
   // Partner-specific fields
   partnerSubType  PartnerSubType?
@@ -25,9 +50,9 @@ model User {
   websiteUrl      String?
 
   // Premium B2B partner (Phase 2 — §3.2)
-  isPremiumPartner   Boolean   @default(false)
-  premiumValidUntil  DateTime?
-  premiumOrderId     String?
+  isPremiumPartner  Boolean   @default(false)
+  premiumValidUntil DateTime?
+  premiumOrderId    String?
 
   // KYC (Partners only)
   kycStatus        KycStatus @default(NOT_SUBMITTED)
@@ -40,45 +65,52 @@ model User {
   suspendedAt   DateTime?
   suspendReason String?
 
+  // Onboarding consent (compliance audit trail)
+  termsAcceptedAt   DateTime?
+  privacyAcceptedAt DateTime?
+  marketingOptIn    Boolean   @default(false)
+  marketingOptInAt  DateTime?
+
   // Partner — visit availability
-  visitDays               String[]   // e.g. ['Mon','Tue','Wed','Thu','Fri','Sat']
-  visitFromTime           String?    // e.g. '10:00'
-  visitToTime             String?    // e.g. '19:00'
+  visitDays     String[] // e.g. ['Mon','Tue','Wed','Thu','Fri','Sat']
+  visitFromTime String? // e.g. '10:00'
+  visitToTime   String? // e.g. '19:00'
 
   // Partner — notification preferences
-  notifNewLead            Boolean    @default(true)
-  notifLeadExpiring       Boolean    @default(true)
-  notifEscrowReleased     Boolean    @default(true)
-  notifListingUpdate      Boolean    @default(true)
-  notifWeeklyReport       Boolean    @default(false)
+  notifNewLead        Boolean @default(true)
+  notifLeadExpiring   Boolean @default(true)
+  notifEscrowReleased Boolean @default(true)
+  notifListingUpdate  Boolean @default(true)
+  notifWeeklyReport   Boolean @default(false)
 
   // Partner — lead preferences
-  leadAutoAccept          Boolean    @default(false)
-  leadPauseOverloaded     Boolean    @default(true)
+  leadAutoAccept          Boolean  @default(false)
+  leadPauseOverloaded     Boolean  @default(true)
   leadPreferredLocalities String[]
 
   // Partner — bank account (for escrow payouts)
-  bankName                String?
-  bankBranch              String?
-  bankAccountNo           String?
-  bankIfsc                String?
-  bankHolderName          String?
-  razorpayRouteAccountId  String?
-  bankLinkedAt            DateTime?
+  bankName               String?
+  bankBranch             String?
+  bankAccountNo          String?
+  bankIfsc               String?
+  bankHolderName         String?
+  razorpayRouteAccountId String?
+  bankLinkedAt           DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
   properties        Property[]
-  assignedLeads     Lead[]            @relation("PartnerLeads")
+  assignedLeads     Lead[]                 @relation("PartnerLeads")
+  buyerLeads        Lead[]                 @relation("BuyerLeads")
   userDocuments     UserDocument[]
   subscriptions     UserSubscription[]
   tickets           ServiceTicket[]
   notifications     Notification[]
   favorites         Favorite[]
-  b2bListings       B2BConnection[]   @relation("ListingPartner")
-  b2bCollabs        B2BConnection[]   @relation("BuyerPartner")
+  b2bListings       B2BConnection[]        @relation("ListingPartner")
+  b2bCollabs        B2BConnection[]        @relation("BuyerPartner")
   videoTourRequests VideoTourRequest[]
   contactMessages   ContactMessage[]
   loanApplications  LoanApplication[]

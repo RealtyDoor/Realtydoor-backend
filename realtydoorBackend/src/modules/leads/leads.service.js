@@ -1,67 +1,150 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
-const { formatPhone } = require('../../lib/phoneUtils');
+const { formatContact, maskPhone, maskEmail } = require('../../lib/phoneUtils');
 const { generate, expiresAt, isExpired, isLocked, lockUntil, maxAttemptsReached } = require('../../lib/otp');
 const { sendSiteVisitOtp } = require('../../lib/wati');
-const { createNotification } = require('../../lib/notifications');
+const { createNotification, broadcastNotification } = require('../../lib/notifications');
+const logger = require('../../lib/logger');
 const { sendLeadAssigned } = require('../../lib/email');
 const { createAuditLog } = require('../../lib/auditLog');
+const { getConfigNumber } = require('../config/config.service');
+const { nextRefCode } = require('../../lib/refCode');
 
-async function submitLead(data, buyerId) {
-  const property = await prisma.property.findUnique({ where: { id: data.propertyId }, select: { id: true, publishStatus: true } });
+const DEFAULT_MAX_ACTIVE_INQUIRIES = 5;
+const DEFAULT_MAX_INQUIRIES_PER_DAY = 3;
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+// The actual UTC instant corresponding to 00:00:00 IST "today" — regardless
+// of what timezone the server process itself runs in. The old code used
+// `new Date().setHours(0,0,0,0)`, which is the server's *local* midnight —
+// silently wrong (off by 5.5 hours) the moment this runs on a UTC host,
+// which every production box is.
+function startOfTodayIST() {
+  const shifted = new Date(Date.now() + IST_OFFSET_MS);
+  const istMidnightAsUtc = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
+  return new Date(istMidnightAsUtc - IST_OFFSET_MS);
+}
+
+// Internal-only fields a buyer never needs: admin/partner free-text notes,
+// OTP attempt bookkeeping, and the full commission/drop-request workflow
+// state. siteVisitOTP is deliberately kept — the buyer is the one who reads
+// it out to the partner at the site-visit gate.
+const BUYER_HIDDEN_LEAD_FIELDS = [
+  'adminNotes', 'partnerNotes', 'visitNotes', 'otpAttempts',
+  'platformCommissionPct', 'commissionAmountPaise', 'commissionStatus', 'invoiceUrl', 'invoicedAt', 'collectedAt',
+  'dropRequestedByPartner', 'dropRequestNote', 'dropRequestedAt', 'droppedReason', 'droppedAt', 'droppedByAdminId',
+];
+
+function sanitizeLeadForBuyer(lead) {
+  if (!lead) return lead;
+  const clean = { ...lead };
+  for (const field of BUYER_HIDDEN_LEAD_FIELDS) delete clean[field];
+  return clean;
+}
+
+async function submitLead(data, user) {
+  const property = await prisma.property.findUnique({ where: { id: data.propertyId }, select: { id: true, title: true, publishStatus: true } });
   if (!property) throw new ApiError(404, 'Property not found');
   if (property.publishStatus !== 'APPROVED') throw new ApiError(400, 'This property is not currently available for enquiry');
 
-  const existing = await prisma.lead.findFirst({
-    where: { propertyId: data.propertyId, buyerPhone: data.buyerPhone, status: { not: 'DROPPED' } },
+  // Re-keyed on the authenticated buyer, not a client-typed phone number
+  // that doesn't have to belong to whoever is actually submitting.
+  const existingForProperty = await prisma.lead.findFirst({
+    where: { propertyId: data.propertyId, buyerId: user.id, status: { not: 'DROPPED' } },
   });
-  if (existing) throw new ApiError(409, 'You have already submitted an enquiry for this property');
+  if (existingForProperty) throw new ApiError(409, 'You have already submitted an enquiry for this property');
 
-  // Rate limit: 30-min cooldown between any submissions from the same phone
-  const cooloffCutoff = new Date(Date.now() - 30 * 60 * 1000);
-  const recentLead = await prisma.lead.findFirst({
-    where: { buyerPhone: data.buyerPhone, createdAt: { gte: cooloffCutoff } },
-    orderBy: { createdAt: 'desc' },
+  const maxActive = await getConfigNumber('max_active_inquiries', DEFAULT_MAX_ACTIVE_INQUIRIES);
+  const activeCount = await prisma.lead.count({
+    where: { buyerId: user.id, status: { notIn: ['CLOSED', 'DROPPED'] } },
   });
-  if (recentLead) throw new ApiError(429, 'Please wait 30 minutes before submitting another inquiry');
+  if (activeCount >= maxActive) {
+    throw new ApiError(429, `You can have at most ${maxActive} active inquiries. Close or cancel one to send another.`, { code: 'ACTIVE_INQUIRY_LIMIT' });
+  }
 
-  // Rate limit: max 5 inquiries per calendar day per phone
-  const dayStart = new Date();
-  dayStart.setHours(0, 0, 0, 0);
+  const todayStart = startOfTodayIST();
+  const maxDaily = await getConfigNumber('max_inquiries_per_day', DEFAULT_MAX_INQUIRIES_PER_DAY);
   const todayCount = await prisma.lead.count({
-    where: { buyerPhone: data.buyerPhone, createdAt: { gte: dayStart } },
+    where: { buyerId: user.id, createdAt: { gte: todayStart } },
   });
-  if (todayCount >= 5) throw new ApiError(429, 'Maximum 5 inquiries allowed per day');
+  if (todayCount >= maxDaily) {
+    throw new ApiError(429, `You can submit at most ${maxDaily} inquiries per day.`, { code: 'DAILY_INQUIRY_LIMIT' });
+  }
 
+  // Name/email/phone are always a snapshot of the verified account, never
+  // client input — buyerName/buyerEmail/buyerPhone are no longer accepted
+  // in the request body at all (leads.validator.js), closing the gap where
+  // a submitted phone didn't have to match the authenticated buyer's own.
+  const refCode = await nextRefCode('lead');
   const lead = await prisma.lead.create({
-    data: { ...data, status: 'UNASSIGNED', ...(buyerId && { buyerId }) },
+    data: {
+      refCode,
+      propertyId: data.propertyId,
+      buyerMessage: data.buyerMessage,
+      buyerName: data.buyerName || user.name,
+      buyerEmail: user.email,
+      buyerPhone: user.phone,
+      buyerId: user.id,
+      status: 'UNASSIGNED',
+    },
   });
+
+  // Race guard: two simultaneous submissions from the same buyer can both
+  // pass the counts above before either writes — Mongo gives no cheap
+  // cross-document transaction here. Recheck after creating and undo this
+  // lead if it pushed either count over the limit, so a retry correctly
+  // sees the real 429 instead of a phantom extra inquiry sitting in the DB.
+  const activeRecount = await prisma.lead.count({ where: { buyerId: user.id, status: { notIn: ['CLOSED', 'DROPPED'] } } });
+  if (activeRecount > maxActive) {
+    await prisma.lead.delete({ where: { id: lead.id } });
+    throw new ApiError(429, `You can have at most ${maxActive} active inquiries. Close or cancel one to send another.`, { code: 'ACTIVE_INQUIRY_LIMIT' });
+  }
+  const dailyRecount = await prisma.lead.count({ where: { buyerId: user.id, createdAt: { gte: todayStart } } });
+  if (dailyRecount > maxDaily) {
+    await prisma.lead.delete({ where: { id: lead.id } });
+    throw new ApiError(429, `You can submit at most ${maxDaily} inquiries per day.`, { code: 'DAILY_INQUIRY_LIMIT' });
+  }
 
   const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
   await Promise.all(admins.map((admin) => createNotification({
     userId: admin.id,
     title: 'New Unassigned Lead',
-    message: `${data.buyerName} enquired about a property.`,
+    message: `${lead.refCode} · ${lead.buyerName} enquired about "${property.title}".`,
     type: 'LEAD_NEW',
     linkUrl: `/admin/leads/${lead.id}`,
   })));
 
-  return lead;
+  return sanitizeLeadForBuyer(lead);
 }
 
+// `buyer` is only present when the caller's query included it (getPartnerLeads/
+// getPartnerLeadById do; a bare prisma.lead.update() result, like uploadDocs
+// returns, does not) — buyerRef/buyerPhoneVerified just come out undefined
+// (and get dropped by JSON.stringify) in that case, same as if the fields
+// never existed.
 function sanitizeLeadForPartner(lead) {
+  const { buyer, ...rest } = lead;
   return {
-    ...lead,
-    buyerPhone: formatPhone(lead.buyerPhone, lead.isOtpVerified),
+    ...rest,
+    buyerPhone: formatContact(lead.buyerPhone, lead.isOtpVerified, maskPhone),
+    buyerEmail: formatContact(lead.buyerEmail, lead.isOtpVerified, maskEmail),
+    buyerRef: buyer?.refCode,
+    buyerPhoneVerified: buyer?.phoneVerified,
     siteVisitOTP: undefined, // never expose OTP in response
+    adminNotes: undefined, // admin-internal, never expose to partner
   };
 }
+
+const PARTNER_LEAD_BUYER_SELECT = { select: { refCode: true, phoneVerified: true } };
 
 async function getPartnerLeads(partnerId) {
   // Rule 2: Partner sees only their assigned leads
   const leads = await prisma.lead.findMany({
     where: { assignedPartnerId: partnerId },
-    include: { property: { select: { title: true, slug: true, locality: true, city: true } } },
+    include: {
+      property: { select: { title: true, slug: true, locality: true, city: true } },
+      buyer: PARTNER_LEAD_BUYER_SELECT,
+    },
     orderBy: { createdAt: 'desc' },
   });
   return leads.map(sanitizeLeadForPartner);
@@ -70,7 +153,7 @@ async function getPartnerLeads(partnerId) {
 async function getPartnerLeadById(leadId, partnerId) {
   const lead = await prisma.lead.findFirst({
     where: { id: leadId, assignedPartnerId: partnerId },
-    include: { property: true },
+    include: { property: true, buyer: PARTNER_LEAD_BUYER_SELECT },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
   return sanitizeLeadForPartner(lead);
@@ -104,6 +187,60 @@ async function scheduleVisit(leadId, partnerId, scheduledAt) {
     logger.error('[scheduleVisit] WATI OTP send failed', { leadId, error: err.message });
   }
   return { message: 'Visit scheduled. OTP sent to buyer via WhatsApp.' };
+}
+
+// Resends the site-visit OTP without touching siteVisitScheduledAt (unlike
+// scheduleVisit) and deliberately does NOT reset otpAttempts/otpLockedUntil —
+// a resend must not be a free way to reset the 3-attempt anti-leakage lock
+// (§12.2). A locked lead can't resend at all; it has to go through the
+// admin-override request (§12.3) instead.
+async function resendOtp(leadId, partnerId) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!lead.siteVisitScheduledAt) throw new ApiError(400, 'No site visit scheduled for this lead');
+  if (isLocked(lead.otpLockedUntil)) {
+    throw new ApiError(429, 'OTP is locked after too many failed attempts. Request an admin override instead.');
+  }
+
+  const otp = generate();
+  const otpExp = expiresAt();
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: { siteVisitOTP: otp, otpGeneratedAt: new Date(), otpExpiresAt: otpExp },
+  });
+
+  try {
+    await sendSiteVisitOtp(lead.buyerPhone, otp);
+  } catch (err) {
+    logger.error('[resendOtp] WATI OTP send failed', { leadId, error: err.message });
+  }
+  return { message: 'A new OTP has been sent to the buyer via WhatsApp.' };
+}
+
+// Partner-side request only — flags the lead for Admin and notifies every
+// admin. It never unlocks the OTP itself; only an explicit admin action does.
+async function requestOtpOverride(leadId, partnerId) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!isLocked(lead.otpLockedUntil)) throw new ApiError(400, "This lead's OTP is not currently locked");
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: { otpOverrideRequestedByPartner: true, otpOverrideRequestedAt: new Date() },
+  });
+
+  const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
+  if (admins.length > 0) {
+    await broadcastNotification({
+      userIds: admins.map((a) => a.id),
+      title: 'OTP override requested',
+      message: `A partner requested an OTP unlock for a locked lead (buyer: ${lead.buyerName}).`,
+      type: 'OTP_OVERRIDE_REQUESTED',
+    });
+  }
+
+  return { message: 'Admin has been notified.' };
 }
 
 async function verifyOtp(leadId, partnerId, inputOtp) {
@@ -141,7 +278,11 @@ async function uploadDocs(leadId, partnerId, data, fileUrls) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
 
-  return prisma.lead.update({
+  // Previously returned the raw update result — unmasked buyerPhone/
+  // buyerEmail and the live siteVisitOTP, regardless of isOtpVerified. A
+  // partner could call this right after assignment (no OTP needed) to read
+  // both the buyer's real contact details and the site-visit OTP itself.
+  const updated = await prisma.lead.update({
     where: { id: leadId },
     data: {
       visitNotes: data.visitNotes,
@@ -150,6 +291,7 @@ async function uploadDocs(leadId, partnerId, data, fileUrls) {
       ...(fileUrls.closureDocs ? { closureDocumentUrls: { push: fileUrls.closureDocs } } : {}),
     },
   });
+  return sanitizeLeadForPartner(updated);
 }
 
 async function closeLead(leadId, partnerId) {
@@ -272,4 +414,4 @@ async function adminRejectDrop(leadId, adminId, ip) {
   return { message: 'Drop request rejected. Partner notified.' };
 }
 
-module.exports = { submitLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop };
+module.exports = { submitLead, sanitizeLeadForBuyer, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop };

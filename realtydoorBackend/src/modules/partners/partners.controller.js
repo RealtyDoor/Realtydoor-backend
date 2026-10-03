@@ -34,6 +34,14 @@ async function updateProfile(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function uploadProfilePhoto(req, res, next) {
+  try {
+    if (!req.file) throw new ApiError(400, 'A photo file is required');
+    const profile = await service.uploadProfilePhoto(req.user.id, req.file.path);
+    success(res, profile, 'Profile photo updated');
+  } catch (err) { next(err); }
+}
+
 async function getListing(req, res, next) {
   try {
     const listing = await service.getListing(req.user.id, req.params.id);
@@ -56,6 +64,13 @@ async function getFinanceSummary(req, res, next) {
   try {
     const summary = await service.getFinanceSummary(req.user.id);
     success(res, summary);
+  } catch (err) { next(err); }
+}
+
+async function getRatings(req, res, next) {
+  try {
+    const ratings = await service.getRatings(req.user.id);
+    success(res, ratings);
   } catch (err) { next(err); }
 }
 
@@ -120,8 +135,8 @@ async function createSupportTicket(req, res, next) {
 }
 
 module.exports = {
-  submitKyc, getProfile, updateProfile, getListing, getMyListings,
-  getFinanceSummary, getAnalytics,
+  submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
+  getFinanceSummary, getAnalytics, getRatings,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount,
   getSupportTickets, getSupportTicketById, createSupportTicket,

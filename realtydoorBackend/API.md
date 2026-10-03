@@ -14,7 +14,9 @@ All protected routes require a Clerk JWT in the `Authorization` header:
 Authorization: Bearer <clerk_session_token>
 ```
 
-Roles: `USER` · `PARTNER` · `ADMIN`
+Roles: `USER` · `PARTNER` · `ADMIN`. Role is always resolved from the database on every request, never from a claim embedded in the JWT itself — so a role change via `POST /auth/set-role` (or an admin action) takes effect on the very next request, with no stale-token window.
+
+**`POST /auth/sync` is no longer required before any other call.** If a valid Clerk JWT has no matching DB row yet (a brand-new Google/Clerk identity that's never hit this backend before), `authenticate` creates it on demand using the exact same logic as `POST /auth/sync` (see below), then continues the original request — there's no 401-then-sync-then-retry needed on any path (proxy, server-side fetches, client fetches, Postman, a future mobile client). Calling `/auth/sync` explicitly right after login is still worthwhile — it's the one endpoint that returns the full profile shape in a single round trip — but nothing is load-bearing on it happening first anymore. One consequence: the collision/validation errors `/sync` can throw (`400 EMAIL_REQUIRED`, `403` suspended, `409 EXISTING_USER`, `409 PHONE_IN_USE`) can now surface from *any* authenticated endpoint for a not-yet-synced user, not just from `/auth/sync` — the error codes are identical either way, so a client that already handles them on `/sync` needs to handle the same codes globally.
 
 ### Response Envelope
 
@@ -76,7 +78,13 @@ Default: `page=1`, `limit=20`.
 
 ### POST /api/auth/sync
 
-Verifies Clerk JWT, upserts DB user record, returns profile.
+Verifies Clerk JWT, upserts DB user record, returns profile. Called on every login — this is also the completion hook for a Google sign-in: a brand-new Clerk identity gets an "incomplete" DB row (`phoneVerified: false`) here, and the response's `onboardingComplete` flag tells the frontend whether to show the phone-verification step (`POST /api/auth/google/phone/otp`, using our own `PhoneOtp`/WATI flow — this endpoint does not read or trust Clerk's own phone verification status).
+
+Recommended right after login for the full profile in one call, but **not required** first — `middleware/auth.js`'s `authenticate` runs this exact same upsert logic on demand for any authenticated route when the DB row doesn't exist yet (see the Authentication section above).
+
+- **Email is required.** If the Clerk user has no email address at all, this returns `400 EMAIL_REQUIRED` — `User.email` is a required, unique field.
+- **Phone**, if present on the Clerk profile, is synced as a plain field (not treated as verified) — guarded against colliding with a different existing account (`409 PHONE_IN_USE`).
+- **`name` and `profileImageUrl` are only seeded from Clerk the first time this person's row is created.** On every later sync they are left untouched, so an edit made via `PATCH /user/profile` is never reverted back to the Google account's name/photo on the next page load.
 
 **Auth:** Clerk JWT in `Authorization` header (token verified manually, no middleware)
 
@@ -95,7 +103,7 @@ Verifies Clerk JWT, upserts DB user record, returns profile.
     "email": "rajdeep@example.com",
     "phone": "+919876543210",
     "phoneVerified": true,
-    "phoneVerifiedAt": "2024-01-15T10:30:00.000Z",
+    "emailVerified": true,
     "role": "USER",
     "isNRI": false,
     "profileImageUrl": "https://img.clerk.com/...",
@@ -107,10 +115,22 @@ Verifies Clerk JWT, upserts DB user record, returns profile.
     "kycVerifiedAt": null,
     "kycRejectionNote": null,
     "createdAt": "2024-01-01T00:00:00.000Z",
-    "updatedAt": "2024-01-15T10:30:00.000Z"
+    "updatedAt": "2024-01-15T10:30:00.000Z",
+    "onboardingComplete": true
   }
 }
 ```
+
+`emailVerified` is stamped once, at row-creation time, from Clerk's email verification status as of that moment — it is not re-derived from Clerk on every sync.
+
+**Errors:**
+- `401` — the Clerk token itself is invalid or expired. This is the *only* case that returns 401; any other failure (DB error, Clerk API error) returns `500`, so a real outage never looks like an expired session to the frontend.
+- `400 EMAIL_REQUIRED` — no email on the Clerk user.
+- `403` — the account is suspended (checked here the same way `authenticate` checks it on every other request).
+- `409 EXISTING_USER` — the Clerk email already belongs to a *different* Clerk identity (e.g. a phone-OTP account signing in with Google using the same email later) — the frontend should sign the user out and show "an account with this email already exists". If the newly-created duplicate Clerk identity has no DB row and was created moments ago, it's deleted automatically as part of this response; anything older is left alone to avoid deleting a real account.
+- `409 PHONE_IN_USE` — Clerk's phone number for this user already belongs to a *different* account (e.g. they changed their phone in Clerk to a number someone else on RealtyDoor already has verified).
+
+`onboardingComplete` is computed by the same shared helper `/auth/me`, `/auth/onboarding-status`, and every authenticated request use (`src/lib/onboarding.js`) — verified phone, or still inside the pre-migration grace window (`phoneVerifyDeadline`). All four call sites always agree.
 
 ---
 
@@ -137,6 +157,14 @@ Returns the full profile for the authenticated user including active subscriptio
     "role": "PARTNER",
     "isNRI": false,
     "profileImageUrl": "https://img.clerk.com/...",
+    "address": null,
+    "language": "en",
+    "notificationPreferences": { "push": true, "email": true, "whatsapp": true, "marketing": false, "visitReminders": true },
+    "buyerType": null,
+    "city": null,
+    "budget": null,
+    "bhk": [],
+    "timeline": null,
     "partnerSubType": "AGENT",
     "companyName": "RealtyPro Solutions",
     "bio": "10 years in Pune real estate.",
@@ -156,7 +184,170 @@ Returns the full profile for the authenticated user including active subscriptio
 }
 ```
 
-`activeSubscription` is `null` if the user has no subscription.
+`activeSubscription` is `null` if the user has no subscription. The response also includes `onboardingComplete` (computed the same way as everywhere else — see `GET /onboarding-status` below).
+
+---
+
+### GET /api/auth/onboarding-status
+
+Cheap re-check of onboarding state without a full `/sync` round-trip — use after the Google phone-completion step, or on app resume.
+
+**Auth:** Required (any role)
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Success", "data": { "onboardingComplete": false, "phoneVerified": false, "role": "USER" } }
+```
+
+`onboardingComplete` itself reflects phone status only — `true` once the phone is verified, or while still inside the pre-migration grace period (`phoneVerifyDeadline`); it does **not** factor in role. Non-`USER` accounts are instead exempted one layer up, at the route gate (`middleware/requireOnboarded.js` lets any non-`USER` role through regardless of this flag) — so a `PARTNER`/`ADMIN` can see `onboardingComplete: false` here without that blocking anything.
+
+---
+
+### POST /api/auth/signup/otp
+
+New-account signup, step 1. Normalizes `phone` to E.164, rejects if the email or phone is already registered in the DB or the email already exists in Clerk, then sends a 6-digit code via WhatsApp.
+
+`phone` accepts any valid international number, not just Indian ones (backed by `libphonenumber-js`) — for NRI signups. A bare national number with no `+`/country code (e.g. `"9000000099"`, `"09000000099"`) is assumed Indian; anything with a leading `+` (or `00` IDD prefix) is parsed as full international input against whatever country it declares (e.g. `"+1 415-555-2671"`, `"+44 20 7946 0958"`). `isNRI` is a self-declared display/admin flag only — it doesn't gate or change which phone formats are accepted. This same rule (`src/lib/phoneUtils.js`'s `phoneField`) applies to every phone-OTP endpoint in this section and to `POST /user/verify-phone`.
+
+**Auth:** Public (per-IP rate limited; per-phone resend cooldown of 30s and cap of 3 sends/hour enforced separately)
+
+**Request Body:**
+
+```json
+{ "name": "Suresh Mehta", "email": "suresh@example.com", "phone": "9000000099", "isNRI": false, "marketingOptIn": false }
+```
+
+`isNRI` and `marketingOptIn` are both optional (default `false`) — captured here rather than via a follow-up call so nothing is lost if the frontend doesn't make a second request. They're carried through the OTP row and applied when the account is actually created in `/signup/verify`.
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "OTP sent via WhatsApp", "data": { "expiresAt": "2026-09-24T10:10:00.000Z" } }
+```
+
+**Errors:** `409 ALREADY_REGISTERED` · `429 OTP_SEND_LIMIT` / `OTP_RESEND_COOLDOWN`.
+
+---
+
+### POST /api/auth/signup/verify
+
+New-account signup, step 2. On success, creates the Clerk user (generated username, random strong password, `publicMetadata: { role: "USER", phone }`) and the DB row — `phoneVerified: true`, `phoneVerifiedAt`, `emailVerified` (from Clerk's status at creation time), `isNRI` and `marketingOptIn`/`marketingOptInAt` (from `/signup/otp`), and `termsAcceptedAt`/`privacyAcceptedAt` stamped to now (submitting the signup form is the agreement action per the signup screen's copy) — in one transaction-like step. If the DB write fails, the just-created Clerk user is deleted so nothing is left orphaned. Returns a 60-second Clerk sign-in token for the frontend to complete sign-in with.
+
+**Auth:** Public
+
+**Request Body:**
+
+```json
+{ "phone": "9000000099", "code": "482913" }
+```
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "Account created",
+  "data": {
+    "signInToken": "sit_...",
+    "user": { "id": "64abc...", "name": "Suresh Mehta", "email": "suresh@example.com", "phone": "+919000000099", "phoneVerified": true, "emailVerified": false, "role": "USER" }
+  }
+}
+```
+
+**Errors:** `400 OTP_INVALID` (wrong, expired, or already-used code — deliberately generic) · `429 OTP_LOCKED` (5 wrong attempts → 10-minute lock).
+
+---
+
+### POST /api/auth/login/otp
+
+Existing-account login, step 1.
+
+**Auth:** Public
+
+**Request Body:**
+
+```json
+{ "phone": "9000000003" }
+```
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "OTP sent via WhatsApp", "data": { "expiresAt": "2026-09-24T10:10:00.000Z" } }
+```
+
+**Errors:** `404 ACCOUNT_NOT_FOUND` — no user has this phone; the frontend should redirect to signup.
+
+---
+
+### POST /api/auth/login/verify
+
+Existing-account login, step 2. Checks the account isn't suspended and is role `USER` before issuing a sign-in token — a `PARTNER`/`ADMIN` account gets `403 WRONG_PORTAL` instead of a token.
+
+**Auth:** Public
+
+**Request Body:**
+
+```json
+{ "phone": "9000000003", "code": "482913" }
+```
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Login successful",
+  "data": { "signInToken": "sit_...", "user": { "id": "64abc...", "name": "Suresh Mehta", "phone": "+919000000003", "phoneVerified": true, "role": "USER" } }
+}
+```
+
+**Errors:** `400 OTP_INVALID` · `403` suspended account · `403 WRONG_PORTAL` (`data.role` tells the frontend which portal to redirect to).
+
+---
+
+### POST /api/auth/google/phone/otp
+
+Phone-completion step after a Google sign-in whose onboarding is incomplete (see `/sync` and `/onboarding-status` above).
+
+**Auth:** Required (any authenticated user). Rate limited per-IP (`otpSendLimiter`) **and** per-user, 5 requests/hour (`perUserPhoneOtpLimiter`, keyed by `req.user.id`) — since this endpoint is behind login, per-IP alone wouldn't stop one signed-in account from working through many different target phone numbers.
+
+**Request Body:**
+
+```json
+{ "phone": "9000000099" }
+```
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "OTP sent via WhatsApp", "data": { "expiresAt": "2026-09-24T10:10:00.000Z" } }
+```
+
+**Errors:** `400 PHONE_ALREADY_VERIFIED` · `409 PHONE_IN_USE` · `429` (per-IP or per-user cap).
+
+---
+
+### POST /api/auth/google/phone/verify
+
+**Auth:** Required (any authenticated user). Rate limited per-IP (`otpVerifyLimiter`) and per-user, 5 requests/hour (`perUserPhoneOtpLimiter`).
+
+**Request Body:**
+
+```json
+{ "phone": "9000000099", "code": "482913" }
+```
+
+On success, writes `phone` to the DB **and** to Clerk `publicMetadata.phone` together, and marks `phoneVerified: true` — onboarding is now complete.
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Phone verified", "data": { "id": "64abc...", "phone": "+919000000099", "phoneVerified": true, "onboardingComplete": true } }
+```
+
+**Errors:** `400 OTP_INVALID` · `409 PHONE_IN_USE` (claimed by another account in the meantime) · `429` (per-IP or per-user cap).
 
 ---
 
@@ -182,7 +373,7 @@ Self-service role upgrade: `USER` → `PARTNER` only. Idempotent if already PART
 }
 ```
 
-**Errors:** `400` if role is not `"PARTNER"`.
+**Errors:** `400` if role is not `"PARTNER"` · `500` if the Clerk metadata update fails (the DB role is only changed after Clerk confirms — this prevents Clerk and the DB from ever disagreeing on role, which previously let `/auth/sync` silently downgrade a partner back to `USER`).
 
 ---
 
@@ -203,10 +394,10 @@ Search published, non-B2B properties.
 | `locality` | string | Case-insensitive contains |
 | `propertyType` | string | `FLAT` · `INDEPENDENT_HOUSE` · `VILLA` · `PLOT` · `COMMERCIAL_OFFICE` · `RETAIL_SHOP` |
 | `listingType` | string | `SALE` · `RENT` · `LEASE` |
-| `propertyStatus` | string | `READY_TO_MOVE` · `UNDER_CONSTRUCTION` |
+| `propertyStatus` | string | `PRE_LAUNCH` · `READY_TO_MOVE` · `UNDER_CONSTRUCTION` · `SOLD` · `RENTED` |
 | `bhk` | number | Number of bedrooms |
-| `minPrice` | number | Min price (₹) |
-| `maxPrice` | number | Max price (₹) |
+| `minPrice` | number | Min price (₹) — filters `monthlyRent` instead of `price` when `listingType` is `RENT` or `LEASE` |
+| `maxPrice` | number | Max price (₹) — same `monthlyRent`/`price` switch as `minPrice` |
 | `minArea` | number | Min carpet area (sq ft) |
 | `maxArea` | number | Max carpet area (sq ft) |
 | `furnishing` | string | Free text e.g. `Furnished` |
@@ -234,6 +425,7 @@ Search published, non-B2B properties.
         "listingType": "SALE",
         "propertyStatus": "READY_TO_MOVE",
         "bhk": 3,
+        "balconies": 2,
         "carpetArea": 1200,
         "locality": "Baner",
         "city": "Pune",
@@ -242,7 +434,19 @@ Search published, non-B2B properties.
         "isVerified": true,
         "isFeatured": false,
         "reraNumber": "P52100012345",
-        "createdAt": "2024-01-10T00:00:00.000Z"
+        "createdAt": "2024-01-10T00:00:00.000Z",
+        "facing": "East",
+        "furnishing": "Semi-Furnished",
+        "previousPrice": 9000000,
+        "priceChange6m": -5,
+        "unitsLeft": 3,
+        "viewsThisWeek": 12,
+        "builtUpArea": 1400,
+        "ageOfProperty": 2,
+        "floorNumber": 4,
+        "totalFloors": 10,
+        "latitude": 18.5581,
+        "longitude": 73.8099
       }
     ],
     "pagination": {
@@ -256,6 +460,8 @@ Search published, non-B2B properties.
   }
 }
 ```
+
+`previousPrice`, `priceChange6m`, `unitsLeft`, `balconies` are all `null` until an admin sets them on the listing. `viewsThisWeek` increments on every `GET /api/properties/:slug` and resets to `0` every Monday at midnight. `builtUpArea`, `ageOfProperty`, `floorNumber`, `totalFloors` are included specifically for the property detail page's peer-comparison logic (it fetches this same endpoint for similar listings and computes "better/below average" tags from them). `latitude`/`longitude` are `null` until set on the listing (via `POST`/`PATCH /api/properties`) — included here (not just on the detail page) so the listing page can render a map with a pin per result without an extra round trip per property.
 
 ---
 
@@ -285,81 +491,97 @@ Returns up to 12 featured approved listings.
       "city": "Pune",
       "images": ["https://cdn.realtydoor.in/villa1.jpg"],
       "coverImageIndex": 0,
-      "isVerified": true
+      "isVerified": true,
+      "facing": "North",
+      "furnishing": "Fully Furnished",
+      "balconies": 3,
+      "previousPrice": null,
+      "priceChange6m": null,
+      "unitsLeft": null,
+      "viewsThisWeek": 4,
+      "latitude": 18.5362,
+      "longitude": 73.8938
     }
   ]
 }
 ```
 
+Note: this list is cached for 10 minutes (`FEATURED_PROPERTIES` key) — a cache entry written before the new fields were added won't show them until it naturally expires or an admin edit invalidates it.
+
 ---
 
 ### GET /api/properties/:slug
 
-Full property detail for a single approved listing.
+Full property detail for a single approved listing. `isB2BOnly` listings 404 here the same as a search — a direct slug link can no longer be used to bypass the public/B2B separation.
 
 **Auth:** Public
 
 **Response `200`:**
+
+The top-level response keeps every existing flat field exactly as before (`price`, `bhk`, `locality`, `partner.companyName`, etc. — unchanged, so nothing already reading this shape needs to change). `partner` now also includes `id`, `name`, `kycStatus`, and `profileImageUrl` (previously only `companyName`/`partnerSubType`).
+
+Three keys are new, additive, and built from the same underlying data — nested for a newer consumer that wants a structured shape instead of the flat one:
 
 ```json
 {
   "success": true,
   "message": "Success",
   "data": {
-    "id": "64abc...",
-    "title": "3 BHK Flat in Baner",
-    "slug": "3-bhk-flat-in-baner-1700000000000",
-    "description": "Spacious 3 BHK with great amenities...",
-    "price": 8500000,
-    "monthlyRent": null,
-    "priceNegotiable": true,
-    "propertyType": "FLAT",
-    "listingType": "SALE",
-    "propertyStatus": "READY_TO_MOVE",
-    "publishStatus": "APPROVED",
-    "isFeatured": false,
-    "isVerified": true,
-    "bhk": 3,
-    "bathrooms": 2,
-    "carpetArea": 1200,
-    "builtUpArea": 1400,
-    "plotArea": null,
-    "floorNumber": 4,
-    "totalFloors": 10,
-    "ageOfProperty": 2,
-    "furnishing": "Semi-Furnished",
-    "facing": "East",
-    "possessionDate": null,
-    "address": "Plot 12, Baner Road",
-    "locality": "Baner",
-    "city": "Pune",
-    "state": "Maharashtra",
-    "pincode": "411045",
-    "latitude": 18.5596,
-    "longitude": 73.7769,
-    "nearbyLandmarks": ["D-Mart", "Orchid School"],
-    "reraNumber": "P52100012345",
-    "bankApprovals": ["SBI", "HDFC"],
-    "images": ["https://cdn.realtydoor.in/prop1.jpg"],
-    "coverImageIndex": 0,
-    "floorPlanUrl": null,
-    "virtualTourUrl": null,
-    "videoUrl": null,
-    "amenities": ["Gym", "Swimming Pool", "24x7 Security"],
-    "societyFeatures": ["Club House", "Children's Play Area"],
-    "metaTitle": null,
-    "metaDescription": null,
-    "createdAt": "2024-01-10T00:00:00.000Z",
-    "updatedAt": "2024-01-15T00:00:00.000Z",
-    "partner": {
-      "companyName": "RealtyPro Solutions",
-      "partnerSubType": "AGENT"
+    "...(all existing flat fields, unchanged)...": "...",
+    "partner": { "id": "64partner...", "name": "Sunetra", "companyName": "RealtyPro Solutions", "partnerSubType": "AGENT", "kycStatus": "VERIFIED", "profileImageUrl": null },
+
+    "property": {
+      "id": "64abc...", "title": "3 BHK Flat in Baner", "propertyType": "FLAT", "listingType": "SALE", "status": "APPROVED",
+      "location": { "address": "Plot 12, Baner Road", "locality": "Baner", "city": "Pune", "state": "Maharashtra", "country": "India", "pincode": "411045" },
+      "pricing": { "minPrice": 8500000, "maxPrice": 8500000, "monthlyRent": null, "priceNegotiable": true, "currency": "INR", "pricePerSqft": 7083 },
+      "configuration": { "bhk": 3, "bathrooms": 2, "balconies": null, "facing": "East", "furnishing": "Semi-Furnished" },
+      "area": { "carpetArea": 1200, "builtUpArea": 1400, "plotArea": null, "carpetEfficiency": 86, "unit": "sqft" },
+      "floorDetails": { "floorNumber": 4, "totalFloors": 10 },
+      "propertyAge": { "value": 2, "unit": "years" },
+      "parking": null,
+      "description": "Spacious 3 BHK with great amenities...",
+      "media": {
+        "coverImage": "https://cdn.realtydoor.in/prop1.jpg", "images": ["https://cdn.realtydoor.in/prop1.jpg"], "totalImages": 1,
+        "videoTour": { "available": false, "url": null }, "virtualTour": { "available": false, "url": null }, "floorPlanUrl": null
+      },
+      "verification": { "realtyDoorVerified": true, "reraVerified": true, "reraNumber": "P52100012345", "legalVerified": null, "loanApproved": true, "bankApprovals": ["SBI", "HDFC"] },
+      "badges": ["FEATURED", "REALTYDOOR_VERIFIED", "BANK_APPROVED"],
+      "amenities": ["Gym", "Swimming Pool", "24x7 Security"],
+      "societyFeatures": ["Club House", "Children's Play Area"],
+      "propertyMetrics": { "carpetEfficiency": 86, "unitsRemaining": null, "weeklyViews": 12, "priceIncreaseLast6Months": null },
+      "agent": { "id": "64partner...", "name": "Sunetra", "companyName": "RealtyPro Solutions", "designation": "AGENT", "verified": true, "profileImage": null },
+      "projectDetails": { "developer": "Purvankara Limited", "projectStatus": "PRE_LAUNCH", "rating": 4.5, "ratingCount": 2, "landArea": { "value": 3.2, "unit": "acres" }, "openSpace": 80, "totalUnits": 260 },
+      "timestamps": { "createdAt": "2024-01-10T00:00:00.000Z", "updatedAt": "2024-01-15T00:00:00.000Z" }
+    },
+
+    "propertyDetailsComparison": {
+      "title": "Similar Properties",
+      "properties": [{
+        "id": "64peer...", "name": "Aashrithaa Serene", "slug": "aashrithaa-serene-...",
+        "location": { "locality": "Hoskote", "city": "Bengaluru" }, "image": "https://cdn.realtydoor.in/peer1.jpg",
+        "basicInformation": { "developer": "Aashrithaa Developers", "projectStatus": "UNDER_CONSTRUCTION", "rating": 4.2, "ratingCount": 14, "propertyType": "PLOT", "landArea": { "value": 5, "unit": "acres" }, "openSpace": 70, "totalUnits": 400 }
+      }]
+    },
+
+    "localityInsights": {
+      "locality": "Baner", "lastUpdated": "2026-05-01T00:00:00.000Z",
+      "market": { "averagePrice": 5490, "currency": "INR", "priceUnit": "sqft", "oneYearAppreciation": 8.4, "rentYield": 3.2, "estimatedMonthlyRent": 35000 },
+      "nearbyPlaces": [{ "name": "D-Mart" }, { "name": "Orchid School" }]
     }
   }
 }
 ```
 
-**Errors:** `404` if not found or not approved.
+Notes on the nested `property` section:
+- `pricing.minPrice`/`maxPrice` are always equal — this schema stores one price per listing, not a range (a true range would need a multi-unit "project" concept this codebase doesn't model).
+- `parking` and `verification.legalVerified` are always `null` — not modeled anywhere; never fabricated.
+- `propertyMetrics.unitsRemaining`/`priceIncreaseLast6Months` (mirroring `unitsLeft`/`priceChange6m`) are always `null` today — nothing in the codebase writes to those fields yet.
+- `agent` has no `experienceYears`, `designation` (beyond `partnerSubType`), `rating`, or `statistics` — not modeled on the partner profile. Real partner ratings exist (`Lead.buyerRating`) but are only surfaced via the partner's own `GET /partner/ratings`, not joined into this public response.
+- `verification.reraVerified` reflects only whether a RERA number is on file, not a separately-audited verified status — there's no distinct field for that.
+- **`projectDetails`** (on `property`) and **`propertyDetailsComparison.properties[].basicInformation`** (on each peer) carry the same fields: `developer`, `projectStatus` (mirrors `propertyStatus`, now including `PRE_LAUNCH`), `rating`/`ratingCount`, `landArea` (`{value, unit}`), `openSpace` (%), `totalUnits`. `developer`/`landArea`/`openSpace`/`totalUnits` are partner-settable at creation (see `POST /api/properties`) and are `null` for a regular listing that was never given them. `rating`/`ratingCount` are **never** partner-settable — computed live from real, moderated `PropertyReview` rows (unapproved reviews are excluded); `null`/`0` when there are no approved reviews yet.
+- `localityInsights` is `null` when no admin-curated `LocalityInsight` row exists yet for that city/locality (same graceful fallback as the existing locality panel) — it's the same model/data as `GET /locality-insights/insight`, just remapped field names, not a second data source.
+
+**Errors:** `404` if not found, not approved, or `isB2BOnly`.
 
 ---
 
@@ -399,11 +621,22 @@ Create a new property listing (submitted for admin review).
   "nearbyLandmarks": ["D-Mart", "Orchid School"],
   "amenities": ["Gym", "Swimming Pool"],
   "societyFeatures": ["Club House"],
-  "reraNumber": "P52100012345"
+  "reraNumber": "P52100012345",
+  "developer": "Purvankara Limited",
+  "landAreaValue": 3.2,
+  "landAreaUnit": "acres",
+  "openSpacePct": 80,
+  "totalUnits": 260
 }
 ```
 
 Fields `publishStatus`, `isVerified`, `partnerId` are silently stripped.
+
+`furnishing` and `facing` are optional — if omitted, they default to `"Unfurnished"` and `"East"` respectively.
+
+`propertyStatus` now also accepts `PRE_LAUNCH`, in addition to `READY_TO_MOVE`/`UNDER_CONSTRUCTION`.
+
+`developer`, `landAreaValue`/`landAreaUnit`, `openSpacePct`, `totalUnits` are project-level fields — meaningful for a developer-led project/township listing (typically paired with `isFeaturedProject`), left unset for a regular single-unit listing. There's deliberately no `rating` field here: a partner can't self-report their own project's rating — it's computed live from real `PropertyReview` rows instead (see `GET /api/properties/:slug`'s `property.projectDetails.rating`).
 
 **Response `201`:**
 
@@ -474,6 +707,32 @@ Upload videos to a listing.
 ```
 
 **Errors:** `400` no videos provided · `403` not your listing.
+
+---
+
+### POST /api/properties/:id/documents
+
+Upload listing documents (brochure, RERA certificate, sale agreement, etc.) — appended to the listing's `documents` array.
+
+**Auth:** PARTNER (KYC not required)
+
+**Request:** `multipart/form-data`, field name `documents`, up to 10 files (`jpg`/`png`/`pdf`, max 10MB each).
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Documents uploaded",
+  "data": {
+    "documents": [
+      { "name": "brochure.pdf", "url": "https://...s3.../properties/documents/abc123.pdf", "uploadedAt": "2026-09-20T10:00:00.000Z" }
+    ]
+  }
+}
+```
+
+**Errors:** `400` no documents provided · `403` not your listing.
 
 ---
 
@@ -666,13 +925,16 @@ Submit a buyer inquiry.
 {
   "propertyId": "64abc...",
   "buyerName": "Suresh Mehta",
-  "buyerEmail": "suresh@example.com",
-  "buyerPhone": "+919876543210",
   "buyerMessage": "Interested in a site visit this weekend."
 }
 ```
 
-`buyerMessage` is optional.
+`buyerName` and `buyerMessage` are both optional. `buyerEmail`/`buyerPhone` are **no longer accepted from the client** — they're always snapshotted server-side from the authenticated, phone-verified account (`req.user.email`/`req.user.phone`), so a submitted contact value can never diverge from the account actually making the request. If `buyerName` is omitted, the account's own `name` is used.
+
+**Limits** (platform config, see `GET /api/config/public` and admin config endpoints):
+- `max_active_inquiries` (default 5) — total leads for this buyer not yet `CLOSED`/`DROPPED`.
+- `max_inquiries_per_day` (default 3) — leads submitted since 00:00 IST today.
+- One inquiry per buyer per property still applies (unchanged).
 
 **Response `201`:**
 
@@ -682,6 +944,7 @@ Submit a buyer inquiry.
   "message": "We'll reach out within 24 hours",
   "data": {
     "id": "64lead...",
+    "refCode": "RD-L-000123",
     "buyerName": "Suresh Mehta",
     "buyerEmail": "suresh@example.com",
     "buyerPhone": "+919876543210",
@@ -692,11 +955,13 @@ Submit a buyer inquiry.
 }
 ```
 
+**Errors:** `400` if either limit is exceeded, or a duplicate inquiry already exists for this property; `403` if the account's phone isn't verified.
+
 ---
 
 ### GET /api/leads/partner
 
-All leads assigned to the authenticated partner. Phone is masked until OTP is verified.
+All leads assigned to the authenticated partner. Phone **and email** are masked until OTP is verified (previously only phone was masked — email leaked in full).
 
 **Auth:** PARTNER + KYC verified
 
@@ -709,9 +974,12 @@ All leads assigned to the authenticated partner. Phone is masked until OTP is ve
   "data": [
     {
       "id": "64lead...",
+      "refCode": "RD-L-000123",
       "buyerName": "Suresh Mehta",
-      "buyerEmail": "suresh@example.com",
+      "buyerEmail": "suXXXXX@example.com",
       "buyerPhone": "+91XXXXXX3210",
+      "buyerRef": "RD-U-000045",
+      "buyerPhoneVerified": true,
       "status": "ASSIGNED",
       "isOtpVerified": false,
       "assignedAt": "2024-01-15T12:00:00.000Z",
@@ -726,6 +994,8 @@ All leads assigned to the authenticated partner. Phone is masked until OTP is ve
   ]
 }
 ```
+
+`buyerRef` (the buyer's own user `refCode`) and `buyerPhoneVerified` back the frontend's "Verified buyer" badge — note this is the *account's* phone verification state, independent of `isOtpVerified` (which is this specific lead's site-visit OTP gate). `adminNotes` is never included in a partner-facing lead, regardless of OTP state.
 
 ---
 
@@ -743,8 +1013,11 @@ Single lead detail. Full property record included.
   "message": "Success",
   "data": {
     "id": "64lead...",
+    "refCode": "RD-L-000123",
     "buyerName": "Suresh Mehta",
     "buyerPhone": "+91XXXXXX3210",
+    "buyerRef": "RD-U-000045",
+    "buyerPhoneVerified": true,
     "status": "ASSIGNED",
     "isOtpVerified": false,
     "siteVisitScheduledAt": null,
@@ -757,7 +1030,7 @@ Single lead detail. Full property record included.
 }
 ```
 
-`buyerPhone` is unmasked once `isOtpVerified` is `true`.  
+`buyerPhone` and `buyerEmail` are both unmasked once `isOtpVerified` is `true`, masked before that.  
 **Errors:** `404` not found or not assigned to this partner.
 
 ---
@@ -785,6 +1058,46 @@ Schedule a site visit and send a 4-digit OTP to the buyer via WhatsApp.
 ```
 
 **Errors:** `400` if lead is already closed.
+
+---
+
+### POST /api/leads/partner/:id/resend-otp
+
+Resends the site-visit OTP without moving the scheduled visit time (unlike `schedule-visit`, which would also reset it). Reuses the same `site_visit_otp` WhatsApp template — no new Meta template approval needed.
+
+**Auth:** PARTNER + KYC verified (rate-limited)
+
+**Request Body:** _(none)_
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Success", "data": { "message": "A new OTP has been sent to the buyer via WhatsApp." } }
+```
+
+Deliberately does **not** reset the 3-attempt lockout counter — a resend can't be used to repeatedly reset the anti-leakage lock. If the OTP is currently locked, this returns `429` instead of sending anything; use `request-otp-override` in that case.
+
+**Errors:** `404` lead not found or not yours · `400` no site visit scheduled · `429` OTP is locked.
+
+---
+
+### POST /api/leads/partner/:id/request-otp-override
+
+Flags a locked lead for Admin to review and unlock manually. This endpoint only requests — it never unlocks the OTP itself.
+
+**Auth:** PARTNER + KYC verified
+
+**Request Body:** _(none)_
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Success", "data": { "message": "Admin has been notified." } }
+```
+
+Sets `otpOverrideRequestedByPartner`/`otpOverrideRequestedAt` on the lead (a real, queryable queue) and broadcasts a notification to every admin.
+
+**Errors:** `404` lead not found or not yours · `400` the OTP isn't currently locked.
 
 ---
 
@@ -832,7 +1145,7 @@ Upload visit notes and files for a lead.
 | `visitPhotos` | file[] | Up to 10 site photos |
 | `closureDocs` | file[] | Up to 5 closure documents |
 
-**Response `200`:**
+**Response `200`:** the updated lead, same sanitized shape as `GET /api/leads/partner/:id` (masked `buyerPhone`/`buyerEmail` until `isOtpVerified`, `buyerRef`/`buyerPhoneVerified` included, `adminNotes`/`siteVisitOTP` stripped — previously this returned the raw, unmasked lead with the live OTP still on it, regardless of verification state).
 
 ```json
 {
@@ -842,7 +1155,9 @@ Upload visit notes and files for a lead.
     "id": "64lead...",
     "visitNotes": "Buyer was very interested.",
     "visitPhotoUrls": ["https://..."],
-    "closureDocumentUrls": ["https://..."]
+    "closureDocumentUrls": ["https://..."],
+    "buyerPhone": "+91XXXXXX3210",
+    "buyerEmail": "suXXXXX@example.com"
   }
 }
 ```
@@ -895,11 +1210,13 @@ Mark lead as closed. Requires an escrow with `status: HELD` and a captured payme
 
 ## 4. User Dashboard
 
-All `/api/user/*` routes require `authenticate` + `requireUser`.
+All `/api/user/*` routes require `authenticate` + `requireUser`. All routes except `/profile`, `/verify-phone`, and `/verify-phone/otp` additionally require `requireOnboarded` for role `USER` — a USER account with no verified phone (and past its `phoneVerifyDeadline` grace period, if any) gets `403 ONBOARDING_INCOMPLETE` on everything else. PARTNER/ADMIN accounts are never blocked by this gate.
 
 ### POST /api/user/verify-phone
 
-Request a 4-digit phone verification OTP via WhatsApp.
+Request a 6-digit phone verification OTP via WhatsApp. Backed by the shared `PhoneOtp` table (purpose `PROFILE_VERIFY`) — same OTP mechanism as signup/login (§1), with a 10-minute expiry, 5-attempt lock (10 minutes), 30s resend cooldown, and 3-sends/hour cap.
+
+`phone` is **not** written to the user's row at this step — only once `POST /verify-phone/otp` below actually checks the code. This prevents one account from squatting on someone else's real number before proving ownership of it.
 
 **Auth:** USER (rate-limited)
 
@@ -915,24 +1232,24 @@ Request a 4-digit phone verification OTP via WhatsApp.
 {
   "success": true,
   "message": "Success",
-  "data": { "message": "OTP sent via WhatsApp" }
+  "data": { "message": "OTP sent via WhatsApp", "expiresAt": "2026-09-24T10:10:00.000Z" }
 }
 ```
 
-**Errors:** `409` phone already registered to another account · `429` OTP locked.
+**Errors:** `409 PHONE_IN_USE` — phone already registered to another account · `429` OTP locked / resend cooldown / send limit.
 
 ---
 
 ### POST /api/user/verify-phone/otp
 
-Verify the 4-digit OTP to confirm phone ownership.
+Verify the 6-digit OTP to confirm phone ownership. `phone` must be included in the body (it's what's checked against the code — the endpoint no longer trusts whatever happens to already be on the user row). Only on success is `phone` actually written to the user's row, together with `phoneVerified: true`.
 
 **Auth:** USER (rate-limited)
 
 **Request Body:**
 
 ```json
-{ "otp": "7412" }
+{ "phone": "+919876543210", "otp": "748213" }
 ```
 
 **Response `200`:**
@@ -945,23 +1262,34 @@ Verify the 4-digit OTP to confirm phone ownership.
 }
 ```
 
-**Errors:** `400` OTP expired or wrong · `429` account locked 30 minutes.
+**Errors:** `400 OTP_INVALID` (wrong, expired, or already-used code) · `429 OTP_LOCKED` · `409 PHONE_IN_USE` (someone else claimed the number between the OTP request and this verify call).
 
 ---
 
 ### PATCH /api/user/profile
 
-Update display name and NRI flag.
+Update profile, settings, and onboarding preferences.
 
 **Auth:** USER
 
 **Request Body:**
 
 ```json
-{ "name": "Suresh Mehta", "isNRI": false }
+{
+  "name": "Suresh Mehta",
+  "isNRI": false,
+  "address": "123 MG Road, Bengaluru",
+  "language": "kn",
+  "notificationPreferences": { "push": false, "whatsapp": true, "marketing": true },
+  "buyerType": "INVESTOR",
+  "city": "Bengaluru",
+  "budget": "80L-1.2Cr",
+  "bhk": ["2", "3"],
+  "timeline": "NOW"
+}
 ```
 
-Both fields are optional. At least one must be provided.
+All fields are optional (at least one must be provided). `language`: `en` · `kn` · `hi`. `notificationPreferences` is a partial object — send only the keys you want to change (`push`, `email`, `whatsapp`, `marketing`, `visitReminders`); untouched keys keep their existing value. `buyerType`: `BUYER` · `RENTER` · `INVESTOR`. `timeline`: `NOW` · `3_6_MONTHS` · `BROWSING`. The `buyerType`/`city`/`budget`/`bhk`/`timeline` group is the mandatory "let's get started" step collected right after Google + phone verification.
 
 **Response `200`:**
 
@@ -969,7 +1297,46 @@ Both fields are optional. At least one must be provided.
 {
   "success": true,
   "message": "Profile updated",
-  "data": { "id": "64user...", "name": "Suresh Mehta", "isNRI": false }
+  "data": {
+    "id": "64user...", "name": "Suresh Mehta", "isNRI": false,
+    "address": "123 MG Road, Bengaluru", "language": "kn",
+    "notificationPreferences": { "push": false, "email": true, "whatsapp": true, "marketing": true, "visitReminders": true },
+    "buyerType": "INVESTOR", "city": "Bengaluru", "budget": "80L-1.2Cr", "bhk": ["2", "3"], "timeline": "NOW"
+  }
+}
+```
+
+Note: `city` here is the buyer's *preferred* city (an onboarding preference, stored internally as `preferredCity`) — unrelated to any property's own `city` field. The full profile (including all of the above) is also readable from `GET /api/auth/me`, so a second device/session picks up the same preferences.
+
+---
+
+### PATCH /api/user/consent
+
+Record onboarding consent (terms, privacy, marketing).
+
+**Auth:** USER
+
+**Request Body:**
+
+```json
+{ "termsAccepted": true, "privacyAccepted": true, "marketingOptIn": false }
+```
+
+All three fields are optional; at least one must be provided. `termsAccepted`/`privacyAccepted` record a one-time acceptance timestamp and are not revocable once set (sending `false` is a no-op for them). `marketingOptIn` is a genuine on/off toggle.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Consent recorded",
+  "data": {
+    "id": "64user...",
+    "termsAcceptedAt": "2026-09-20T10:00:00.000Z",
+    "privacyAcceptedAt": "2026-09-20T10:00:00.000Z",
+    "marketingOptIn": false,
+    "marketingOptInAt": null
+  }
 }
 ```
 
@@ -990,6 +1357,7 @@ All inquiries submitted by the authenticated user.
   "data": [
     {
       "id": "64lead...",
+      "refCode": "RD-L-000123",
       "buyerName": "Suresh Mehta",
       "status": "ASSIGNED",
       "createdAt": "2024-01-15T10:00:00.000Z",
@@ -997,12 +1365,96 @@ All inquiries submitted by the authenticated user.
         "title": "3 BHK Flat in Baner",
         "slug": "3-bhk-flat-in-baner-...",
         "city": "Pune",
-        "images": ["https://cdn.realtydoor.in/prop1.jpg"]
+        "locality": "Baner",
+        "images": ["https://cdn.realtydoor.in/prop1.jpg"],
+        "price": 10500000,
+        "builtUpArea": 1400,
+        "carpetArea": 1200,
+        "bhk": 3
+      },
+      "escrowTransactions": [
+        {
+          "id": "64esc...", "amount": 50000, "currency": "INR", "status": "HELD",
+          "heldAt": "2024-01-16T00:00:00.000Z", "releasedAt": null, "refundedAt": null, "failedAt": null,
+          "createdAt": "2024-01-15T12:00:00.000Z"
+        }
+      ],
+      "assignedPartner": {
+        "id": "64partner...", "name": "Rajdeep Kumar", "profileImageUrl": null, "companyName": "RealtyPro Solutions"
       }
     }
   ]
 }
 ```
+
+`assignedPartner` is `null` until a partner is assigned. **It never includes the partner's phone or email** — the buyer never dials the partner directly; the frontend's "Contact agent" action should call the shared telecaller number from `GET /api/config/public`'s `telecaller_phone` instead. `property.locality`/`price`/`builtUpArea`/`carpetArea`/`bhk` back the inquiry page's summary lines (e.g. "Whitefield · ₹1.05Cr · 1,840 sqft" and "Agent · Whitefield"). `escrowTransactions` is empty if no token advance has ever been paid on this lead, newest first otherwise. A number of internal-only fields (admin/partner notes, OTP attempt count, commission/invoice fields, drop-request fields) are stripped from every lead returned to a buyer. See `GET /api/escrow/:id` for polling a single escrow's status directly (e.g. right after a Razorpay Checkout attempt).
+
+---
+
+### GET /api/user/leads/:id
+
+Single inquiry detail for the authenticated buyer. Same shape and same `assignedPartner`/sanitization rules as the list endpoint above.
+
+**Auth:** USER (must own the lead)
+
+**Errors:** `400` malformed `:id` · `404` not found or not yours (same response for both, so a 404 never confirms whether the id exists).
+
+---
+
+### POST /api/user/leads/:leadId/rating
+
+Buyer rates the partner assigned to a lead. Allowed only once the lead's `status` is `SITE_VISIT_DONE` or `CLOSED`, and only once per lead.
+
+**Auth:** USER (must own the lead)
+
+**Request Body:**
+
+```json
+{ "rating": 5, "comment": "Partner was punctual and answered all my questions." }
+```
+
+`rating` is required, integer 1–5. `comment` is optional, max 1000 characters.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Rating submitted",
+  "data": {
+    "id": "64lead...",
+    "buyerRating": 5,
+    "buyerRatingComment": "Partner was punctual and answered all my questions.",
+    "buyerRatedAt": "2026-09-20T10:00:00.000Z"
+  }
+}
+```
+
+**Errors:** `404` lead not found or not yours · `400` site visit hasn't happened yet · `409` already rated.
+
+---
+
+### POST /api/user/leads/:id/cancel
+
+Buyer cancels their own inquiry, with a conditional Razorpay refund.
+
+**Auth:** USER (must own the lead)
+
+**Request Body:**
+
+```json
+{ "reason": "Found a better option", "reasonLabel": "Changed my mind" }
+```
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Inquiry cancelled", "data": { "refund": { "amount": 60000, "refundId": "rfnd_...", "refundTo": "original payment method", "eta": "5-7 business days" } } }
+```
+
+`refund` is present only if there was an active `HELD` escrow within the refund window (`escrowRefundWindowHours` config, default 48h) — a real Razorpay refund is issued in that case. If the escrow was only `PAYMENT_PENDING` (nothing captured yet), it's just marked `CANCELLED`, no refund object. If there's no active escrow, or the `HELD` escrow is outside the window, `refund` is omitted and the lead still closes.
+
+**Errors:** `404` lead not found or not yours · `400` inquiry already closed/dropped.
 
 ---
 
@@ -1028,7 +1480,9 @@ All properties the user has saved.
         "slug": "3-bhk-flat-in-baner-...",
         "city": "Pune",
         "price": 8500000,
-        "images": ["https://cdn.realtydoor.in/prop1.jpg"]
+        "images": ["https://cdn.realtydoor.in/prop1.jpg"],
+        "facing": "East",
+        "furnishing": "Semi-Furnished"
       }
     }
   ]
@@ -1098,7 +1552,7 @@ Upload a document.
 | Field | Type | Description |
 |-------|------|-------------|
 | `file` | file | Single file |
-| `documentType` | string | `PAN_CARD` · `AADHAR` · `SALARY_SLIP` · `FORM_16` · `BANK_STATEMENT` |
+| `documentType` | string | `PAN_CARD` · `AADHAR` · `SALARY_SLIP` · `FORM_16` · `BANK_STATEMENT` · `PASSPORT` · `OCI_PIO_CARD` · `POA_DRAFT` · `POA_NOTARIZED` · `NRE_NRO_PROOF` (the last five are for NRI users) |
 
 **Response `201`:**
 
@@ -1143,6 +1597,7 @@ All service subscriptions with associated tickets.
       "currency": "INR",
       "startDate": "2024-01-10T00:00:00.000Z",
       "endDate": "2025-01-10T00:00:00.000Z",
+      "service": { "name": "Maintenance Premium", "category": "MAINTENANCE" },
       "tickets": [
         { "id": "64tkt...", "subject": "Plumbing leak", "status": "OPEN", "createdAt": "..." }
       ]
@@ -1222,12 +1677,15 @@ Raise a service ticket under an active subscription.
   "subject": "Plumbing leak in bathroom",
   "description": "Slow leak under the wash basin.",
   "category": "PLUMBING",
-  "priority": "HIGH"
+  "priority": "HIGH",
+  "propertyId": "64prop...",
+  "photos": ["https://cdn.realtydoor.in/tickets/leak1.jpg"]
 }
 ```
 
 `category`: `PLUMBING` · `ELECTRICAL` · `PAINTING` · `GENERAL`  
-`priority`: `NORMAL` (default) · `HIGH` · `URGENT`
+`priority`: `NORMAL` (default) · `HIGH` · `URGENT`  
+`propertyId` and `photos` are both optional.
 
 **Response `201`:**
 
@@ -1240,6 +1698,8 @@ Raise a service ticket under an active subscription.
     "subject": "Plumbing leak in bathroom",
     "status": "OPEN",
     "priority": "HIGH",
+    "propertyId": "64prop...",
+    "photos": ["https://cdn.realtydoor.in/tickets/leak1.jpg"],
     "createdAt": "2024-02-01T00:00:00.000Z"
   }
 }
@@ -1249,13 +1709,109 @@ Raise a service ticket under an active subscription.
 
 ---
 
+### PATCH /api/user/tickets/:id/reopen
+
+Reopen a ticket the user believes wasn't actually fixed. Only valid when `status === 'RESOLVED'`.
+
+**Auth:** USER
+
+**Request Body:**
+
+```json
+{ "reason": "The leak came back after two days" }
+```
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Ticket reopened",
+  "data": { "id": "64tkt...", "status": "IN_PROGRESS", "reopenReason": "The leak came back after two days", "resolvedAt": null }
+}
+```
+
+**Errors:** `404` not found · `400` ticket is not `RESOLVED`.
+
+---
+
+### DELETE /api/user/tickets/:id
+
+Withdraw a ticket. Only valid when `status === 'OPEN'` and no vendor has been assigned yet.
+
+**Auth:** USER
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Ticket withdrawn", "data": null }
+```
+
+**Errors:** `404` not found · `400` ticket is not `OPEN`, or a vendor is already assigned.
+
+---
+
+### GET /api/user/tickets/:id/comments
+
+Full comment thread for a ticket — same thread the admin ticket detail view sees.
+
+**Auth:** USER (must own the ticket)
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    { "id": "64cmt...", "ticketId": "64tkt...", "authorId": "64usr...", "authorRole": "USER", "text": "Any update on this?", "photos": [], "createdAt": "..." }
+  ]
+}
+```
+
+**Errors:** `404` if the ticket doesn't exist or isn't yours (never reveals someone else's ticket by ID).
+
+---
+
+### POST /api/user/tickets/:id/comments
+
+Post a comment to the thread.
+
+**Auth:** USER (must own the ticket)
+
+**Request Body:**
+
+```json
+{ "text": "Any update on this?", "photos": [] }
+```
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "Comment posted",
+  "data": { "id": "64cmt...", "ticketId": "64tkt...", "authorId": "64usr...", "authorRole": "USER", "text": "Any update on this?", "photos": [], "createdAt": "..." }
+}
+```
+
+**Errors:** `404` not found or not yours.
+
+---
+
 ### PATCH /api/user/tickets/:id/verify
 
 Confirm service was completed. Moves ticket to `VERIFIED_BY_USER`.
 
 **Auth:** USER
 
-**Request Body:** _(none)_
+**Request Body:**
+
+```json
+{ "vendorRating": 4, "vendorRatingComment": "Good work, bit slow" }
+```
+
+Both fields optional.
 
 **Response `200`:**
 
@@ -1263,7 +1819,7 @@ Confirm service was completed. Moves ticket to `VERIFIED_BY_USER`.
 {
   "success": true,
   "message": "Ticket verified and closed",
-  "data": { "id": "64tkt...", "status": "VERIFIED_BY_USER", "verifiedAt": "..." }
+  "data": { "id": "64tkt...", "status": "VERIFIED_BY_USER", "verifiedAt": "...", "vendorRating": 4, "vendorRatingComment": "Good work, bit slow" }
 }
 ```
 
@@ -1611,6 +2167,24 @@ Update partner profile. Fields `role`, `kycStatus`, `kycDocumentUrls`, `email` a
 
 ---
 
+### POST /api/partner/profile/photo
+
+Upload/replace the partner's profile photo.
+
+**Auth:** PARTNER
+
+**Request:** `multipart/form-data`, field name `photo` (jpg/png/webp).
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Profile photo updated", "data": { "id": "64partner...", "profileImageUrl": "https://...s3.../partners/profile-photos/abc123.jpg" } }
+```
+
+**Errors:** `400` no file provided.
+
+---
+
 ### GET /api/partner/listings
 
 Partner's own property listings.
@@ -1643,7 +2217,9 @@ Partner's own property listings.
       "price": 8500000,
       "bhk": 3,
       "images": ["https://cdn.realtydoor.in/prop1.jpg"],
-      "createdAt": "2024-01-10T00:00:00.000Z"
+      "createdAt": "2024-01-10T00:00:00.000Z",
+      "facing": "East",
+      "furnishing": "Semi-Furnished"
     }
   ]
 }
@@ -1680,6 +2256,32 @@ Partner finance / escrow summary.
 ```
 
 `escrowHeld` is the sum in ₹ of HELD escrow on the partner's closed leads.
+
+---
+
+### GET /api/partner/ratings
+
+Ratings buyers have left for this partner. Backed by `Lead.buyerRating`/`buyerRatingComment` (set via `POST /api/user/leads/:leadId/rating`) — there's no separate rating model, each `Lead` already scopes one buyer's rating to one partner.
+
+**Auth:** PARTNER + KYC verified
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "average": 4.5,
+    "count": 2,
+    "ratings": [
+      { "leadId": "64lead...", "rating": 5, "comment": "Great partner", "ratedAt": "...", "buyerName": "Suresh Mehta" }
+    ]
+  }
+}
+```
+
+`average` is `null` when `count` is 0.
 
 ---
 
@@ -2075,7 +2677,7 @@ Confirm a service subscription payment after Razorpay checkout. Idempotent — s
 
 ### POST /api/escrow/create-order
 
-Create a Razorpay escrow order (token advance). Only one active escrow (`PAYMENT_PENDING` or `HELD`) per lead.
+Create a Razorpay escrow order (token advance). `leadId` must belong to the authenticated buyer — previously any logged-in user could create (and pay into) an order for *any* lead by id, with no ownership check at all. The lead's `status` must also be `SITE_VISIT_DONE` — escrow can't be created earlier in the flow. Only one active escrow (`PAYMENT_PENDING` or `HELD`) per lead — enforced by a real DB-level partial unique index (`scripts/createEscrowLeadUniqueIndex.js`), not just an application check, so two concurrent requests for the same lead can't both create an order.
 
 **Auth:** USER + phone verified
 
@@ -2110,7 +2712,7 @@ Create a Razorpay escrow order (token advance). Only one active escrow (`PAYMENT
 ```
 
 `payment.captured` webhook moves status to `HELD`.  
-**Errors:** `404` lead not found · `400` active escrow already exists.
+**Errors:** `404` lead not found or not yours · `400` lead isn't `SITE_VISIT_DONE` yet, amount below minimum, or active escrow already exists.
 
 ---
 
@@ -2145,7 +2747,34 @@ Confirm an escrow payment after Razorpay checkout. Idempotent — safe to call m
 }
 ```
 
-**Errors:** `400` invalid signature · `404` order not found.
+`razorpayOrderId` must belong to the authenticated caller — an order ID that exists but belongs to a different user's escrow 404s the same way a nonexistent one does.
+
+**Errors:** `400` invalid signature · `404` order not found or not yours.
+
+---
+
+### GET /api/escrow/:id
+
+Fetch a single escrow's current status — for polling right after a Checkout attempt, or refreshing later, without needing the full leads list. Scoped to the authenticated buyer; another user's escrow (or a nonexistent id) both return a plain `404`, never a `403` — so this endpoint can't be used to probe whether a given escrow id exists.
+
+**Auth:** USER (must be the escrow's own buyer)
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "id": "64esc...", "leadId": "64lead...", "razorpayOrderId": "order_xxx",
+    "amount": 50000, "currency": "INR", "status": "HELD",
+    "heldAt": "2024-01-16T00:00:00.000Z", "releasedAt": null, "refundedAt": null, "failedAt": null,
+    "createdAt": "2024-01-15T12:00:00.000Z"
+  }
+}
+```
+
+**Errors:** `404` not found, or not owned by the requesting user.
 
 ---
 
@@ -2186,9 +2815,19 @@ Paginated notifications for the authenticated user.
 
 ---
 
+### GET /api/notifications/unread-count
+
+Count of unread notifications for the authenticated user — for a header badge, without paginating the full list.
+
+**Auth:** USER
+
+**Response `200`:** `{ "success": true, "message": "Success", "data": { "count": 3 } }`
+
+---
+
 ### PATCH /api/notifications/:id/read
 
-Mark a notification as read.
+Mark a notification as read. Sets both `isRead: true` and `readAt` to the current time.
 
 **Auth:** USER
 
@@ -2198,7 +2837,7 @@ Mark a notification as read.
 
 ### PATCH /api/notifications/read-all
 
-Mark all unread notifications as read.
+Mark all unread notifications as read. Sets both `isRead: true` and `readAt` to the current time on every affected row.
 
 **Auth:** USER
 
@@ -2289,7 +2928,68 @@ Single published content block by slug.
 
 ---
 
-## 10. Contact
+## 10. FAQ
+
+Dedicated read-only endpoints over the same `ContentBlock` (`type: 'FAQ'`) records exposed by `GET /api/blog`, but with `content` pre-parsed to JSON instead of a raw string — clients don't need to `JSON.parse()` it themselves.
+
+### GET /api/faqs
+
+All published FAQ content blocks.
+
+**Auth:** Public
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "id": "64cms...",
+      "type": "FAQ",
+      "title": "Bengaluru Plot Buying FAQs",
+      "slug": "bengaluru-plot-buying-faqs",
+      "content": {
+        "categories": [
+          {
+            "category": "Legal & Document Verification",
+            "faqs": [
+              {
+                "question": "What are the 3 documents every plot buyer MUST check?",
+                "answerHtml": "<p>...</p><ul><li>...</li></ul>",
+                "relatedBlogSlug": "critical-plot-documents-checklist-bangalore"
+              }
+            ]
+          }
+        ]
+      },
+      "excerpt": "Categorized FAQs for Bengaluru plot buyers...",
+      "tags": ["FAQ", "Bengaluru", "Plots", "Legal", "NRI"],
+      "isPublished": true,
+      "publishedAt": "2026-09-13T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+The shape of `content` is whatever JSON the FAQ block was created with — the flat `[{q, a}]` list (legacy `faq` block) and the categorized `{categories: [{category, faqs: [{question, answerHtml, relatedBlogSlug}]}]}` shape (e.g. `bengaluru-plot-buying-faqs`) both come back parsed as-is.
+
+---
+
+### GET /api/faqs/:slug
+
+Single FAQ content block by slug.
+
+**Auth:** Public
+
+**Response `200`:** Same shape as one entry of the `GET /api/faqs` array.
+
+**Errors:** `404` if not found, not published, or not type `FAQ`.
+
+---
+
+## 11. Contact
 
 ### POST /api/contact
 
@@ -2309,7 +3009,7 @@ Submit a contact form (authenticated or public).
 }
 ```
 
-`phone` optional. `name` min 2. `subject` min 3. `message` min 10 chars.
+`phone` and `email` are both optional (most mobile callback-form submitters don't type an email). `name` min 2. `subject` min 3. `message` min 10 chars.
 
 **Response `201`:**
 
@@ -2323,11 +3023,134 @@ Submit a contact form (authenticated or public).
 
 ---
 
-## 11. Locality Insights
+### POST /api/service-requests
+
+Interest from the public Services page or a "request a callback" banner — a distinct lead type from `/api/contact`, tagged with which service(s) and where it came from, so it can be reported on per-service.
+
+**Auth:** Public
+
+**Request Body:**
+
+```json
+{
+  "name": "Priya Sharma",
+  "phone": "+919876543210",
+  "email": "priya@example.com",
+  "serviceIds": ["64svc1...", "64svc2..."],
+  "note": "Interested in both services",
+  "source": "services-page"
+}
+```
+
+`email` and `note` are optional. `serviceIds` requires at least one valid `Service` ID.
+
+**Response `201`:**
+
+```json
+{ "success": true, "message": "We will get back to you shortly.", "data": { "id": "64svcreq..." } }
+```
+
+**Errors:** `400` no `serviceIds` provided, or one is not a valid ObjectId.
+
+---
+
+## 12. NRI Leads
+
+Inbound home-buying interest capture from the NRI landing page. Not tied to a specific property listing or an authenticated user — a standalone lead-gen form submission.
+
+### POST /api/nri-leads
+
+**Auth:** Public (rate-limited)
+
+**Request Body:**
+
+```json
+{
+  "name": "Suresh Mehta",
+  "phone": "+919876543210",
+  "area": "Whitefield",
+  "homeType": "Apartment",
+  "bedrooms": "3",
+  "timeline": "3-6 months",
+  "budget": "80L-1Cr"
+}
+```
+
+All fields are required strings. `phone` should be sent pre-formatted with country code (e.g. `+91XXXXXXXXXX`) — the API does not add or infer a country code.
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "We will get back to you shortly.",
+  "data": { "id": "64nri..." }
+}
+```
+
+---
+
+### GET /api/admin/nri-leads
+
+All NRI leads (paginated).
+
+**Auth:** ADMIN
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `isRead` | boolean | Filter unread (`false`) or read (`true`) |
+| `page` | number | Default: `1` |
+| `limit` | number | Default: `20` |
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "data": [
+      {
+        "id": "64nri...",
+        "name": "Suresh Mehta",
+        "phone": "+919876543210",
+        "area": "Whitefield",
+        "homeType": "Apartment",
+        "bedrooms": "3",
+        "timeline": "3-6 months",
+        "budget": "80L-1Cr",
+        "isRead": false,
+        "createdAt": "2026-09-13T00:00:00.000Z"
+      }
+    ],
+    "pagination": { "total": 12, "page": 1, "limit": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
+  }
+}
+```
+
+---
+
+### PATCH /api/admin/nri-leads/:id/read
+
+Mark an NRI lead as read.
+
+**Auth:** ADMIN
+
+**Request Body:** _(none)_
+
+**Response `200`:** `{ "success": true, "message": "Marked as read", "data": { "id": "...", "isRead": true, ... } }`
+
+**Errors:** `404` NRI lead not found.
+
+---
+
+## 13. Locality Insights
 
 ### GET /api/locality-insights/insight
 
-Public point-lookup for a city + locality pair. Both params are required.
+Public point-lookup for a city + locality pair. Both params are required. Returns the full `LocalityInsight` record (core price panel + all locality market-intelligence fields, if curated) — used by the property-detail "Locality Insights" panel.
 
 **Auth:** Public
 
@@ -2348,18 +3171,116 @@ Public point-lookup for a city + locality pair. Both params are required.
     "id": "64loc...",
     "city": "Pune",
     "locality": "Baner",
-    "avgPricePerSqft": 25000,
-    "appreciation": 8.5,
-    "connectivity": "Metro, Highway",
-    "amenities": "Schools, Hospitals, Malls",
-    "overview": "Prime residential locality...",
-    "trending": true,
+    "avgPricePerSqftPaise": 2500000,
+    "minPricePerSqftPaise": 2200000,
+    "maxPricePerSqftPaise": 2800000,
+    "avgRentPerMonthPaise": null,
+    "priceChangeLastMonthPct": 8.5,
+    "nearbyInfra": ["Metro", "Highway"],
+    "subtitle": "Prime residential locality...",
+    "dataAsOfDate": "2024-01-15T00:00:00.000Z",
     "updatedAt": "2024-01-15T00:00:00.000Z"
   }
 }
 ```
 
+Money fields are in **paise** (₹1 = 100 paise). `dataAsOfDate`/`updatedAt` reflect the last admin refresh (monthly cadence).
+
 **Errors:** `400` if either query param is missing · `404` no data for that city+locality.
+
+---
+
+### GET /api/locality-insights/page
+
+Public — full locality market-intelligence landing page. Merges the admin-curated `LocalityInsight` record with **live** stats computed at request time from the `Property` collection (`inventoryLive`, `topVerifiedPicks`) — never stored, always fresh.
+
+**Auth:** Public
+
+**Query Parameters:** same as `/insight` — `city`, `locality` (both required).
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "city": "Bengaluru",
+    "locality": "Whitefield",
+    "subtitle": "India's most dynamic IT corridor",
+    "snapshot": {
+      "localityScore": 8.6,
+      "marketStage": "Mature Growth",
+      "rentalDemand": "High",
+      "infrastructureStrength": "Strong",
+      "bestFor": ["IT Professionals", "Families", "Investors", "Rental Income"]
+    },
+    "stats": {
+      "avgPricePerSqftPaise": 549000,
+      "minPricePerSqftPaise": 480000,
+      "maxPricePerSqftPaise": 620000,
+      "priceChangeLastMonthPct": 8.4,
+      "medianPricePaise": 1080000000,
+      "medianPricePropertyType": "3BHK",
+      "avgRentYieldPct": 3.2,
+      "inventoryLive": { "total": 542, "addedThisWeek": 38 }
+    },
+    "priceTrends": {
+      "historical": [{ "period": "Aug 2023", "price": 4100 }],
+      "growth": { "oneYear": 8.4, "threeYear": 17.2, "fiveYear": 31.8 }
+    },
+    "propertyMix": [{ "type": "3BHK", "percentage": 42, "count": 228 }],
+    "microMarkets": [{ "name": "ITPL", "avgPricePerSqft": 6200, "rentalDemand": "Very High" }],
+    "keyInfrastructure": [{ "name": "ITPL", "category": "Tech Park", "distance": "5 min drive" }],
+    "connectivity": {
+      "metro": [{ "name": "Whitefield Metro Station", "line": "Purple Line", "status": "Operational" }],
+      "airports": [{ "name": "Kempegowda International Airport", "code": "BLR", "distance": "42 km" }],
+      "majorRoads": ["Whitefield Main Road"],
+      "travelTimes": [{ "destination": "ITPL", "time": "15 min" }]
+    },
+    "infrastructureProjects": [{ "name": "Whitefield Metro Phase 2", "category": "Metro", "status": "Operational", "year": 2026, "impact": "High" }],
+    "prosAndCons": { "pros": ["Strong IT employment base"], "cons": ["Peak-hour traffic"] },
+    "investmentScore": { "overall": 8.4, "factors": { "priceGrowth": 8.8, "rentalDemand": 9.1 } },
+    "buyVsRent": { "buyerDemandPct": 76, "sellerDemandPct": 24, "avgRentByBhk": { "2BHK": 32000, "3BHK": 48000 }, "rentalYieldPct": 3.2 },
+    "faqs": [{ "question": "Is Whitefield good for investment?", "answer": "Yes." }],
+    "topVerifiedPicks": [
+      {
+        "badge": "NEW",
+        "bedroomConfig": "3BHK",
+        "project": "Prestige Falcon City",
+        "locality": "Whitefield",
+        "price": 12800000,
+        "area": 1800,
+        "areaUnit": "sqft",
+        "facing": "East",
+        "floorNumber": 4,
+        "totalFloors": 12,
+        "slug": "prestige-falcon-city-..."
+      }
+    ],
+    "dataAsOfDate": "2026-08-24T00:00:00.000Z",
+    "updatedAt": "2026-08-24T00:00:00.000Z"
+  }
+}
+```
+
+Any curated section with no admin-entered data returns `null` (or `[]`/`{total:0,addedThisWeek:0}` for the live sections). `badge` on a pick is `"PREMIUM"` if the listing is admin-featured, `"NEW"` if created within the last 30 days, else `null`. `topVerifiedPicks` only includes `APPROVED` + `isVerified` listings, newest/featured first, capped at 6.
+
+**Errors:** `400` if either query param is missing · `404` no curated locality data found for that city+locality (create one via `POST /api/locality-insights` first).
+
+---
+
+### GET /api/locality-insights/report
+
+Public — downloadable PDF report built from the same data as `/page` (structured text, no charts/AI). Streamed as `Content-Type: application/pdf` with `Content-Disposition: attachment`.
+
+**Auth:** Public (rate-limited at the search tier — 30 req/min/IP — since PDF generation is heavier than a plain JSON read)
+
+**Query Parameters:** same as `/page` — `city`, `locality` (both required).
+
+**Response `200`:** binary PDF body.
+
+**Errors:** `400` if either query param is missing · `404` no curated locality data found for that city+locality.
 
 ---
 
@@ -2418,7 +3339,7 @@ Single locality record by ID.
 
 ### POST /api/locality-insights
 
-Create or update (upsert by city + locality).
+Create or update (upsert by city + locality). `dataAsOfDate` defaults to now if omitted.
 
 **Auth:** ADMIN
 
@@ -2426,18 +3347,38 @@ Create or update (upsert by city + locality).
 
 ```json
 {
-  "city":            "Pune",
-  "locality":        "Baner",
-  "avgPricePerSqft": 25000,
-  "appreciation":    8.5,
-  "connectivity":    "Metro, Highway",
-  "amenities":       "Schools, Hospitals, Malls",
-  "overview":        "Prime residential locality...",
-  "trending":        true
+  "city":                 "Pune",
+  "locality":             "Baner",
+  "avgPricePerSqftPaise": 2500000,
+  "minPricePerSqftPaise": 2200000,
+  "maxPricePerSqftPaise": 2800000,
+  "priceChangeLastMonthPct": 8.5,
+  "nearbyInfra":          ["Metro", "Highway"],
+
+  "subtitle":               "Prime residential locality...",
+  "localityScore":          8.6,
+  "marketStage":            "Mature Growth",
+  "rentalDemand":           "High",
+  "infrastructureStrength": "Strong",
+  "bestFor":                ["IT Professionals", "Families"],
+  "medianPricePaise":       10800000000,
+  "medianPricePropertyType": "3BHK",
+  "avgRentYieldPct":        3.2,
+
+  "priceTrends":            { "historical": [{ "period": "Aug 2023", "price": 4100 }], "growth": { "oneYear": 8.4 } },
+  "propertyMix":            [{ "type": "3BHK", "percentage": 42, "count": 228 }],
+  "microMarkets":           [{ "name": "ITPL", "avgPricePerSqft": 6200, "rentalDemand": "Very High" }],
+  "keyInfrastructure":      [{ "name": "ITPL", "category": "Tech Park", "distance": "5 min drive" }],
+  "connectivity":           { "metro": [{ "name": "Whitefield Metro Station", "line": "Purple Line" }], "majorRoads": ["ITPL Main Road"] },
+  "infrastructureProjects": [{ "name": "Metro Phase 2", "status": "Operational", "year": 2026, "impact": "High" }],
+  "prosAndCons":            { "pros": ["Strong IT employment base"], "cons": ["Peak-hour traffic"] },
+  "investmentScore":        { "overall": 8.4, "factors": { "priceGrowth": 8.8 } },
+  "buyVsRent":              { "buyerDemandPct": 76, "sellerDemandPct": 24, "avgRentByBhk": { "3BHK": 48000 }, "rentalYieldPct": 3.2 },
+  "faqs":                   [{ "question": "Is this locality good for investment?", "answer": "Yes." }]
 }
 ```
 
-`city` and `locality` are required. All other fields are optional.
+`city`, `locality`, and `avgPricePerSqftPaise` are required. Every market-intelligence field (`subtitle` through `faqs`) is optional and independently updatable — send only the fields you're refreshing.
 
 **Response `201`:** `{ "success": true, "message": "Locality insight saved", "data": { ... } }`
 
@@ -2451,7 +3392,7 @@ Create or update (upsert by city + locality).
 
 ---
 
-## 12. Platform Config (Public)
+## 14. Platform Config (Public)
 
 ### GET /api/config/public
 
@@ -2469,16 +3410,17 @@ Returns all platform configuration keys that have `isPublic: true`. No authentic
     "support_phone": "+919876543210",
     "support_email": "support@realtydoor.in",
     "rera_disclaimer": "RERA registrations vary by state. Verify before investing.",
-    "platform_name": "RealtyDoor"
+    "platform_name": "RealtyDoor",
+    "telecaller_phone": "+919844412345"
   }
 }
 ```
 
-Returns a flat key → value object. Only keys with `isPublic: true` appear here.
+Returns a flat key → value object. Only keys with `isPublic: true` appear here. `telecaller_phone` is the shared number the frontend's "Contact agent" action should dial — the buyer is never given the assigned partner's own phone number (see `PATCH /api/admin/leads/:id/assign` and `GET /api/user/leads`).
 
 ---
 
-## 13. Webhooks
+## 15. Webhooks
 
 ### POST /api/webhooks/razorpay
 
@@ -2526,7 +3468,7 @@ Handles `user.created`, `user.updated`, `user.deleted` from Clerk.
 
 ---
 
-## 14. Admin
+## 16. Admin
 
 All `/api/admin/*` routes require `authenticate` + `requireAdmin`.
 
@@ -2542,6 +3484,7 @@ All leads (paginated). Filter by status and partner.
 |-------|------|-------------|
 | `status` | string | `UNASSIGNED` · `ASSIGNED` · `SITE_VISIT_SCHEDULED` · `SITE_VISIT_DONE` · `CLOSED` · `DROPPED` |
 | `partnerId` | string | Filter by assigned partner ID |
+| `search` | string | Case-insensitive match against lead `refCode`, `buyerName`, or `buyerEmail` |
 | `page` | number | Default: `1` |
 | `limit` | number | Default: `20` |
 
@@ -2555,6 +3498,7 @@ All leads (paginated). Filter by status and partner.
     "data": [
       {
         "id": "64lead...",
+        "refCode": "RD-L-000123",
         "buyerName": "Suresh Mehta",
         "buyerEmail": "suresh@example.com",
         "buyerPhone": "+919876543210",
@@ -2562,7 +3506,14 @@ All leads (paginated). Filter by status and partner.
         "isOtpVerified": false,
         "createdAt": "2024-01-15T10:00:00.000Z",
         "property": { "title": "3 BHK Flat in Baner", "slug": "...", "city": "Pune" },
-        "assignedPartner": { "name": "Rajdeep Kumar", "email": "rajdeep@example.com" }
+        "assignedPartner": { "name": "Rajdeep Kumar", "email": "rajdeep@example.com" },
+        "buyer": {
+          "id": "64user...", "refCode": "RD-U-000045", "name": "Suresh Mehta",
+          "email": "suresh@example.com", "phone": "+919876543210",
+          "phoneVerified": true, "phoneVerifiedAt": "2024-01-10T08:00:00.000Z",
+          "createdAt": "2024-01-10T08:00:00.000Z"
+        },
+        "inquiryCount": 3
       }
     ],
     "pagination": { "total": 50, "page": 1, "limit": 20, "totalPages": 3, "hasNext": true, "hasPrev": false }
@@ -2570,11 +3521,13 @@ All leads (paginated). Filter by status and partner.
 }
 ```
 
+`buyer` (full identity, unlike every buyer- or partner-facing endpoint) and `inquiryCount` (total leads this buyer has ever submitted, across all statuses — a quick abuse signal against the per-buyer limits on `POST /api/leads`) are admin-only additions. `buyer` is `null` for legacy leads with no linked account (see `scripts/backfillLeadBuyerId.js`).
+
 ---
 
 ### GET /api/admin/leads/:id
 
-Full lead detail including property, assigned partner, and escrow transactions.
+Full lead detail including property, assigned partner, buyer identity, and escrow transactions.
 
 **Auth:** ADMIN
 
@@ -2586,6 +3539,7 @@ Full lead detail including property, assigned partner, and escrow transactions.
   "message": "Success",
   "data": {
     "id": "64lead...",
+    "refCode": "RD-L-000123",
     "buyerName": "Suresh Mehta",
     "buyerPhone": "+919876543210",
     "status": "CLOSED",
@@ -2596,6 +3550,13 @@ Full lead detail including property, assigned partner, and escrow transactions.
     "closureDocumentUrls": ["https://..."],
     "property": { "title": "3 BHK Flat in Baner", "city": "Pune", ... },
     "assignedPartner": { "name": "Rajdeep Kumar", "companyName": "RealtyPro Solutions" },
+    "buyer": {
+      "id": "64user...", "refCode": "RD-U-000045", "name": "Suresh Mehta",
+      "email": "suresh@example.com", "phone": "+919876543210",
+      "phoneVerified": true, "phoneVerifiedAt": "2024-01-10T08:00:00.000Z",
+      "createdAt": "2024-01-10T08:00:00.000Z"
+    },
+    "inquiryCount": 3,
     "escrowTransactions": [
       { "id": "64esc...", "amount": 50000, "status": "HELD", "heldAt": "..." }
     ],
@@ -2650,17 +3611,21 @@ Assign lead to a KYC-verified partner.
 }
 ```
 
+Also sends the buyer an in-app `LEAD_ASSIGNED` notification (`linkUrl: /user/inquiries/:leadId`) naming the partner by `companyName`/`name` only — the partner's phone is never included, in the message or anywhere else the buyer can see. The buyer's own lead detail (`GET /api/user/leads/:id`) likewise never exposes `assignedPartner.phone`; the frontend's "Contact agent" action should dial the shared number from `GET /api/config/public`'s `telecaller_phone` instead.
+
 **Errors:** `404` lead not found · `400` partner not found or not KYC verified.
 
 ---
 
 ### GET /api/admin/properties
 
-Properties with `PENDING_APPROVAL` status (paginated).
+Properties filtered by status (paginated).
 
 **Auth:** ADMIN
 
-**Query Parameters:** `page`, `limit`
+**Query Parameters:** `page`, `limit`, `status` (`PENDING_APPROVAL` · `APPROVED` · `REJECTED` · `ARCHIVED` — defaults to `PENDING_APPROVAL` when omitted)
+
+Each of the four status tabs on the admin Property Queue page now returns rows that actually match that status — previously `status` was ignored entirely and every tab showed pending-only rows.
 
 **Response `200`:**
 
@@ -2956,7 +3921,7 @@ Full partner profile drill-down including all leads and listings.
 
 ### PATCH /api/admin/escrow/:id/release
 
-Release a HELD escrow to seller via Razorpay. Requires `HELD` status + captured payment.
+Release a HELD escrow. `sellerDetails` gets a RazorpayX Payout for the escrow amount net of `partnerShare`/`platformFee` (direct bank transfer — no seller Razorpay onboarding required); `partnerDetails` additionally pays `partnerShare` out as a second payout. `platformFee` is never paid out anywhere — it's simply the portion held back in the RazorpayX account. Requires `HELD` status + captured payment.
 
 **Auth:** ADMIN
 
@@ -2964,14 +3929,31 @@ Release a HELD escrow to seller via Razorpay. Requires `HELD` status + captured 
 
 ```json
 {
-  "sellerAccountId": "acc_...",
+  "sellerDetails": {
+    "name": "Seller Name",
+    "email": "seller@example.com",
+    "phone": "+919800000000",
+    "ifsc": "HDFC0000123",
+    "accountNumber": "50100xxxxxxxx"
+  },
+  "partnerDetails": {
+    "name": "Partner Name",
+    "email": "partner@example.com",
+    "phone": "+919800000001",
+    "ifsc": "ICIC0000456",
+    "accountNumber": "60200xxxxxxxx"
+  },
   "partnerShare": 5000,
   "platformFee": 2000,
   "note": "Release approved."
 }
 ```
 
-All fields optional. Omitting `sellerAccountId` skips Razorpay transfer.
+Either `sellerDetails` (a real RazorpayX payout is made to that bank account, for `amount - partnerShare - platformFee`) **or** `manualTransferConfirmed: true` with a required `note` (the payout was made outside Razorpay — e.g. bank transfer) must be provided. Previously this was silently optional with no alternative, meaning an escrow could be marked `RELEASED` with no real transfer of any kind and no record of why. `partnerShare + platformFee` must be less than the escrow amount.
+
+`partnerDetails` is optional and independent of `sellerDetails` — if omitted, `partnerShare` is still recorded on the escrow (held back from the seller's payout) but no automated payout is made for it, same as before; provide `partnerDetails` (with a positive `partnerShare`) to also pay the partner directly via RazorpayX.
+
+The release is atomic: if two requests for the same escrow race, only one succeeds — the other gets `400 "This escrow was already released or refunded"` before any Razorpay call is made, so a double-click or retry can never trigger two payouts. Each payout also passes the escrowId as its `reference_id`, which RazorpayX itself treats as an idempotency key — including across the seller and partner payouts separately. If either payout call fails, the escrow is rolled back to `HELD` (not left stuck `RELEASED` with no money moved) and the error is returned; a retry after a partial failure safely skips re-paying whichever leg already succeeded.
 
 **Response `200`:**
 
@@ -2983,7 +3965,7 @@ All fields optional. Omitting `sellerAccountId` skips Razorpay transfer.
 }
 ```
 
-**Errors:** `400` not HELD · `400` payment not captured.
+**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race) · `400` neither `sellerDetails` nor `manualTransferConfirmed` provided.
 
 ---
 
@@ -2995,13 +3977,15 @@ Refund a HELD escrow to buyer. Sends buyer notification.
 
 **Request Body:** _(none)_
 
+Same atomic-claim protection as release above — a race between two refund requests (or a refund racing a release) leaves only one winner, and a failed Razorpay refund call rolls the escrow back to `HELD` instead of leaving it stuck.
+
 **Response `200`:**
 
 ```json
 { "success": true, "message": "Escrow refunded", "data": { "id": "64esc...", "status": "REFUNDED", "refundedAt": "..." } }
 ```
 
-**Errors:** `400` not HELD · `400` payment not captured.
+**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race).
 
 ---
 
@@ -3033,17 +4017,46 @@ All escrow transactions (paginated).
         "buyerId": "64user...",
         "razorpayOrderId": "order_...",
         "razorpayPaymentId": "pay_...",
+        "razorpayRefundId": null,
         "amount": 50000,
         "currency": "INR",
         "status": "HELD",
         "heldAt": "2024-01-16T00:00:00.000Z",
-        "createdAt": "2024-01-15T00:00:00.000Z"
+        "createdAt": "2024-01-15T00:00:00.000Z",
+        "lead": {
+          "buyerName": "Suresh Mehta",
+          "buyerEmail": "suresh@example.com",
+          "property": { "title": "3 BHK Flat in Baner", "locality": "Baner", "city": "Pune" },
+          "assignedPartner": { "name": "Rajdeep Kumar", "companyName": "RealtyPro Solutions" }
+        }
       }
     ],
     "pagination": { "total": 20, "page": 1, "limit": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
   }
 }
 ```
+
+Each row's `lead` object carries buyer/property/partner context — previously absent, so the admin UI showed those three columns blank.
+
+---
+
+### GET /api/admin/escrow/stats
+
+Real aggregate figures over the whole table — not sampled from whichever page happened to be loaded.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": { "heldSum": 150000, "refundedSum": 0, "releasedSumThisMonth": 250000, "avgHoldDays": 6.5 }
+}
+```
+
+`avgHoldDays` is the average of `releasedAt - createdAt` (in days) across all `RELEASED` transactions.
 
 ---
 
@@ -3139,8 +4152,12 @@ All support tickets (paginated).
 |-------|------|-------------|
 | `status` | string | `OPEN` · `IN_PROGRESS` · `RESOLVED` · `VERIFIED_BY_USER` |
 | `userId` | string | Filter by user ID |
+| `category` | string | `PLUMBING` · `ELECTRICAL` · `PAINTING` · `GENERAL` |
+| `search` | string | Free-text, matches `subject`, `description`, or `vendorName` (case-insensitive) |
 | `page` | number | Default: `1` |
 | `limit` | number | Default: `20` |
+
+`category` and `search` compose correctly with pagination — the total/page math reflects the filtered set, not the whole table.
 
 **Response `200`:**
 
@@ -3164,6 +4181,26 @@ All support tickets (paginated).
   }
 }
 ```
+
+---
+
+### GET /api/admin/tickets/stats
+
+The four stat cards on the admin tickets page — computed over the full table, not the currently-loaded page.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": { "unassigned": 3, "inProgress": 5, "resolvedThisWeek": 2, "avgResolutionDays": 1.8 }
+}
+```
+
+`unassigned` counts tickets with no `vendorName` set. `resolvedThisWeek` counts by `resolvedAt` falling in the current week (Sunday–Saturday), regardless of current status.
 
 ---
 
@@ -3248,7 +4285,7 @@ All loan applications (paginated).
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `status` | string | `DOCUMENTS_PENDING` · `DOCUMENTS_SUBMITTED` · `DOCUMENTS_VERIFIED` · `SENT_TO_BANK` · `AWAITING_SANCTION` · `SANCTIONED` · `DISBURSED` · `REJECTED` |
+| `status` | string or string[] | Any of `DOCUMENTS_PENDING` · `DOCUMENTS_SUBMITTED` · `DOCUMENTS_VERIFIED` · `SENT_TO_BANK` · `AWAITING_SANCTION` · `SANCTIONED` · `DISBURSED` · `REJECTED`. Pass multiple (`?status=A&status=B`) to match any of them — used by tabs like "Pending" (5 statuses) or "Sanctioned" (2 statuses) |
 | `userId` | string | Filter by user ID |
 | `page` | number | Default: `1` |
 | `limit` | number | Default: `20` |
@@ -3282,15 +4319,24 @@ All loan applications (paginated).
 
 ### PATCH /api/admin/loan/:id/status
 
-Update loan status. Sets `sanctionedAt` on `SANCTIONED`, `disbursedAt` on `DISBURSED`.
+Update loan status. Sets `sanctionedAt` on `SANCTIONED`, `disbursedAt` on `DISBURSED`. Also accepts the sanction details, independent of status.
 
 **Auth:** ADMIN
 
 **Request Body:**
 
 ```json
-{ "status": "SANCTIONED", "adminNote": "Sanctioned by HDFC. Ref: HDFC2024012345." }
+{
+  "status": "SANCTIONED",
+  "adminNote": "Sanctioned by HDFC. Ref: HDFC2024012345.",
+  "interestRatePct": 8.5,
+  "tenureMonths": 240,
+  "emiPaise": 4500000,
+  "sanctionLetterUrl": "https://cdn.realtydoor.in/loans/sanction-64loan.pdf"
+}
 ```
+
+`interestRatePct`, `tenureMonths`, `emiPaise`, `sanctionLetterUrl` are all optional — set them whenever the information is available, not only alongside a status change.
 
 **Response `200`:**
 
@@ -3298,11 +4344,37 @@ Update loan status. Sets `sanctionedAt` on `SANCTIONED`, `disbursedAt` on `DISBU
 {
   "success": true,
   "message": "Loan status updated",
-  "data": { "id": "64loan...", "status": "SANCTIONED", "sanctionedAt": "...", "disbursedAt": null }
+  "data": {
+    "id": "64loan...", "status": "SANCTIONED", "sanctionedAt": "...", "disbursedAt": null,
+    "interestRatePct": 8.5, "tenureMonths": 240, "emiPaise": 4500000,
+    "sanctionLetterUrl": "https://cdn.realtydoor.in/loans/sanction-64loan.pdf"
+  }
 }
 ```
 
 **Errors:** `404` loan not found.
+
+---
+
+### GET /api/admin/loan/bank-stats
+
+Per-bank aggregate — applications, sanctioned count, close rate, average requested amount — for the admin loan page's bank cards.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    { "bank": "HDFC Bank", "applications": 12, "sanctioned": 5, "closeRatePct": 41.7, "avgRequestedPaise": 650000000 }
+  ]
+}
+```
+
+`sanctioned` counts loans currently `SANCTIONED` or `DISBURSED`. Only banks with at least one application appear.
 
 ---
 
@@ -3317,7 +4389,7 @@ All users (paginated). Filter by role or search.
 | Param | Type | Description |
 |-------|------|-------------|
 | `role` | string | `USER` · `PARTNER` · `ADMIN` |
-| `search` | string | Case-insensitive search on name or email |
+| `search` | string | Case-insensitive search on name, email, or `refCode` |
 | `page` | number | Default: `1` |
 | `limit` | number | Default: `20` |
 
@@ -3331,6 +4403,7 @@ All users (paginated). Filter by role or search.
     "data": [
       {
         "id": "64user...",
+        "refCode": "RD-U-000045",
         "name": "Suresh Mehta",
         "email": "suresh@example.com",
         "phone": "+919876543210",
@@ -4197,7 +5270,7 @@ Delete a platform config key permanently.
 `PENDING_APPROVAL` · `APPROVED` · `REJECTED` · `ARCHIVED`
 
 ### PropertyStatus
-`READY_TO_MOVE` · `UNDER_CONSTRUCTION` · `SOLD` · `RENTED`
+`PRE_LAUNCH` · `READY_TO_MOVE` · `UNDER_CONSTRUCTION` · `SOLD` · `RENTED`
 
 ### LeadStatus
 `UNASSIGNED` · `ASSIGNED` · `SITE_VISIT_SCHEDULED` · `SITE_VISIT_DONE` · `CLOSED` · `DROPPED`

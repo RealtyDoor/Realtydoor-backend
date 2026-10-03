@@ -5,7 +5,7 @@ const service = require('./leads.service');
 async function submit(req, res, next) {
   try {
     const data = submitLeadSchema.parse(req.body);
-    const lead = await service.submitLead(data, req.user.id);
+    const lead = await service.submitLead(data, req.user);
     created(res, lead, "We'll reach out within 24 hours");
   } catch (err) { next(err); }
 }
@@ -28,6 +28,20 @@ async function scheduleVisit(req, res, next) {
   try {
     const { scheduledAt } = scheduleVisitSchema.parse(req.body);
     const result = await service.scheduleVisit(req.params.id, req.user.id, scheduledAt);
+    success(res, result);
+  } catch (err) { next(err); }
+}
+
+async function resendOtp(req, res, next) {
+  try {
+    const result = await service.resendOtp(req.params.id, req.user.id);
+    success(res, result);
+  } catch (err) { next(err); }
+}
+
+async function requestOtpOverride(req, res, next) {
+  try {
+    const result = await service.requestOtpOverride(req.params.id, req.user.id);
     success(res, result);
   } catch (err) { next(err); }
 }
@@ -81,4 +95,4 @@ async function rejectDrop(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { submit, getMyLeads, getLeadById, scheduleVisit, verifyOtp, uploadDocs, closeLead, requestDrop, approveDrop, rejectDrop };
+module.exports = { submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, approveDrop, rejectDrop };

@@ -4,7 +4,7 @@ const leadsCtrl = require('../leads/leads.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
-const { kycDocUploader, visitPhotoUploader } = require('../../lib/fileUpload');
+const { kycDocUploader, visitPhotoUploader, partnerProfilePhotoUploader } = require('../../lib/fileUpload');
 const { uploadLimiter, otpLimiter } = require('../../middleware/rateLimiter');
 
 router.use(authenticate, requirePartner);
@@ -16,6 +16,8 @@ router.post('/kyc', uploadLimiter, kycDocUploader.array('documents', 5), ctrl.su
 router.get('/leads',                        requireKyc, leadsCtrl.getMyLeads);
 router.get('/leads/:id',                    requireKyc, leadsCtrl.getLeadById);
 router.post('/leads/:id/schedule-visit',    requireKyc, leadsCtrl.scheduleVisit);
+router.post('/leads/:id/resend-otp',        requireKyc, otpLimiter, leadsCtrl.resendOtp);
+router.post('/leads/:id/request-otp-override', requireKyc, leadsCtrl.requestOtpOverride);
 router.post('/leads/:id/verify-otp',        requireKyc, otpLimiter, leadsCtrl.verifyOtp);
 router.patch('/leads/:id/document',         requireKyc,
   visitPhotoUploader.fields([{ name: 'visitPhotos', maxCount: 10 }, { name: 'closureDocs', maxCount: 5 }]),
@@ -27,6 +29,7 @@ router.patch('/leads/:id/request-drop',     requireKyc, leadsCtrl.requestDrop);
 // Profile
 router.get('/profile', ctrl.getProfile);
 router.patch('/profile', ctrl.updateProfile);
+router.post('/profile/photo', partnerProfilePhotoUploader.single('photo'), ctrl.uploadProfilePhoto);
 
 // Listings (KYC required)
 router.get('/listings',    requireKyc, ctrl.getMyListings);
@@ -34,6 +37,8 @@ router.get('/listings/:id', requireKyc, ctrl.getListing);
 
 // Finance/escrow summary (KYC required)
 router.get('/finance',    requireKyc, ctrl.getFinanceSummary);
+// Ratings from buyers, aggregated from Lead.buyerRating (KYC required)
+router.get('/ratings',    requireKyc, ctrl.getRatings);
 // Analytics dashboard (KYC required)
 router.get('/analytics',  requireKyc, ctrl.getAnalytics);
 

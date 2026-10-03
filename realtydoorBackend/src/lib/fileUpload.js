@@ -113,12 +113,14 @@ function buildUploader(folder, allowedFormats, maxSizeMb = 10) {
 const propertyImageUploader  = buildUploader('properties', IMAGE_FORMATS);
 const propertyVideoUploader  = buildUploader('properties', VIDEO_FORMATS, 200); // 200 MB for videos
 const propertyMediaUploader  = buildUploader('properties', MEDIA_FORMATS, 200); // images + videos
+const propertyDocUploader    = buildUploader('properties/documents', DOC_FORMATS);
 const kycDocUploader         = buildUploader('kyc',        DOC_FORMATS);
 const visitPhotoUploader     = buildUploader('visits',     IMAGE_FORMATS);
 const userDocUploader        = buildUploader('documents',  DOC_FORMATS);
 const ticketEvidenceUploader = buildUploader('tickets',    ALL_FORMATS);
 const cmsMediaUploader       = buildUploader('admin-cms',  MEDIA_FORMATS);
 const videoTourUploader      = buildUploader('video-tours', VIDEO_FORMATS, 500); // 500 MB
+const partnerProfilePhotoUploader = buildUploader('partners/profile-photos', IMAGE_FORMATS);
 
 async function deleteFile(s3Key) {
   await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: s3Key }));
@@ -128,11 +130,13 @@ module.exports = {
   propertyImageUploader,
   propertyVideoUploader,
   propertyMediaUploader,
+  propertyDocUploader,
   kycDocUploader,
   visitPhotoUploader,
   userDocUploader,
   ticketEvidenceUploader,
   cmsMediaUploader,
   videoTourUploader,
+  partnerProfilePhotoUploader,
   deleteFile,
 };

@@ -22,8 +22,11 @@ const REDACTED_KEYS = new Set([
   'password',
   'hashedPassword',
   'otp',
+  'code',            // signup/login/Google-complete OTP codes
+  'codeHash',
   'siteVisitOTP',
   'token',
+  'signInToken',
   'secret',
   'razorpayPaymentId',
   'razorpayOrderId',

@@ -18,6 +18,29 @@ model LocalityInsight {
   priceChangeLastMonthPct  Float?
 
   nearbyInfra              String[]
+
+  // ─── Locality market-intelligence page (admin-curated, monthly refresh) ─────
+  subtitle                 String?   // "India's most dynamic IT corridor"
+  localityScore            Float?    // 0-10
+  marketStage              String?   // "Mature Growth"
+  rentalDemand             String?   // "High"
+  infrastructureStrength   String?   // "Strong"
+  bestFor                  String[]  // ["IT Professionals", "Families", ...]
+  medianPricePaise         Int?
+  medianPricePropertyType  String?   // "3BHK"
+  avgRentYieldPct          Float?
+
+  priceTrends              Json?     // { historical: [{period,price}], growth: {oneYear,threeYear,fiveYear} }
+  propertyMix              Json?     // [{ type, percentage, count }]
+  microMarkets             Json?     // [{ name, avgPricePerSqft, rentalDemand }]
+  keyInfrastructure        Json?     // [{ name, category, distance?, line?, status?, code?, description? }]
+  connectivity             Json?     // { metro:[], airports:[], majorRoads:[], travelTimes:[] }
+  infrastructureProjects   Json?     // [{ name, category, status, year, impact }]
+  prosAndCons              Json?     // { pros:[], cons:[] }
+  investmentScore          Json?     // { overall, factors:{ priceGrowth, rentalDemand, connectivity, infrastructure, liquidity, risk } }
+  buyVsRent                Json?     // { buyerDemandPct, sellerDemandPct, avgRentByBhk:{}, rentalYieldPct, rentTrend1yPct }
+  faqs                     Json?     // [{ question, answer }]
+
   dataAsOfDate             DateTime
   updatedByAdminId         String?  @db.ObjectId
   createdAt                DateTime @default(now())

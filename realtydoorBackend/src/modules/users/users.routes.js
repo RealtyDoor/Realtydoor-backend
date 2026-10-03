@@ -2,14 +2,27 @@ const router = require('express').Router();
 const ctrl = require('./users.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireUser } = require('../../middleware/requireRole');
+const { requireOnboarded } = require('../../middleware/requireOnboarded');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { userDocUploader } = require('../../lib/fileUpload');
 const { otpLimiter } = require('../../middleware/rateLimiter');
+const { validateObjectId } = require('../../middleware/validateObjectId');
 
 router.use(authenticate, requireUser);
 
+// requireOnboarded (B6) gates everything below except profile edits and the
+// phone-verification endpoints themselves — a USER account with no verified
+// phone still needs to be able to reach those to complete onboarding.
+const ONBOARDING_EXEMPT_PATHS = ['/profile', '/verify-phone', '/verify-phone/otp'];
+router.use((req, res, next) => (
+  ONBOARDING_EXEMPT_PATHS.includes(req.path) ? next() : requireOnboarded(req, res, next)
+));
+
 // Profile
 router.patch('/profile', ctrl.updateProfile);
+
+// Onboarding consent
+router.patch('/consent', ctrl.updateConsent);
 
 // Phone verification (lazy — only called when needed)
 router.post('/verify-phone',     otpLimiter, ctrl.requestPhoneOtp);
@@ -17,6 +30,9 @@ router.post('/verify-phone/otp', otpLimiter, ctrl.verifyPhoneOtp);
 
 // Inquiries tracker
 router.get('/leads', ctrl.getMyLeads);
+router.get('/leads/:id', validateObjectId('id'), ctrl.getMyLead);
+router.post('/leads/:leadId/rating', ctrl.rateLead);
+router.post('/leads/:id/cancel', ctrl.cancelLead);
 
 // Favorites (phone required — PRD §2.5)
 router.get('/favorites',  ctrl.getFavorites);
@@ -34,6 +50,10 @@ router.get('/tickets',              ctrl.getMyTickets);
 router.get('/tickets/:id',          ctrl.getMyTicketById);
 router.post('/tickets',             requirePhone, ctrl.raiseTicket);
 router.patch('/tickets/:id/verify', ctrl.verifyTicket);
+router.patch('/tickets/:id/reopen', ctrl.reopenTicket);
+router.delete('/tickets/:id',       ctrl.withdrawTicket);
+router.get('/tickets/:id/comments',  ctrl.getTicketComments);
+router.post('/tickets/:id/comments', ctrl.addTicketComment);
 
 // Loan applications
 router.post('/loan',     requirePhone, ctrl.createLoanApplication);

@@ -9,7 +9,19 @@ async function createOrder(req, res, next) {
   try {
     const { leadId, amount } = createOrderSchema.parse(req.body);
     const result = await service.createOrder(leadId, req.user.id, amount);
-    created(res, result, 'Escrow order created');
+    const message = result.alreadyPaid
+      ? 'Payment already received for this escrow'
+      : result.resumed
+        ? 'Resuming your existing escrow order'
+        : 'Escrow order created';
+    created(res, result, message);
+  } catch (err) { next(err); }
+}
+
+async function getEscrowById(req, res, next) {
+  try {
+    const escrow = await service.getById(req.params.id, req.user.id);
+    success(res, escrow);
   } catch (err) { next(err); }
 }
 
@@ -36,6 +48,13 @@ async function getAllEscrow(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getEscrowStats(req, res, next) {
+  try {
+    const stats = await service.getEscrowStats();
+    success(res, stats);
+  } catch (err) { next(err); }
+}
+
 async function verifyPayment(req, res, next) {
   try {
     const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
@@ -45,9 +64,9 @@ async function verifyPayment(req, res, next) {
     if (!verifyPaymentSignature(razorpayOrderId, razorpayPaymentId, razorpaySignature)) {
       throw new ApiError(400, 'Invalid payment signature');
     }
-    const escrow = await service.confirmPayment(razorpayOrderId, razorpayPaymentId);
+    const escrow = await service.confirmPayment(razorpayOrderId, razorpayPaymentId, req.user.id);
     success(res, escrow, 'Payment verified');
   } catch (err) { next(err); }
 }
 
-module.exports = { createOrder, verifyPayment, releaseEscrow, refundEscrow, getAllEscrow };
+module.exports = { createOrder, getEscrowById, verifyPayment, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats };

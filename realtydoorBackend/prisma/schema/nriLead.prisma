@@ -1,0 +1,19 @@
+// ─── NRI LEAD ─────────────────────────────────────────────────────────────────
+// Inbound interest capture from the NRI landing page — home-buying intent,
+// not tied to a specific existing property listing or authenticated user.
+
+model NriLead {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  phone     String
+  area      String
+  homeType  String
+  bedrooms  String
+  timeline  String
+  budget    String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([isRead])
+  @@index([createdAt])
+}

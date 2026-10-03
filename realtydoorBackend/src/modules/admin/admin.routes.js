@@ -43,6 +43,7 @@ router.get('/partners/:id', ctrl.getPartnerById);
 router.patch('/escrow/:id/release', escrowCtrl.releaseEscrow);
 router.post('/escrow/:id/refund', escrowCtrl.refundEscrow);
 router.get('/escrow', escrowCtrl.getAllEscrow);
+router.get('/escrow/stats', escrowCtrl.getEscrowStats);
 
 // CMS
 router.get('/content',        cmsCtrl.getAllForAdmin);
@@ -56,11 +57,13 @@ router.post('/notifications/broadcast', notifCtrl.broadcast);
 
 // Ticket management
 router.get('/tickets',            ctrl.getTickets);
+router.get('/tickets/stats',      ctrl.getTicketStats);
 router.get('/tickets/:id',        ctrl.getTicket);
 router.patch('/tickets/:id',      ctrl.updateTicket);
 
 // Loan management
 router.get('/loan',               ctrl.getLoans);
+router.get('/loan/bank-stats',    ctrl.getLoanBankStats);
 router.patch('/loan/:id/status',  ctrl.updateLoanStatus);
 
 // User management & role assignment
@@ -82,6 +85,10 @@ router.patch('/documents/:id/verify',  ctrl.verifyDocument);
 // Contact inbox
 router.get('/contact',             ctrl.listContactMessages);
 router.patch('/contact/:id/read',  ctrl.markContactRead);
+
+// NRI leads inbox
+router.get('/nri-leads',             ctrl.listNriLeads);
+router.patch('/nri-leads/:id/read',  ctrl.markNriLeadRead);
 
 // Team roster
 router.get('/team',          ctrl.listTeam);

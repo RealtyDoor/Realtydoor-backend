@@ -7,7 +7,8 @@ model UserDocument {
   userId       String    @db.ObjectId
   user         User      @relation(fields: [userId], references: [id])
 
-  // documentType: PAN_CARD | AADHAR | SALARY_SLIP | FORM_16 | BANK_STATEMENT
+  // documentType: PAN_CARD | AADHAR | SALARY_SLIP | FORM_16 | BANK_STATEMENT |
+  //   PASSPORT | OCI_PIO_CARD | POA_DRAFT | POA_NOTARIZED | NRE_NRO_PROOF
   documentType String
   fileUrl      String
   fileName     String

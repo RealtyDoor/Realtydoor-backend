@@ -14,6 +14,8 @@ router.post('/', authenticate, requireUser, requirePhone, ctrl.submit);
 router.get('/partner', authenticate, requirePartner, requireKyc, ctrl.getMyLeads);
 router.get('/partner/:id', authenticate, requirePartner, requireKyc, ctrl.getLeadById);
 router.post('/partner/:id/schedule-visit', authenticate, requirePartner, requireKyc, ctrl.scheduleVisit);
+router.post('/partner/:id/resend-otp', authenticate, requirePartner, requireKyc, otpLimiter, ctrl.resendOtp);
+router.post('/partner/:id/request-otp-override', authenticate, requirePartner, requireKyc, ctrl.requestOtpOverride);
 router.post('/partner/:id/verify-otp', authenticate, requirePartner, requireKyc, otpLimiter, ctrl.verifyOtp);
 router.patch('/partner/:id/document', authenticate, requirePartner, requireKyc,
   visitPhotoUploader.fields([{ name: 'visitPhotos', maxCount: 10 }, { name: 'closureDocs', maxCount: 5 }]),

@@ -2,19 +2,32 @@ const { verifyWebhookSignature } = require('../../lib/razorpay');
 const { confirmPayment } = require('../escrow/escrow.service');
 const prisma = require('../../lib/prisma');
 const { sendServiceActivated, sendEscrowPaymentFailed } = require('../../lib/email');
-const { createNotification } = require('../../lib/notifications');
+const { createNotification, broadcastNotification } = require('../../lib/notifications');
 const logger = require('../../lib/logger');
 
+// The entire handler body is one try/catch, including signature verification
+// — this is a public, unauthenticated, internet-facing endpoint (it has to
+// be, to receive real Razorpay webhooks), so nothing in here may ever throw
+// past this function. A single malformed/missing header or an unexpected
+// payload shape must degrade to a clean error response, never an unhandled
+// promise rejection (which server.js treats as fatal and exits the process).
 async function razorpay(req, res) {
-  const signature = req.headers['x-razorpay-signature'];
-
-  if (!verifyWebhookSignature(req.rawBody, signature)) {
-    return res.status(400).json({ error: 'Invalid signature' });
-  }
-
-  const { event, payload } = req.body;
-
+  // Declared here (not via `const` inside the try block) so the catch
+  // block below can actually log which event failed — a `const` declared
+  // inside `try` is out of scope in `catch`, which previously meant any
+  // processing error threw a *second*, independent ReferenceError from
+  // inside the error handler itself, itself unhandled.
+  let event;
   try {
+    const signature = req.headers['x-razorpay-signature'];
+
+    if (!verifyWebhookSignature(req.rawBody, signature)) {
+      return res.status(400).json({ error: 'Invalid signature' });
+    }
+
+    let payload;
+    ({ event, payload } = req.body);
+
     if (event === 'payment.captured') {
       const { order_id: orderId, id: paymentId } = payload.payment.entity;
 
@@ -74,6 +87,18 @@ async function razorpay(req, res) {
 
       const escrow = await prisma.escrowTransaction.findUnique({ where: { razorpayOrderId: orderId } });
       if (escrow) {
+        // Only ever downgrade a still-pending escrow. payment.failed reports
+        // one attempt against this order_id; Razorpay webhook delivery can
+        // retry/redeliver and arrive out of order, so without this check a
+        // stale payment.failed arriving after a *different*, successful
+        // attempt was already confirmed (HELD) would silently corrupt it back
+        // to FAILED — hiding real captured money from release()/refund() and
+        // telling the buyer their successful payment failed.
+        if (escrow.status !== 'PAYMENT_PENDING') {
+          logger.warn('[RazorpayWebhook] payment.failed for a non-pending escrow — ignoring', { escrowId: escrow.id, status: escrow.status });
+          return res.json({ status: 'ok' });
+        }
+
         await prisma.escrowTransaction.update({
           where: { razorpayOrderId: orderId },
           data: { status: 'FAILED', failedAt: new Date() },
@@ -84,7 +109,7 @@ async function razorpay(req, res) {
           title: 'Token Advance Payment Failed',
           message: 'Your token advance payment could not be processed. Please retry from your dashboard.',
           type: 'PAYMENT_FAILED',
-          linkUrl: '/dashboard/leads',
+          linkUrl: `/user/inquiries/${escrow.leadId}`,
         });
 
         const buyer = await prisma.user.findUnique({ where: { id: escrow.buyerId }, select: { email: true } });
@@ -124,7 +149,7 @@ async function razorpay(req, res) {
           title: 'Token Advance Refunded',
           message: `Your token advance of ${amountRupees} has been refunded.`,
           type: 'PAYMENT_REFUNDED',
-          linkUrl: '/dashboard/leads',
+          linkUrl: `/user/inquiries/${escrow.leadId}`,
         });
       }
 
@@ -145,8 +170,38 @@ async function razorpay(req, res) {
     }
 
     if (event === 'transfer.settled') {
-      const { id: transferId } = payload.transfer.entity;
-      const escrow = await prisma.escrowTransaction.findFirst({ where: { razorpayTransferId: transferId } });
+      // `source` is the payment the transfer was made from — Razorpay's own
+      // record of a real, completed transfer, independent of whether our
+      // release() call's own DB write succeeded.
+      const { id: transferId, source: sourcePaymentId } = payload.transfer.entity;
+      let escrow = await prisma.escrowTransaction.findFirst({ where: { razorpayTransferId: transferId } });
+
+      // Reconciliation fallback: escrow.service.js's release() now claims
+      // RELEASED atomically *before* calling Razorpay (so the escrow can
+      // never be stuck showing HELD while money actually moved), but its
+      // final write — persisting razorpayTransferId itself — could still
+      // fail after a successful transfer. That escrow is unreachable by
+      // transferId above; razorpayPaymentId, however, is written back at
+      // confirmPayment time, long before any release, so it's always
+      // reliably present. This is the only remaining signal for that narrow
+      // failure window, so use it to find and backfill the record.
+      if (!escrow && sourcePaymentId) {
+        escrow = await prisma.escrowTransaction.findFirst({ where: { razorpayPaymentId: sourcePaymentId } });
+        if (escrow) {
+          const needsStatusFix = escrow.status !== 'RELEASED';
+          await prisma.escrowTransaction.update({
+            where: { id: escrow.id },
+            data: {
+              razorpayTransferId: transferId,
+              ...(needsStatusFix && { status: 'RELEASED', releasedAt: escrow.releasedAt || new Date() }),
+            },
+          });
+          logger.warn('[RazorpayWebhook] Reconciled escrow via transfer.settled — razorpayTransferId (and possibly status) was missing', {
+            transferId, escrowId: escrow.id, hadWrongStatus: needsStatusFix,
+          });
+        }
+      }
+
       if (escrow) {
         logger.info('[RazorpayWebhook] Escrow transfer settled', { transferId, escrowId: escrow.id });
         await createNotification({
@@ -154,7 +209,55 @@ async function razorpay(req, res) {
           title: 'Token Advance Transferred to Seller',
           message: 'The token advance for your property deal has been successfully transferred to the seller.',
           type: 'ESCROW_RELEASED',
-          linkUrl: '/dashboard/leads',
+          linkUrl: `/user/inquiries/${escrow.leadId}`,
+        });
+      }
+    }
+
+    // A RazorpayX payout created during release() returned success
+    // synchronously (so the escrow was already marked RELEASED) but then
+    // failed or was reversed afterward — the money didn't actually reach the
+    // seller/partner. There's no safe automatic recovery here (the seller's
+    // payout may or may not have already landed elsewhere), so this flags the
+    // escrow for manual review instead of silently leaving it RELEASED with
+    // no money moved, or guessing at a revert that could race a legitimate retry.
+    if (event === 'payout.failed' || event === 'payout.reversed') {
+      const { id: payoutId, status, status_details: statusDetails } = payload.payout.entity;
+      const escrow = await prisma.escrowTransaction.findFirst({
+        where: { OR: [{ razorpayPayoutId: payoutId }, { razorpayPartnerPayoutId: payoutId }] },
+      });
+
+      // Re-checking status in (RELEASED, HELD_PAYOUT_FAILED) rather than just
+      // RELEASED — a release() with both seller and partner payouts can have
+      // each leg fail independently. Without this, the first leg's failure
+      // flips status to HELD_PAYOUT_FAILED, and the second leg's own failure
+      // webhook would silently no-op instead of being recorded. The payoutId
+      // check in adminNote is what makes a duplicate delivery of the *same*
+      // webhook a no-op instead.
+      if (escrow && ['RELEASED', 'HELD_PAYOUT_FAILED'].includes(escrow.status) && !escrow.adminNote?.includes(payoutId)) {
+        const leg = escrow.razorpayPayoutId === payoutId ? 'seller' : 'partner';
+        const reason = statusDetails?.description || status;
+
+        await prisma.escrowTransaction.update({
+          where: { id: escrow.id },
+          data: {
+            status: 'HELD_PAYOUT_FAILED',
+            adminNote: `${escrow.adminNote ? `${escrow.adminNote} | ` : ''}${leg} payout ${status} (${payoutId}): ${reason} — needs manual review`,
+          },
+        });
+
+        const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
+        if (admins.length > 0) {
+          await broadcastNotification({
+            userIds: admins.map((a) => a.id),
+            title: 'Escrow payout failed',
+            message: `The ${leg} payout for an escrow of ₹${escrow.amount.toLocaleString('en-IN')} ${status === 'reversed' ? 'was reversed' : 'failed'}: ${reason}. Needs manual review.`,
+            type: 'ESCROW_PAYOUT_FAILED',
+          });
+        }
+
+        logger.error('[RazorpayWebhook] Escrow payout failed/reversed after release — flagged for manual review', {
+          payoutId, escrowId: escrow.id, leg, status, reason,
         });
       }
     }

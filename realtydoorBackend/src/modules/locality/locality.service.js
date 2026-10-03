@@ -1,5 +1,8 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
+const { withCache, cacheDel } = require('../../lib/cache');
+const CACHE_KEYS = require('../../lib/cacheKeys');
+const { buildLocalityReportPdf } = require('../../lib/pdfReport');
 
 async function getLocality(city, locality) {
   const insight = await prisma.localityInsight.findFirst({
@@ -13,12 +16,15 @@ async function getLocality(city, locality) {
 }
 
 async function upsertLocality(data, adminId) {
-  const { city, locality, ...rest } = data;
-  return prisma.localityInsight.upsert({
+  const { city, locality, dataAsOfDate, ...rest } = data;
+  const resolvedDataAsOfDate = dataAsOfDate ? new Date(dataAsOfDate) : new Date();
+  const saved = await prisma.localityInsight.upsert({
     where:  { city_locality: { city, locality } },
-    update: { ...rest, updatedByAdminId: adminId },
-    create: { city, locality, ...rest, updatedByAdminId: adminId },
+    update: { ...rest, dataAsOfDate: resolvedDataAsOfDate, updatedByAdminId: adminId },
+    create: { city, locality, ...rest, dataAsOfDate: resolvedDataAsOfDate, updatedByAdminId: adminId },
   });
+  cacheDel(CACHE_KEYS.CITIES_SUMMARY, CACHE_KEYS.localityPage(city, locality));
+  return saved;
 }
 
 async function listLocalities({ city } = {}, skip = 0, limit = 20) {
@@ -41,10 +47,103 @@ async function getLocalityById(id) {
 async function deleteLocality(id) {
   const insight = await prisma.localityInsight.findUnique({ where: { id } });
   if (!insight) throw new ApiError(404, 'Locality insight not found');
-  return prisma.localityInsight.delete({ where: { id } });
+  const deleted = await prisma.localityInsight.delete({ where: { id } });
+  cacheDel(CACHE_KEYS.CITIES_SUMMARY, CACHE_KEYS.localityPage(insight.city, insight.locality));
+  return deleted;
+}
+
+function pickBadge(property) {
+  if (property.isFeatured) return 'PREMIUM';
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  if (property.createdAt >= thirtyDaysAgo) return 'NEW';
+  return null;
+}
+
+async function getLocalityPage(city, locality) {
+  return withCache(CACHE_KEYS.localityPage(city, locality), 900, () => buildLocalityPage(city, locality));
+}
+
+async function buildLocalityPage(city, locality) {
+  const insight = await prisma.localityInsight.findFirst({
+    where: {
+      city:     { equals: city,     mode: 'insensitive' },
+      locality: { equals: locality, mode: 'insensitive' },
+    },
+  });
+  if (!insight) throw new ApiError(404, 'No locality data found');
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const liveWhere = { city: insight.city, locality: insight.locality, publishStatus: 'APPROVED' };
+
+  const [total, addedThisWeek, topPicks] = await Promise.all([
+    prisma.property.count({ where: liveWhere }),
+    prisma.property.count({ where: { ...liveWhere, createdAt: { gte: sevenDaysAgo } } }),
+    prisma.property.findMany({
+      where: { ...liveWhere, isVerified: true },
+      orderBy: [{ isFeatured: 'desc' }, { createdAt: 'desc' }],
+      take: 6,
+    }),
+  ]);
+
+  return {
+    city: insight.city,
+    locality: insight.locality,
+    subtitle: insight.subtitle ?? null,
+    snapshot: {
+      localityScore: insight.localityScore ?? null,
+      marketStage: insight.marketStage ?? null,
+      rentalDemand: insight.rentalDemand ?? null,
+      infrastructureStrength: insight.infrastructureStrength ?? null,
+      bestFor: insight.bestFor,
+    },
+    stats: {
+      avgPricePerSqftPaise: insight.avgPricePerSqftPaise,
+      minPricePerSqftPaise: insight.minPricePerSqftPaise ?? null,
+      maxPricePerSqftPaise: insight.maxPricePerSqftPaise ?? null,
+      priceChangeLastMonthPct: insight.priceChangeLastMonthPct ?? null,
+      medianPricePaise: insight.medianPricePaise ?? null,
+      medianPricePropertyType: insight.medianPricePropertyType ?? null,
+      avgRentYieldPct: insight.avgRentYieldPct ?? null,
+      inventoryLive: { total, addedThisWeek },
+    },
+    priceTrends: insight.priceTrends ?? null,
+    propertyMix: insight.propertyMix ?? null,
+    microMarkets: insight.microMarkets ?? null,
+    keyInfrastructure: insight.keyInfrastructure ?? null,
+    connectivity: insight.connectivity ?? null,
+    infrastructureProjects: insight.infrastructureProjects ?? null,
+    prosAndCons: insight.prosAndCons ?? null,
+    investmentScore: insight.investmentScore ?? null,
+    buyVsRent: insight.buyVsRent ?? null,
+    faqs: insight.faqs ?? null,
+    topVerifiedPicks: topPicks.map((p) => ({
+      badge: pickBadge(p),
+      bedroomConfig: p.bhk ? `${p.bhk}BHK` : null,
+      project: p.title,
+      locality: p.locality,
+      price: p.price,
+      area: p.carpetArea ?? p.builtUpArea ?? p.plotArea ?? null,
+      areaUnit: 'sqft',
+      facing: p.facing ?? null,
+      floorNumber: p.floorNumber ?? null,
+      totalFloors: p.totalFloors ?? null,
+      slug: p.slug,
+    })),
+    dataAsOfDate: insight.dataAsOfDate,
+    updatedAt: insight.updatedAt,
+  };
+}
+
+async function getLocalityReportPdf(city, locality) {
+  const page = await getLocalityPage(city, locality);
+  return buildLocalityReportPdf(page);
 }
 
 async function getCitiesSummary() {
+  return withCache(CACHE_KEYS.CITIES_SUMMARY, 900, buildCitiesSummary);
+}
+
+async function buildCitiesSummary() {
   const [localities, properties] = await Promise.all([
     prisma.localityInsight.findMany({
       select: { city: true, avgPricePerSqftPaise: true, priceChangeLastMonthPct: true },
@@ -82,4 +181,7 @@ async function getCitiesSummary() {
     .sort((a, b) => b.listingsCount - a.listingsCount);
 }
 
-module.exports = { getLocality, listLocalities, getLocalityById, upsertLocality, deleteLocality, getCitiesSummary };
+module.exports = {
+  getLocality, getLocalityPage, listLocalities, getLocalityById, upsertLocality, deleteLocality,
+  getCitiesSummary, getLocalityReportPdf,
+};

@@ -9,7 +9,7 @@ const envSchema = z.object({
   RAZORPAY_KEY_ID: z.string().min(1),
   RAZORPAY_KEY_SECRET: z.string().min(1),
   RAZORPAY_WEBHOOK_SECRET: z.string().min(1),
-  RAZORPAY_ROUTE_ACCOUNT_ID: z.string().min(1),
+  RAZORPAYX_ACCOUNT_NUMBER: z.string().min(1),
   WATI_API_ENDPOINT: z.string().url(),
   WATI_ACCESS_TOKEN: z.string().min(1),
   WATI_WEBHOOK_TOKEN: z.string().optional(),
@@ -20,9 +20,19 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().min(1),
   EMAIL_FROM: z.string().email(),
   FRONTEND_URL: z.string().url(),
+  REDIS_URL: z.string().optional(),
   OTP_EXPIRY_MINUTES: z.string().default('120'),
   OTP_MAX_ATTEMPTS: z.string().default('3'),
-});
+  OTP_HASH_SECRET: z.string().min(16, 'OTP_HASH_SECRET must be at least 16 characters'),
+  DEV_EXPOSE_OTP: z.string().optional(),
+  DEV_API_KEY: z.string().optional(),
+}).refine(
+  (env) => !(env.NODE_ENV === 'production' && env.DEV_EXPOSE_OTP === 'true'),
+  { message: 'DEV_EXPOSE_OTP must not be set to "true" in production — it echoes real OTP codes in API responses.', path: ['DEV_EXPOSE_OTP'] }
+).refine(
+  (env) => !(env.NODE_ENV === 'production' && env.DEV_API_KEY),
+  { message: 'DEV_API_KEY must not be set in production — it is a full auth bypass with no password/signature check.', path: ['DEV_API_KEY'] }
+);
 
 function validateEnv() {
   const result = envSchema.safeParse(process.env);
