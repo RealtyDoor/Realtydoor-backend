@@ -25,13 +25,28 @@ const USER2_CLERK_ID    = 'user_seed_user_002';
 
 const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 
+// email is no longer a Prisma unique selector — uniqueness moved to a partial
+// index (scripts/createEmailUniqueIndex.js) so a soft-deleted row doesn't
+// reserve an address forever, and dropping @unique also drops email from
+// UserWhereUniqueInput. So prisma.user.upsert({ where: { email } }) is no
+// longer valid; this keeps email as the seed's identity key via an explicit
+// find-then-write. Deliberately still keyed on email, not clerkId: the Clerk
+// IDs above are meant to be swapped for real ones from your own dashboard,
+// and matching on email is what lets a re-seed repair the clerkId on rows
+// that already exist instead of trying to create duplicates.
+async function upsertUserByEmail({ email, update, create }) {
+  const existing = await prisma.user.findFirst({ where: { email } });
+  if (existing) return prisma.user.update({ where: { id: existing.id }, data: update });
+  return prisma.user.create({ data: create });
+}
+
 async function main() {
   console.log('🌱  Starting seed...\n');
 
   // ── 1. Users ──────────────────────────────────────────────────────────────
 
-  const admin = await prisma.user.upsert({
-    where:  { email: 'admin@realtydoor.com' },
+  const admin = await upsertUserByEmail({
+    email:  'admin@realtydoor.com',
     update: { clerkId: ADMIN_CLERK_ID, role: 'ADMIN' },
     create: {
       clerkId: ADMIN_CLERK_ID, name: 'Admin User',
@@ -42,8 +57,8 @@ async function main() {
   console.log(`✅  Admin    : ${admin.email}  (id: ${admin.id})`);
 
   // Partner 1 — KYC verified, active listings, settings + bank seeded
-  const partner = await prisma.user.upsert({
-    where:  { email: 'partner@realtydoor.com' },
+  const partner = await upsertUserByEmail({
+    email:  'partner@realtydoor.com',
     update: {
       clerkId: PARTNER_CLERK_ID,
       visitDays: ['Mon','Tue','Wed','Thu','Fri','Sat'],
@@ -85,8 +100,8 @@ async function main() {
   console.log(`✅  Partner1 : ${partner.email}  (id: ${partner.id})`);
 
   // Partner 2 — KYC pending (admin /kyc queue)
-  const partner2 = await prisma.user.upsert({
-    where:  { email: 'partner2@realtydoor.com' },
+  const partner2 = await upsertUserByEmail({
+    email:  'partner2@realtydoor.com',
     update: { clerkId: PARTNER2_CLERK_ID },
     create: {
       clerkId: PARTNER2_CLERK_ID, name: 'Priya Sharma',
@@ -101,8 +116,8 @@ async function main() {
   console.log(`✅  Partner2 : ${partner2.email}  (id: ${partner2.id})`);
 
   // Buyer 1
-  const user = await prisma.user.upsert({
-    where:  { email: 'user@realtydoor.com' },
+  const user = await upsertUserByEmail({
+    email:  'user@realtydoor.com',
     update: { clerkId: USER_CLERK_ID },
     create: {
       clerkId: USER_CLERK_ID, name: 'Suresh Mehta',
@@ -113,8 +128,8 @@ async function main() {
   console.log(`✅  User1    : ${user.email}  (id: ${user.id})`);
 
   // Buyer 2
-  const user2 = await prisma.user.upsert({
-    where:  { email: 'user2@realtydoor.com' },
+  const user2 = await upsertUserByEmail({
+    email:  'user2@realtydoor.com',
     update: { clerkId: USER2_CLERK_ID },
     create: {
       clerkId: USER2_CLERK_ID, name: 'Anita Joshi',

@@ -133,7 +133,9 @@ async function createAccount({ name, email, phone, isNRI = false, marketingOptIn
 // ─── B3: signup / login by phone OTP ──────────────────────────────────────────
 
 async function signupOtp({ name, email, phone, isNRI, marketingOptIn, role }) {
-  const existingDb = await prisma.user.findFirst({ where: { OR: [{ email }, { phone }] } });
+  // Scoped to active rows only — a soft-deleted account's old email/phone
+  // must not permanently block that same person from signing up again.
+  const existingDb = await prisma.user.findFirst({ where: { OR: [{ email }, { phone }], deletedAt: { isSet: false } } });
   if (existingDb) {
     throw new ApiError(409, 'An account with this email or phone already exists.', { code: 'ALREADY_REGISTERED' });
   }
@@ -169,7 +171,12 @@ async function signupVerify({ phone, code }) {
 }
 
 async function loginOtp({ phone }) {
-  const user = await prisma.user.findFirst({ where: { phone } });
+  // Same deletedAt scoping as loginVerify — without it, a soft-deleted
+  // user's number still triggered a real WhatsApp OTP send that could never
+  // actually be used (loginVerify rejects the account either way), wasting
+  // the message and surfacing a confusing "invalid code" error instead of
+  // a clean "no account" one.
+  const user = await prisma.user.findFirst({ where: { phone, deletedAt: { isSet: false } } });
   if (!user) throw new ApiError(404, 'No account found for this number', { code: 'ACCOUNT_NOT_FOUND' });
   return otpAuth.createAndSendOtp({ phone, purpose: 'LOGIN' });
 }
@@ -240,7 +247,10 @@ async function syncUserByClerkId(clerkId, clerkUser) {
 
   let existing = await prisma.user.findUnique({ where: { clerkId } });
   if (!existing && email) {
-    existing = await prisma.user.findUnique({ where: { email } });
+    // email is no longer @unique (see user.prisma) — findFirst, not
+    // findUnique. Scoped to active rows only: a soft-deleted account's old
+    // email must never block a brand-new Google sign-in with that address.
+    existing = await prisma.user.findFirst({ where: { email, deletedAt: { isSet: false } } });
   }
 
   // Email already belongs to a DIFFERENT Clerk identity — collision (B5).

@@ -228,7 +228,7 @@ New-account signup, step 1. Normalizes `phone` to E.164, rejects if the email or
 { "success": true, "message": "OTP sent via WhatsApp", "data": { "expiresAt": "2026-09-24T10:10:00.000Z" } }
 ```
 
-**Errors:** `409 ALREADY_REGISTERED` · `429 OTP_SEND_LIMIT` / `OTP_RESEND_COOLDOWN`.
+**Errors:** `409 ALREADY_REGISTERED` (an *active* account already has this email or phone — a soft-deleted account's old email/phone doesn't block a fresh signup) · `429 OTP_SEND_LIMIT` / `OTP_RESEND_COOLDOWN`.
 
 ---
 
@@ -279,7 +279,7 @@ Existing-account login, step 1.
 { "success": true, "message": "OTP sent via WhatsApp", "data": { "expiresAt": "2026-09-24T10:10:00.000Z" } }
 ```
 
-**Errors:** `404 ACCOUNT_NOT_FOUND` — no user has this phone; the frontend should redirect to signup.
+**Errors:** `404 ACCOUNT_NOT_FOUND` — no *active* user has this phone (a soft-deleted account's old number reports this too, same as if it never existed, rather than sending a code that can never be used) — the frontend should redirect to signup.
 
 ---
 

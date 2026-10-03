@@ -7,7 +7,13 @@ model User {
   clerkId             String    @unique
   refCode             String?   @unique // RD-U-000123 — assigned by lib/refCode.js at creation; backfilled for pre-existing rows via scripts/backfillRefCodes.js, so every row now has one (every future row gets one at creation too)
   name                String
-  email               String    @unique
+  // Not @unique here — soft-deleted rows (deletedAt set) must not permanently
+  // reserve an email forever, or the same person could never sign up again
+  // after being "deleted". Enforced instead by a partial unique index
+  // (scripts/createEmailUniqueIndex.js) scoped to deletedAt: null, same
+  // pattern as `phone` below. findUnique({where:{email}}) no longer works
+  // against this field — use findFirst.
+  email               String
   phone               String?
   phoneVerifiedAt     DateTime?
   phoneVerified       Boolean   @default(false)

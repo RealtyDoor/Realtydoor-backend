@@ -15,7 +15,9 @@ async function authenticate(req, res, next) {
       req.headers['x-dev-api-key'] === process.env.DEV_API_KEY
     ) {
       const email = req.headers['x-dev-user-email'];
-      const dbUser = await prisma.user.findUnique({ where: { email } });
+      // email is no longer @unique (see user.prisma) — findUnique no longer
+      // works against it; findFirst does the same lookup here.
+      const dbUser = await prisma.user.findFirst({ where: { email } });
       if (!dbUser) throw new ApiError(401, `Dev bypass: no user with email ${email}`);
       req.user = { ...dbUser, onboardingComplete: computeOnboardingComplete(dbUser) };
       return next();
