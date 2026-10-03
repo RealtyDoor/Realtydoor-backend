@@ -173,7 +173,7 @@ async function loginOtp({ phone }) {
 async function loginVerify({ phone, code }) {
   await otpAuth.verifyOtp({ phone, purpose: 'LOGIN', code });
 
-  const user = await prisma.user.findFirst({ where: { phone } });
+  const user = await prisma.user.findFirst({ where: { phone, deletedAt: null } });
   if (!user) throw new ApiError(400, 'Invalid or expired code.', { code: 'OTP_INVALID' });
 
   if (user.isSuspended) {

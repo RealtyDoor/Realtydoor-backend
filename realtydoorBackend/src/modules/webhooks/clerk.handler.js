@@ -77,10 +77,16 @@ async function clerkWebhook(req, res) {
     }
 
     if (type === 'user.deleted') {
+      // Soft-delete, not a real delete — Property.partner, Notification.user,
+      // and PartnerSupportTicket.partner are required relations with no
+      // onDelete rule, so hard-deleting a user who owned any of those left a
+      // dangling foreign key: every admin query that included the relation
+      // 500'd ("Field partner is required ... got null"). The row stays, just
+      // flagged, so every existing foreign key stays valid.
       const user = await prisma.user.findUnique({ where: { clerkId: data.id } });
-      if (user) {
-        await prisma.user.delete({ where: { id: user.id } });
-        logger.info('[ClerkWebhook] user.deleted synced', { clerkId: data.id });
+      if (user && !user.deletedAt) {
+        await prisma.user.update({ where: { id: user.id }, data: { deletedAt: new Date() } });
+        logger.info('[ClerkWebhook] user.deleted synced (soft-deleted)', { clerkId: data.id });
       }
     }
   } catch (err) {

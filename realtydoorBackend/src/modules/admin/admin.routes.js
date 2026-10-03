@@ -6,9 +6,10 @@ const notifCtrl = require('../notifications/notifications.controller');
 const leadsCtrl = require('../leads/leads.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
+const { perUserLimiter } = require('../../middleware/rateLimiter');
 const { videoTourUploader } = require('../../lib/fileUpload');
 
-router.use(authenticate, requireAdmin);
+router.use(authenticate, requireAdmin, perUserLimiter);
 
 // Lead management
 router.get('/leads',        ctrl.getLeads);

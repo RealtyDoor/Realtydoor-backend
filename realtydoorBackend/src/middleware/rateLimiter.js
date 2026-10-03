@@ -6,10 +6,38 @@ const BASE = {
   skip: () => process.env.NODE_ENV === 'test',
 };
 
+// A header/polling-style endpoint the frontend hits on effectively every page
+// load to render a badge count — never worth rate-limiting on its own, at
+// either the IP or the per-user layer below.
+const skipUnreadCount = (req) => process.env.NODE_ENV === 'test' || req.path.endsWith('/unread-count');
+
+// IP-keyed, app-wide outer safety net (app.js mounts this on all of /api).
+// Raised substantially from the old max: 100 — behind a proxy/SSR layer that
+// forwards every browser's request through one outbound IP (e.g. a Next.js
+// server making server-side calls to this API), every real visitor shared
+// that single IP's budget, so a handful of active users could 429 each other
+// on routine polling (unread-count was the one actually observed in the
+// browser). Authenticated routes get the real, meaningful limit from
+// perUserLimiter below instead — this is just the outer DDoS/scrape backstop.
 const defaultLimiter = rateLimit({
   ...BASE,
+  skip: skipUnreadCount,
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 1000,
+  message: { success: false, message: 'Too many requests, please try again later.' },
+});
+
+// Keyed by the authenticated user, not the connecting IP — apply this *after*
+// `authenticate` in a router (req.user must already be set). Mounted on the
+// big authenticated routers (admin/users/partners/disputes/notifications)
+// so many real users behind the same proxy IP each get their own budget,
+// instead of all sharing defaultLimiter's one IP-keyed bucket.
+const perUserLimiter = rateLimit({
+  ...BASE,
+  skip: skipUnreadCount,
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  keyGenerator: (req) => req.user?.id || req.ip,
   message: { success: false, message: 'Too many requests, please try again later.' },
 });
 
@@ -78,6 +106,6 @@ const perUserPhoneOtpLimiter = rateLimit({
 });
 
 module.exports = {
-  defaultLimiter, otpLimiter, authLimiter, uploadLimiter, searchLimiter,
+  defaultLimiter, perUserLimiter, otpLimiter, authLimiter, uploadLimiter, searchLimiter,
   otpSendLimiter, otpVerifyLimiter, perUserPhoneOtpLimiter,
 };

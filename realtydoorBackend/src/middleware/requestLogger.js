@@ -36,6 +36,16 @@ const REDACTED_KEYS = new Set([
   'accessToken',
   'refreshToken',
   'kycDocumentUrls',  // don't leak Cloudinary signed URLs in logs
+  // PII — every request/response body routinely carries these (contact
+  // messages, leads, user profiles), and this logger ran unredacted until
+  // now: real names/emails/phones/addresses were landing in plain log output.
+  'email',
+  'phone',
+  'name',
+  'address',
+  'buyerEmail',
+  'buyerPhone',
+  'buyerName',
 ]);
 
 // Max characters of response/request body to log before truncating

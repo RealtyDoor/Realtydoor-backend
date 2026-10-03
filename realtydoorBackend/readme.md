@@ -35,6 +35,8 @@ npm run db:seed
 npm run dev
 ```
 
+`npm install` regenerates the Prisma client automatically (`postinstall`). After pulling changes that touch anything in `prisma/schema/`, run `npm run db:generate` yourself — a stale client from before your last `npm install` silently returns wrong results for new fields/relations/enum values instead of erroring, which is easy to misdiagnose as a backend bug.
+
 ## Project Structure
 
 ```

@@ -438,7 +438,10 @@ async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields 
 // ─── USER MANAGEMENT ─────────────────────────────────────────────────────────
 
 async function getAllUsers(filters, skip, limit) {
-  const where = {};
+  // Soft-deleted rows (clerk.handler.js's user.deleted) are kept only to
+  // preserve foreign keys on records they used to own — they should never
+  // show up as if still a real account.
+  const where = { deletedAt: null };
   if (filters.role)   where.role = filters.role;
   if (filters.search) where.OR   = [
     { name:    { contains: filters.search, mode: 'insensitive' } },
@@ -825,6 +828,7 @@ async function getUserByIdAdmin(userId) {
       profileImageUrl: true, websiteUrl: true,
       isPremiumPartner: true, premiumValidUntil: true,
       kycStatus: true, kycRejectionNote: true, kycVerifiedAt: true,
+      isSuspended: true, deletedAt: true,
       createdAt: true, updatedAt: true,
     },
   });

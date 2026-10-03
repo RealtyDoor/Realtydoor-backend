@@ -65,6 +65,18 @@ model User {
   suspendedAt   DateTime?
   suspendReason String?
 
+  // Soft-delete — Property.partner, Notification.user, and
+  // PartnerSupportTicket.partner are all required relations with no
+  // onDelete rule (Mongo/Prisma has none), so a hard prisma.user.delete()
+  // on a user who owns any of those left a dangling foreign key that 500'd
+  // every admin query trying to include it ("Field partner is required ...
+  // got null"). clerk.handler.js's user.deleted handler and
+  // jobs/cleanupIncompleteSignups.js both set this instead of deleting now.
+  // Known limitation: email/clerkId stay @unique and are never freed, so the
+  // same person can't sign up again with the same email after being
+  // "deleted" — not solved here, flagging for whoever picks that up.
+  deletedAt DateTime?
+
   // Onboarding consent (compliance audit trail)
   termsAcceptedAt   DateTime?
   privacyAcceptedAt DateTime?
@@ -119,4 +131,5 @@ model User {
   supportTickets    PartnerSupportTicket[]
 
   @@index([phone])
+  @@index([deletedAt])
 }

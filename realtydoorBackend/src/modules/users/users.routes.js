@@ -5,10 +5,10 @@ const { requireUser } = require('../../middleware/requireRole');
 const { requireOnboarded } = require('../../middleware/requireOnboarded');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { userDocUploader } = require('../../lib/fileUpload');
-const { otpLimiter } = require('../../middleware/rateLimiter');
+const { otpLimiter, perUserLimiter } = require('../../middleware/rateLimiter');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 
-router.use(authenticate, requireUser);
+router.use(authenticate, requireUser, perUserLimiter);
 
 // requireOnboarded (B6) gates everything below except profile edits and the
 // phone-verification endpoints themselves — a USER account with no verified

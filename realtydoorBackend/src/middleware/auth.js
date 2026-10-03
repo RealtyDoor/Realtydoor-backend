@@ -54,6 +54,10 @@ async function authenticate(req, res, next) {
       return next();
     }
 
+    // A row with deletedAt set is kept only so existing foreign keys
+    // (properties, leads, tickets they owned) stay valid — it must never be
+    // usable to authenticate again, same as if the row were actually gone.
+    if (dbUser.deletedAt) throw new ApiError(401, 'Invalid token');
     if (dbUser.isSuspended) throw new ApiError(403, 'Your account has been suspended. Contact support@realtydoor.in');
 
     // Trust the DB role, never the token's — a Clerk JWT Template can embed

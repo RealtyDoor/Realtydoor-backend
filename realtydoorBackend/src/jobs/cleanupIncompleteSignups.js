@@ -19,7 +19,7 @@ function start() {
     try {
       const cutoff = new Date(Date.now() - INCOMPLETE_SIGNUP_AGE_MS);
       const stuck = await prisma.user.findMany({
-        where: { role: 'USER', phoneVerified: false, createdAt: { lte: cutoff } },
+        where: { role: 'USER', phoneVerified: false, createdAt: { lte: cutoff }, deletedAt: null },
         select: { id: true, clerkId: true, email: true },
       });
 
@@ -36,8 +36,11 @@ function start() {
             continue;
           }
         }
-        await prisma.user.delete({ where: { id: user.id } }).catch((err) => {
-          logger.error('[CleanupIncompleteSignups] DB delete failed after Clerk delete', {
+        // Soft-delete, same as clerk.handler.js's user.deleted — these stubs
+        // normally own nothing, but a hard delete still risks a dangling
+        // foreign key if one somehow picked up a record before the 24h cutoff.
+        await prisma.user.update({ where: { id: user.id }, data: { deletedAt: new Date() } }).catch((err) => {
+          logger.error('[CleanupIncompleteSignups] DB soft-delete failed after Clerk delete', {
             userId: user.id, error: err.message,
           });
         });

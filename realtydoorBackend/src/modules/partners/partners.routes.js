@@ -5,9 +5,9 @@ const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
 const { kycDocUploader, visitPhotoUploader, partnerProfilePhotoUploader } = require('../../lib/fileUpload');
-const { uploadLimiter, otpLimiter } = require('../../middleware/rateLimiter');
+const { uploadLimiter, otpLimiter, perUserLimiter } = require('../../middleware/rateLimiter');
 
-router.use(authenticate, requirePartner);
+router.use(authenticate, requirePartner, perUserLimiter);
 
 // KYC submission (no KYC required to submit it)
 router.post('/kyc', uploadLimiter, kycDocUploader.array('documents', 5), ctrl.submitKyc);
