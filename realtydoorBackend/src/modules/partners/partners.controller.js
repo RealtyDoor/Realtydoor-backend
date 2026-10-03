@@ -11,6 +11,13 @@ const ApiError = require('../../utils/ApiError');
 
 const VALID_LISTING_STATUSES = ['PENDING_APPROVAL', 'APPROVED', 'REJECTED'];
 
+async function recordKycConsent(req, res, next) {
+  try {
+    const result = await service.recordKycConsent(req.user.id);
+    success(res, result, 'KYC consent recorded');
+  } catch (err) { next(err); }
+}
+
 async function submitKyc(req, res, next) {
   try {
     const documentUrls = req.files?.map((f) => f.path) || [];
@@ -135,7 +142,7 @@ async function createSupportTicket(req, res, next) {
 }
 
 module.exports = {
-  submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
+  recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
   getFinanceSummary, getAnalytics, getRatings,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount,

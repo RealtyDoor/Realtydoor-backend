@@ -19,7 +19,9 @@ function start() {
     try {
       const cutoff = new Date(Date.now() - INCOMPLETE_SIGNUP_AGE_MS);
       const stuck = await prisma.user.findMany({
-        where: { role: 'USER', phoneVerified: false, createdAt: { lte: cutoff }, deletedAt: null },
+        // isSet: false, not deletedAt: null — every pre-existing row has the
+        // field missing entirely, which a plain null filter does not match.
+        where: { role: 'USER', phoneVerified: false, createdAt: { lte: cutoff }, deletedAt: { isSet: false } },
         select: { id: true, clerkId: true, email: true },
       });
 

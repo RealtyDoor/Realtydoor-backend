@@ -59,6 +59,7 @@ model User {
   kycDocumentUrls  String[]
   kycRejectionNote String?
   kycVerifiedAt    DateTime?
+  kycConsentAt     DateTime? // POST /partner/kyc/consent — previously had nowhere to be recorded
 
   // Suspension (admin-managed)
   isSuspended   Boolean   @default(false)

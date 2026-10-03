@@ -10,6 +10,7 @@ const { uploadLimiter, otpLimiter, perUserLimiter } = require('../../middleware/
 router.use(authenticate, requirePartner, perUserLimiter);
 
 // KYC submission (no KYC required to submit it)
+router.post('/kyc/consent', ctrl.recordKycConsent);
 router.post('/kyc', uploadLimiter, kycDocUploader.array('documents', 5), ctrl.submitKyc);
 
 // Leads (KYC required)

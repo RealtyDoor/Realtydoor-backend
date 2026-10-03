@@ -44,7 +44,7 @@ async function createSignInToken(clerkId) {
 
 // ─── B4: account creation (Clerk + DB, one function, all-or-nothing) ─────────
 
-async function createAccount({ name, email, phone, isNRI = false, marketingOptIn = false }) {
+async function createAccount({ name, email, phone, isNRI = false, marketingOptIn = false, role = 'USER' }) {
   const [firstName, ...rest] = name.trim().split(/\s+/);
   const lastName = rest.join(' ') || undefined;
 
@@ -56,7 +56,7 @@ async function createAccount({ name, email, phone, isNRI = false, marketingOptIn
       password: generateStrongPassword(),
       firstName,
       lastName,
-      publicMetadata: { role: 'USER', phone },
+      publicMetadata: { role, phone },
     });
   } catch (err) {
     logger.error('[createAccount] Clerk user creation failed', { email, error: err.message });
@@ -78,7 +78,7 @@ async function createAccount({ name, email, phone, isNRI = false, marketingOptIn
         name,
         email,
         phone,
-        role: 'USER',
+        role,
         phoneVerified: true,
         phoneVerifiedAt: now,
         emailVerified,
@@ -132,7 +132,7 @@ async function createAccount({ name, email, phone, isNRI = false, marketingOptIn
 
 // ─── B3: signup / login by phone OTP ──────────────────────────────────────────
 
-async function signupOtp({ name, email, phone, isNRI, marketingOptIn }) {
+async function signupOtp({ name, email, phone, isNRI, marketingOptIn, role }) {
   const existingDb = await prisma.user.findFirst({ where: { OR: [{ email }, { phone }] } });
   if (existingDb) {
     throw new ApiError(409, 'An account with this email or phone already exists.', { code: 'ALREADY_REGISTERED' });
@@ -146,7 +146,7 @@ async function signupOtp({ name, email, phone, isNRI, marketingOptIn }) {
   return otpAuth.createAndSendOtp({
     phone,
     purpose: 'SIGNUP',
-    payload: { name, email, isNRI, marketingOptIn },
+    payload: { name, email, isNRI, marketingOptIn, role },
   });
 }
 
@@ -161,6 +161,10 @@ async function signupVerify({ phone, code }) {
     phone,
     isNRI: !!payload.isNRI,
     marketingOptIn: !!payload.marketingOptIn,
+    // Old OTP payloads from before this field existed have no `role` at
+    // all — default to 'USER' so an in-flight signup from just before a
+    // deploy doesn't fail rather than silently becoming a partner.
+    role: payload.role === 'PARTNER' ? 'PARTNER' : 'USER',
   });
 }
 
@@ -173,13 +177,21 @@ async function loginOtp({ phone }) {
 async function loginVerify({ phone, code }) {
   await otpAuth.verifyOtp({ phone, purpose: 'LOGIN', code });
 
-  const user = await prisma.user.findFirst({ where: { phone, deletedAt: null } });
+  // deletedAt: null as a Prisma/Mongo filter matches only an *explicit* null —
+  // every pre-existing row has the field missing entirely (added after they
+  // were created), which that filter does NOT match, so it would have 400'd
+  // every real user's login. isSet: false matches "missing OR never deleted".
+  const user = await prisma.user.findFirst({ where: { phone, deletedAt: { isSet: false } } });
   if (!user) throw new ApiError(400, 'Invalid or expired code.', { code: 'OTP_INVALID' });
 
   if (user.isSuspended) {
     throw new ApiError(403, 'Your account has been suspended. Contact support@realtydoor.in');
   }
-  if (user.role !== 'USER') {
+  // USER and PARTNER both sign in through this phone flow — a USER who later
+  // upgrades to PARTNER (POST /auth/set-role, or direct partner signup below)
+  // otherwise lost phone sign-in entirely and had to use Google only. ADMIN
+  // stays blocked here deliberately — no phone-login path for that role.
+  if (user.role === 'ADMIN') {
     throw new ApiError(403, `This account is registered as ${user.role}. Please use the correct portal to sign in.`, {
       code: 'WRONG_PORTAL',
       role: user.role,

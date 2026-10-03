@@ -2,6 +2,24 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { createNotification } = require('../../lib/notifications');
 
+// Previously had no endpoint at all to record this — KYC documents could be
+// submitted with no consent ever stamped anywhere. Idempotent: re-calling
+// after consent is already recorded just returns the original timestamp
+// rather than overwriting it, so the recorded time always reflects when
+// consent was first given.
+async function recordKycConsent(partnerId) {
+  const user = await prisma.user.findUnique({ where: { id: partnerId }, select: { kycConsentAt: true } });
+  if (!user) throw new ApiError(404, 'User not found');
+  if (user.kycConsentAt) return { kycConsentAt: user.kycConsentAt };
+
+  const updated = await prisma.user.update({
+    where: { id: partnerId },
+    data: { kycConsentAt: new Date() },
+    select: { kycConsentAt: true },
+  });
+  return updated;
+}
+
 async function submitKyc(partnerId, documentUrls) {
   if (!documentUrls || documentUrls.length === 0) throw new ApiError(400, 'At least one KYC document is required');
 
@@ -292,7 +310,7 @@ async function getPartnerAnalytics(partnerId) {
 }
 
 module.exports = {
-  submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
+  recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
   getFinanceSummary, getRatings,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount,

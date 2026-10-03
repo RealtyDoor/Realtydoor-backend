@@ -9,6 +9,11 @@ const signupOtpSchema = z.object({
   phone: phoneField,
   isNRI: z.boolean().optional().default(false),
   marketingOptIn: z.boolean().optional().default(false),
+  // Lets this same signup flow create a PARTNER account directly, instead of
+  // every partner having to sign up as USER first and self-upgrade via
+  // POST /auth/set-role. ADMIN is deliberately not a valid value here — that
+  // role is never self-assignable at signup.
+  role: z.enum(['USER', 'PARTNER']).optional().default('USER'),
 });
 
 const signupVerifySchema = z.object({

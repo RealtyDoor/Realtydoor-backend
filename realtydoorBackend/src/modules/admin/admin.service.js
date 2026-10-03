@@ -440,8 +440,11 @@ async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields 
 async function getAllUsers(filters, skip, limit) {
   // Soft-deleted rows (clerk.handler.js's user.deleted) are kept only to
   // preserve foreign keys on records they used to own — they should never
-  // show up as if still a real account.
-  const where = { deletedAt: null };
+  // show up as if still a real account. isSet: false, not deletedAt: null —
+  // every pre-existing row has the field missing entirely (added after they
+  // were created), and a plain `null` filter only matches an *explicit*
+  // null, so it would have matched zero rows and emptied this whole list.
+  const where = { deletedAt: { isSet: false } };
   if (filters.role)   where.role = filters.role;
   if (filters.search) where.OR   = [
     { name:    { contains: filters.search, mode: 'insensitive' } },
