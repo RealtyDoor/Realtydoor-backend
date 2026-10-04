@@ -1,5 +1,5 @@
 const { success, created } = require('../../utils/ApiResponse');
-const { submitLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema } = require('./leads.validator');
+const { submitLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema, updateVisitOutcomeSchema, partnerAddLeadSchema, closeLeadSchema } = require('./leads.validator');
 const service = require('./leads.service');
 
 async function submit(req, res, next) {
@@ -49,7 +49,7 @@ async function requestOtpOverride(req, res, next) {
 async function verifyOtp(req, res, next) {
   try {
     const { otp } = verifyOtpSchema.parse(req.body);
-    const result = await service.verifyOtp(req.params.id, req.user.id, otp);
+    const result = await service.verifyOtp(req.params.id, req.user.id, otp, req.ip);
     success(res, result);
   } catch (err) { next(err); }
 }
@@ -60,6 +60,11 @@ async function uploadDocs(req, res, next) {
     const fileUrls = {
       visitPhotos: req.files?.visitPhotos?.map((f) => f.path) || [],
       closureDocs: req.files?.closureDocs?.map((f) => f.path) || [],
+      // Single-file slots — a bare path or undefined, NOT an array. An empty
+      // array is truthy, which would have stamped allocationLetterUploadedAt
+      // on every document upload whether or not a letter was attached.
+      allocationLetter: req.files?.allocationLetter?.[0]?.path,
+      tokenReceipt:     req.files?.tokenReceipt?.[0]?.path,
     };
     const lead = await service.uploadDocs(req.params.id, req.user.id, data, fileUrls);
     success(res, lead, 'Documentation uploaded');
@@ -68,7 +73,7 @@ async function uploadDocs(req, res, next) {
 
 async function closeLead(req, res, next) {
   try {
-    const result = await service.closeLead(req.params.id, req.user.id);
+    const result = await service.closeLead(req.params.id, req.user.id, closeLeadSchema.parse(req.body ?? {}));
     success(res, result);
   } catch (err) { next(err); }
 }
@@ -78,6 +83,22 @@ async function requestDrop(req, res, next) {
     const { reason } = requestDropSchema.parse(req.body);
     const result = await service.requestDrop(req.params.id, req.user.id, reason);
     success(res, result);
+  } catch (err) { next(err); }
+}
+
+async function partnerAddLead(req, res, next) {
+  try {
+    const data = partnerAddLeadSchema.parse(req.body);
+    const lead = await service.partnerAddLead(req.user.id, data);
+    created(res, lead, 'Lead added. Admin will confirm it shortly.');
+  } catch (err) { next(err); }
+}
+
+async function updateVisitOutcome(req, res, next) {
+  try {
+    const data = updateVisitOutcomeSchema.parse(req.body);
+    const lead = await service.updateVisitOutcome(req.params.id, req.user.id, data);
+    success(res, lead, 'Visit outcome updated');
   } catch (err) { next(err); }
 }
 
@@ -95,4 +116,4 @@ async function rejectDrop(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, approveDrop, rejectDrop };
+module.exports = { submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, updateVisitOutcome, partnerAddLead, approveDrop, rejectDrop };

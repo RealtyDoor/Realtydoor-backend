@@ -1331,7 +1331,13 @@ async function main() {
     { key: 'support_email',          value: 'support@realtydoor.in',                                            description: 'Customer support email address',                 isPublic: true,  updatedByAdminId: admin.id },
     { key: 'rera_disclaimer',        value: 'RERA registrations vary by state. Verify at maharera.mahaonline.gov.in before investing.', description: 'RERA disclaimer shown on listings', isPublic: true, updatedByAdminId: admin.id },
     { key: 'platform_commission_pct', value: '2',                                                               description: 'Platform commission % on closed deals',          isPublic: false, updatedByAdminId: admin.id },
-    { key: 'escrow_token_min_paise', value: '5000000',                                                          description: 'Minimum token advance in paise (₹50,000)',       isPublic: false, updatedByAdminId: admin.id },
+    // Replaces the old 'escrow_token_min_paise'. Nothing ever read that key —
+    // escrow.service.js reads rupees, so the paise key was a dead second
+    // source of truth for the same threshold. Value matches the code default,
+    // so this is plumbing only, no change to the business rule.
+    { key: 'escrow_min_amount_rupees', value: '50000',                                                          description: 'Minimum token advance in rupees',                isPublic: false, updatedByAdminId: admin.id },
+    { key: 'escrow_refund_window_hours', value: '48',                                                           description: 'Hours after escrow is HELD that a buyer self-cancel still auto-refunds', isPublic: false, updatedByAdminId: admin.id },
+    { key: 'escrow_auto_escalate_days', value: '14',                                                            description: 'Days a HELD escrow may sit before the daily job notifies admins', isPublic: false, updatedByAdminId: admin.id },
     { key: 'razorpay_webhook_secret', value: 'whsec_seed_placeholder',                                          description: 'Razorpay webhook HMAC signing secret',           isPublic: false, updatedByAdminId: admin.id },
     { key: 'telecaller_phone',       value: '+919844412345',                                                    description: 'Shared "Contact agent" number shown to buyers (partner phone is never exposed)', isPublic: true, updatedByAdminId: admin.id },
     { key: 'max_active_inquiries',   value: '5',                                                                description: 'Max simultaneous non-closed inquiries per buyer', isPublic: false, updatedByAdminId: admin.id },

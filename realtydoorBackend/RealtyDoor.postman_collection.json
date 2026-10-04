@@ -1344,7 +1344,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"otp\": \"7342\"\n}",
+              "raw": "{\n  \"otp\": \"123456\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1363,7 +1363,8 @@
                 "{{leadId}}",
                 "verify-otp"
               ]
-            }
+            },
+            "description": "Site-visit OTP is 6 digits (was 4). Digits only."
           },
           "response": [
             {
@@ -1535,6 +1536,57 @@
               ],
               "cookie": [],
               "body": "{\"success\":false,\"message\":\"Lead already closed or dropped\"}"
+            }
+          ]
+        },
+        {
+          "name": "Update Visit Outcome",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"NEGOTIATING\",\n  \"note\": \"Buyer negotiating on price.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/partner/{{leadId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "leads",
+                "partner",
+                "{{leadId}}",
+                "status"
+              ]
+            },
+            "description": "Informational post-visit report. outcome: STILL_DECIDING | WANTS_ANOTHER_VISIT | NEGOTIATING. Never moves lead.status — CLOSED/DROPPED are rejected, use /close and /request-drop."
+          },
+          "response": [
+            {
+              "name": "400 – OTP Not Verified",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Verify the site-visit OTP before reporting an outcome\",\"data\":{\"code\":\"OTP_NOT_VERIFIED\"}}"
             }
           ]
         },

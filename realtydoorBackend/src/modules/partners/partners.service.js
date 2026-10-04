@@ -1,6 +1,9 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { createNotification } = require('../../lib/notifications');
+const { createAuditLog } = require('../../lib/auditLog');
+const logger = require('../../lib/logger');
+const { createPayoutContact, createPayoutFundAccount, validateFundAccountOrWarn } = require('../../lib/razorpay');
 
 // Previously had no endpoint at all to record this — KYC documents could be
 // submitted with no consent ever stamped anywhere. Idempotent: re-calling
@@ -16,6 +19,23 @@ async function recordKycConsent(partnerId) {
     where: { id: partnerId },
     data: { kycConsentAt: new Date() },
     select: { kycConsentAt: true },
+  });
+  return updated;
+}
+
+// B12.3 — record acceptance of a specific agreement version. Not idempotent
+// like kyc/consent: re-accepting a NEW version must overwrite, since the
+// latest accepted version is what governs. Re-posting the same version just
+// refreshes the timestamp, which is harmless and simpler than rejecting it.
+async function acceptPartnerTerms(partnerId, version, ip) {
+  const updated = await prisma.user.update({
+    where: { id: partnerId },
+    data: {
+      partnerTermsVersion: version,
+      partnerTermsAcceptedAt: new Date(),
+      partnerTermsAcceptedIp: ip ?? null,
+    },
+    select: { partnerTermsVersion: true, partnerTermsAcceptedAt: true },
   });
   return updated;
 }
@@ -60,12 +80,16 @@ async function getProfile(partnerId) {
       id: true, name: true, email: true, phone: true, companyName: true,
       bio: true, profileImageUrl: true, websiteUrl: true, partnerSubType: true,
       kycStatus: true, kycRejectionNote: true, kycVerifiedAt: true, kycConsentAt: true, createdAt: true,
+      reraNumber: true, gstin: true, coverageAreas: true, address: true,
+      partnerTermsVersion: true, partnerTermsAcceptedAt: true,
     },
   });
 }
 
 async function updateProfile(partnerId, data) {
-  const FORBIDDEN = ['role', 'kycStatus', 'kycDocumentUrls', 'email'];
+  // panNumber is admin-set only — letting a partner change it after KYC
+  // approval would invalidate what admin verified without any trace.
+  const FORBIDDEN = ['role', 'kycStatus', 'kycDocumentUrls', 'email', 'panNumber'];
   FORBIDDEN.forEach((f) => delete data[f]);
   return prisma.user.update({ where: { id: partnerId }, data });
 }
@@ -200,6 +224,137 @@ async function updateBankAccount(partnerId, data) {
   });
 }
 
+// ─── B12.1 / B12.4 — RazorpayX payout account ────────────────────────────────
+// Decision: RazorpayX Payouts, not Razorpay Route. There is no linked-account
+// onboarding and no Route KYC queue — we register the partner as a RazorpayX
+// contact + fund account and pay that account directly at release.
+//
+// Statuses: PENDING_VALIDATION → ACTIVE | NEEDS_CLARIFICATION. The penny-drop
+// (validateFundAccountOrWarn) is soft-fail by design — it can't run in test
+// mode and is itself async — so a validation that doesn't come back clean
+// lands as NEEDS_CLARIFICATION for an admin to look at rather than blocking
+// the partner or silently claiming the account is good.
+const PAYOUT_PUBLIC_FIELDS = {
+  payoutAccountStatus: true, payoutAccountNote: true, payoutValidatedAt: true,
+  razorpayContactId: true, razorpayFundAccountId: true,
+  bankName: true, bankIfsc: true, bankHolderName: true, bankAccountNo: true, bankLinkedAt: true,
+  panNumber: true,
+};
+
+// Never return a full account number or PAN — the partner typed them, they
+// don't need them echoed, and this payload reaches the admin view too.
+function maskPayout(row) {
+  if (!row) return row;
+  const tail = (v, keep = 4) => (v ? `${'X'.repeat(Math.max(0, String(v).length - keep))}${String(v).slice(-keep)}` : v);
+  return { ...row, bankAccountNo: tail(row.bankAccountNo), panNumber: tail(row.panNumber) };
+}
+
+async function getPayoutAccount(partnerId) {
+  const row = await prisma.user.findUnique({ where: { id: partnerId }, select: PAYOUT_PUBLIC_FIELDS });
+  if (!row) throw new ApiError(404, 'User not found');
+  return maskPayout(row);
+}
+
+async function createPayoutAccount(partnerId, data) {
+  const partner = await prisma.user.findUnique({
+    where: { id: partnerId },
+    select: { id: true, name: true, email: true, phone: true, payoutAccountStatus: true, razorpayContactId: true },
+  });
+  if (!partner) throw new ApiError(404, 'User not found');
+  if (partner.payoutAccountStatus === 'ACTIVE') {
+    throw new ApiError(409, 'A payout account is already active. Contact support to change your bank details.', { code: 'PAYOUT_ACCOUNT_EXISTS' });
+  }
+
+  // Reuse the contact across retries — RazorpayX would otherwise accumulate a
+  // duplicate contact for this partner on every failed attempt.
+  let contactId = partner.razorpayContactId;
+  try {
+    if (!contactId) {
+      const contact = await createPayoutContact(data.legalName, partner.email, partner.phone);
+      contactId = contact.id;
+    }
+  } catch (err) {
+    logger.error('[payoutAccount] contact creation failed', { partnerId, error: err?.error?.description || err.message });
+    throw new ApiError(502, 'Could not register your details with the payment provider. Please try again.');
+  }
+
+  let fundAccountId;
+  try {
+    const fa = await createPayoutFundAccount(contactId, data.legalName, data.ifsc, data.accountNumber);
+    fundAccountId = fa.id;
+  } catch (err) {
+    // Store the contact we did create so a retry doesn't make another one.
+    await prisma.user.update({ where: { id: partnerId }, data: { razorpayContactId: contactId } });
+    logger.error('[payoutAccount] fund account creation failed', { partnerId, error: err?.error?.description || err.message });
+    throw new ApiError(400, 'The bank account could not be registered. Check the account number and IFSC.', { code: 'FUND_ACCOUNT_REJECTED' });
+  }
+
+  let status = 'ACTIVE';
+  let note = null;
+  try {
+    await validateFundAccountOrWarn(fundAccountId, 'partner');
+  } catch (err) {
+    // The only thing that throws here is a definite "account inactive".
+    status = 'NEEDS_CLARIFICATION';
+    note = err.message;
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: partnerId },
+    data: {
+      razorpayContactId: contactId,
+      razorpayFundAccountId: fundAccountId,
+      payoutAccountStatus: status,
+      payoutAccountNote: note,
+      payoutValidatedAt: status === 'ACTIVE' ? new Date() : null,
+      bankHolderName: data.legalName,
+      bankAccountNo: data.accountNumber,
+      bankIfsc: data.ifsc,
+      bankLinkedAt: new Date(),
+      ...(data.panNumber && { panNumber: data.panNumber }),
+      ...(data.bankName && { bankName: data.bankName }),
+    },
+    select: PAYOUT_PUBLIC_FIELDS,
+  });
+
+  return maskPayout(updated);
+}
+
+// 3.5 — admin side of the clarification flow: flag an account for
+// re-submission, or clear it once the partner has fixed things.
+async function setPayoutAccountStatus(partnerId, status, note, adminId, ip) {
+  const partner = await prisma.user.findFirst({ where: { id: partnerId, role: 'PARTNER' }, select: { id: true, payoutAccountStatus: true } });
+  if (!partner) throw new ApiError(404, 'Partner not found');
+
+  const updated = await prisma.user.update({
+    where: { id: partnerId },
+    data: {
+      payoutAccountStatus: status,
+      payoutAccountNote: note ?? null,
+      ...(status === 'ACTIVE' ? { payoutValidatedAt: new Date() } : {}),
+    },
+    select: PAYOUT_PUBLIC_FIELDS,
+  });
+
+  await createNotification({
+    userId: partnerId,
+    title: status === 'ACTIVE' ? 'Payout account approved' : 'Payout account needs attention',
+    message: status === 'ACTIVE'
+      ? 'Your payout account is active. Escrow releases will be paid to it.'
+      : `Your payout account needs attention${note ? `: ${note}` : '.'}`,
+    type: 'PAYOUT_ACCOUNT_UPDATE',
+    linkUrl: '/partners/profile/bank',
+  });
+
+  await createAuditLog({
+    adminId, action: 'PAYOUT_ACCOUNT_STATUS_SET', targetType: 'User', targetId: partnerId,
+    before: { payoutAccountStatus: partner.payoutAccountStatus },
+    after: { payoutAccountStatus: status, note: note ?? null }, ipAddress: ip,
+  });
+
+  return maskPayout(updated);
+}
+
 // ─── PARTNER SUPPORT TICKETS ──────────────────────────────────────────────────
 
 async function getSupportTickets(partnerId, filters, skip, limit) {
@@ -316,10 +471,11 @@ async function getPartnerAnalytics(partnerId) {
 }
 
 module.exports = {
-  recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
+  acceptPartnerTerms, recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
   getFinanceSummary, getRatings,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount,
+  getPayoutAccount, createPayoutAccount, setPayoutAccountStatus,
   getSupportTickets, getSupportTicketById, createSupportTicket,
   getPartnerAnalytics,
 };

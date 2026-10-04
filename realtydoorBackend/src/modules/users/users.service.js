@@ -135,7 +135,7 @@ async function cancelLead(userId, leadId, { reason, reasonLabel }) {
 
   let refund;
   if (escrow?.status === 'HELD') {
-    const windowHours = await getConfigNumber('escrowRefundWindowHours', DEFAULT_ESCROW_REFUND_WINDOW_HOURS);
+    const windowHours = await getConfigNumber('escrow_refund_window_hours', DEFAULT_ESCROW_REFUND_WINDOW_HOURS);
     const withinWindow = escrow.heldAt
       && (Date.now() - new Date(escrow.heldAt).getTime()) < windowHours * 60 * 60 * 1000;
 

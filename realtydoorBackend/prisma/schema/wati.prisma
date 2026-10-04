@@ -1,0 +1,72 @@
+// ─── WATI (WhatsApp) ──────────────────────────────────────────────────────────
+// Admin docs 12.1–12.6. Two separate concerns:
+//   WatiTemplate   — the catalogue of message templates and their Meta approval
+//                    state. Our own record; Meta remains the source of truth for
+//                    whether a template may actually be sent, which is why
+//                    `status` is synced rather than authored here.
+//   WatiMessageLog — one row per outbound send, updated in place as the WATI
+//                    webhook reports delivered/read/responded. This is what the
+//                    delivery log and spend totals read.
+
+model WatiTemplate {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  // The exact template_name passed to WATI's API — this is what lib/wati.js
+  // sends, so it must match Meta's registered name, not a display label.
+  name        String  @unique
+  displayName String
+  // Which platform event fires it (e.g. SITE_VISIT_OTP, LEAD_ASSIGNED). Free
+  // text rather than an enum: templates are added without a deploy, and an
+  // enum would make a new template a schema migration.
+  eventTrigger String?
+  recipient    String? // BUYER | PARTNER | ADMIN
+  metaCategory String? // UTILITY | MARKETING | AUTHENTICATION
+  language     String  @default("en")
+  body         String
+  // Variable names the body expects, e.g. ["1","partner_name"] — lets the
+  // editor render inputs and the test-send validate before calling WATI.
+  variables    String[]
+
+  // Meta approval state. APPROVED is the only one that can actually deliver;
+  // the others are informational until Meta's review completes.
+  status String @default("PENDING_META") // APPROVED | PENDING_META | REJECTED | DRAFT
+
+  lastEditedByAdminId String?  @db.ObjectId
+  submittedAt         DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([status])
+  @@index([eventTrigger])
+}
+
+model WatiMessageLog {
+  id           String  @id @default(auto()) @map("_id") @db.ObjectId
+  // WATI's own message id when the API returns one. Nullable because a send
+  // that fails outright never gets one, and those rows are exactly the ones
+  // the failure report needs.
+  messageId    String?
+  templateName String
+  // Stored in full; masked at the API layer (same rule as Lead.buyerPhone).
+  recipientPhone String
+  userId       String? @db.ObjectId
+  leadId       String? @db.ObjectId
+  ticketId     String? @db.ObjectId
+
+  status        String    @default("SENT") // SENT | DELIVERED | READ | RESPONDED | FAILED
+  failureReason String?
+  // Round-trip time of our HTTP call to WATI, not end-to-end delivery —
+  // useful for spotting WATI-side slowness.
+  latencyMs     Int?
+  costPaise     Int?
+
+  sentAt        DateTime  @default(now())
+  deliveredAt   DateTime?
+  readAt        DateTime?
+  respondedAt   DateTime?
+
+  @@index([templateName])
+  @@index([status])
+  @@index([recipientPhone])
+  @@index([sentAt])
+  @@index([leadId])
+}

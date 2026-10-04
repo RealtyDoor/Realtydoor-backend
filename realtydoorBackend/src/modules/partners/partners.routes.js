@@ -11,9 +11,12 @@ router.use(authenticate, requirePartner, perUserLimiter);
 
 // KYC submission (no KYC required to submit it)
 router.post('/kyc/consent', ctrl.recordKycConsent);
+// B12.3 — accept a versioned commission/terms agreement.
+router.post('/terms/accept', ctrl.acceptTerms);
 router.post('/kyc', uploadLimiter, kycDocUploader.array('documents', 5), ctrl.submitKyc);
 
 // Leads (KYC required)
+router.post('/leads',                       requireKyc, leadsCtrl.partnerAddLead);
 router.get('/leads',                        requireKyc, leadsCtrl.getMyLeads);
 router.get('/leads/:id',                    requireKyc, leadsCtrl.getLeadById);
 router.post('/leads/:id/schedule-visit',    requireKyc, leadsCtrl.scheduleVisit);
@@ -21,9 +24,14 @@ router.post('/leads/:id/resend-otp',        requireKyc, otpLimiter, leadsCtrl.re
 router.post('/leads/:id/request-otp-override', requireKyc, leadsCtrl.requestOtpOverride);
 router.post('/leads/:id/verify-otp',        requireKyc, otpLimiter, leadsCtrl.verifyOtp);
 router.patch('/leads/:id/document',         requireKyc,
-  visitPhotoUploader.fields([{ name: 'visitPhotos', maxCount: 10 }, { name: 'closureDocs', maxCount: 5 }]),
+  visitPhotoUploader.fields([
+    { name: 'visitPhotos', maxCount: 10 }, { name: 'closureDocs', maxCount: 5 },
+    // B5.3/B5.4 — one each per deal; closeLead gates on allocationLetter.
+    { name: 'allocationLetter', maxCount: 1 }, { name: 'tokenReceipt', maxCount: 1 },
+  ]),
   leadsCtrl.uploadDocs
 );
+router.patch('/leads/:id/status',           requireKyc, leadsCtrl.updateVisitOutcome);
 router.patch('/leads/:id/close',            requireKyc, leadsCtrl.closeLead);
 router.patch('/leads/:id/request-drop',     requireKyc, leadsCtrl.requestDrop);
 
@@ -49,6 +57,9 @@ router.patch('/settings', ctrl.updateSettings);
 
 // Bank account
 router.get('/bank-account',   requireKyc, ctrl.getBankAccount);
+// B12.1/B12.4 — RazorpayX payout account (no Route onboarding).
+router.get('/payout-account',  ctrl.getPayoutAccount);
+router.post('/payout-account', ctrl.createPayoutAccount);
 router.patch('/bank-account', requireKyc, ctrl.updateBankAccount);
 
 // Support tickets (Help & Support page)

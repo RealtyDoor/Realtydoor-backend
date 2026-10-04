@@ -6,10 +6,20 @@ const {
   updateSettingsSchema,
   updateBankAccountSchema,
   createSupportTicketSchema,
+  acceptTermsSchema,
+  createPayoutAccountSchema,
 } = require('./partners.validator');
 const ApiError = require('../../utils/ApiError');
 
 const VALID_LISTING_STATUSES = ['PENDING_APPROVAL', 'APPROVED', 'REJECTED'];
+
+async function acceptTerms(req, res, next) {
+  try {
+    const { version } = acceptTermsSchema.parse(req.body);
+    const result = await service.acceptPartnerTerms(req.user.id, version, req.ip);
+    success(res, result, 'Terms accepted');
+  } catch (err) { next(err); }
+}
 
 async function recordKycConsent(req, res, next) {
   try {
@@ -118,6 +128,22 @@ async function updateBankAccount(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getPayoutAccount(req, res, next) {
+  try {
+    success(res, await service.getPayoutAccount(req.user.id));
+  } catch (err) { next(err); }
+}
+
+async function createPayoutAccount(req, res, next) {
+  try {
+    const data = createPayoutAccountSchema.parse(req.body);
+    const result = await service.createPayoutAccount(req.user.id, data);
+    created(res, result, result.payoutAccountStatus === 'ACTIVE'
+      ? 'Payout account registered and verified'
+      : 'Payout account registered — under review');
+  } catch (err) { next(err); }
+}
+
 async function getSupportTickets(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
@@ -142,9 +168,10 @@ async function createSupportTicket(req, res, next) {
 }
 
 module.exports = {
-  recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
+  acceptTerms, recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
   getFinanceSummary, getAnalytics, getRatings,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount,
+  getPayoutAccount, createPayoutAccount,
   getSupportTickets, getSupportTicketById, createSupportTicket,
 };

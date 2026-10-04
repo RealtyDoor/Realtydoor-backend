@@ -70,7 +70,10 @@ async function createOrder(leadId, buyerId, amountInRupees) {
     return { escrow: existing, razorpayOrder, resumed: true };
   }
 
-  const minAmount = await getConfigNumber('escrowMinAmountRupees', DEFAULT_MIN_ESCROW_AMOUNT);
+  // snake_case to match every other seeded key. The old camelCase
+  // 'escrowMinAmountRupees' was never seeded, so this always fell through to
+  // the default and the admin-editable value did nothing.
+  const minAmount = await getConfigNumber('escrow_min_amount_rupees', DEFAULT_MIN_ESCROW_AMOUNT);
   if (amountInRupees < minAmount) {
     throw new ApiError(400, `Minimum escrow amount is ₹${minAmount.toLocaleString('en-IN')}`);
   }
@@ -182,6 +185,43 @@ async function release(escrowId, adminId, releaseData, ip) {
   }
   const sellerAmount = escrow.amount - heldBack;
 
+  // Resolve how the partner leg gets paid, BEFORE the atomic claim — same
+  // reasoning as the amount check above: a request-validation problem must
+  // not leave us having to roll back a claimed RELEASED.
+  //
+  // Preferred path is the partner's onboarded RazorpayX fund account
+  // (POST /partner/payout-account), which is created and penny-drop-checked
+  // once. Before this, every release rebuilt a contact + fund account from
+  // details typed into the release request, which meant a new RazorpayX
+  // contact per release and no way to know the account had ever been checked.
+  //
+  // Explicit partnerDetails still wins — an admin paying someone other than
+  // the assigned partner needs that escape hatch.
+  let storedPartnerFundAccountId = null;
+  if (partnerShare > 0 && !partnerDetails) {
+    const lead = await prisma.lead.findUnique({
+      where: { id: escrow.leadId },
+      select: { assignedPartnerId: true },
+    });
+    const partner = lead?.assignedPartnerId
+      ? await prisma.user.findUnique({
+          where: { id: lead.assignedPartnerId },
+          select: { razorpayFundAccountId: true, payoutAccountStatus: true },
+        })
+      : null;
+
+    if (!partner?.razorpayFundAccountId) {
+      throw new ApiError(400, 'The assigned partner has no payout account yet. Ask them to add one, or pass partnerDetails to pay a different account.', { code: 'PARTNER_PAYOUT_ACCOUNT_MISSING' });
+    }
+    // The status exists precisely to stop money going to an account that
+    // failed its check — falling back to ad-hoc creation here would walk
+    // straight around the clarification gate.
+    if (partner.payoutAccountStatus !== 'ACTIVE') {
+      throw new ApiError(400, `The assigned partner's payout account is ${partner.payoutAccountStatus || 'not set up'} — resolve that before releasing their share.`, { code: 'PARTNER_PAYOUT_ACCOUNT_NOT_ACTIVE' });
+    }
+    storedPartnerFundAccountId = partner.razorpayFundAccountId;
+  }
+
   // Atomic claim: the write is conditioned on status still being HELD, so of
   // two concurrent release() calls for the same escrow, only one can affect
   // a row — the loser's updateMany affects 0 rows and bails out below,
@@ -215,12 +255,20 @@ async function release(escrowId, adminId, releaseData, ip) {
         sellerPayoutId = payout.id;
       })());
     }
-    if (partnerDetails && partnerShare > 0) {
+    if (partnerShare > 0 && (partnerDetails || storedPartnerFundAccountId)) {
       legs.push((async () => {
-        const contact = await createPayoutContact(partnerDetails.name, partnerDetails.email, partnerDetails.phone);
-        const fundAccount = await createPayoutFundAccount(contact.id, partnerDetails.name, partnerDetails.ifsc, partnerDetails.accountNumber);
-        await validateFundAccountOrWarn(fundAccount.id, 'partner');
-        const payout = await createPayout(fundAccount.id, Math.round(partnerShare * 100), `escrow_partner_${escrowId}`);
+        let fundAccountId = storedPartnerFundAccountId;
+        if (!fundAccountId) {
+          const contact = await createPayoutContact(partnerDetails.name, partnerDetails.email, partnerDetails.phone);
+          const fundAccount = await createPayoutFundAccount(contact.id, partnerDetails.name, partnerDetails.ifsc, partnerDetails.accountNumber);
+          // Only ad-hoc accounts are validated here. A stored account was
+          // already penny-drop-checked at onboarding, and re-checking on
+          // every release would add seconds of polling and another penny
+          // drop for an account we've already cleared.
+          await validateFundAccountOrWarn(fundAccount.id, 'partner');
+          fundAccountId = fundAccount.id;
+        }
+        const payout = await createPayout(fundAccountId, Math.round(partnerShare * 100), `escrow_partner_${escrowId}`);
         partnerPayoutId = payout.id;
       })());
     }
@@ -354,7 +402,7 @@ async function getEscrowStats() {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  const [heldAgg, refundedAgg, releasedThisMonthAgg, releasedForAvg, payoutFailedCount] = await Promise.all([
+  const [heldAgg, refundedAgg, releasedThisMonthAgg, releasedForAvg, payoutFailedCount, refundedThisMonthAgg, heldCount, releasedThisMonthCount] = await Promise.all([
     // HELD_PAYOUT_FAILED money hasn't left the account either — it's still
     // "held", just stuck on a failed payout attempt — so it's counted here
     // too rather than disappearing from this total; payoutFailedCount below
@@ -370,6 +418,14 @@ async function getEscrowStats() {
       select: { createdAt: true, releasedAt: true },
     }),
     prisma.escrowTransaction.count({ where: { status: 'HELD_PAYOUT_FAILED' } }),
+    // MTD splits + counts (admin docs 1.3 / partner B5.6 — the finance cards
+    // show "held total and count", "released this month and count").
+    prisma.escrowTransaction.aggregate({
+      where: { status: 'REFUNDED', refundedAt: { gte: startOfMonth } },
+      _sum: { amount: true },
+    }),
+    prisma.escrowTransaction.count({ where: { status: { in: ['HELD', 'HELD_PAYOUT_FAILED'] } } }),
+    prisma.escrowTransaction.count({ where: { status: 'RELEASED', releasedAt: { gte: startOfMonth } } }),
   ]);
 
   const avgHoldDays = releasedForAvg.length
@@ -380,6 +436,9 @@ async function getEscrowStats() {
     heldSum: heldAgg._sum.amount || 0,
     refundedSum: refundedAgg._sum.amount || 0,
     releasedSumThisMonth: releasedThisMonthAgg._sum.amount || 0,
+    refundedSumThisMonth: refundedThisMonthAgg._sum.amount || 0,
+    heldCount,
+    releasedCountThisMonth: releasedThisMonthCount,
     avgHoldDays: Math.round(avgHoldDays * 10) / 10,
     payoutFailedCount,
   };

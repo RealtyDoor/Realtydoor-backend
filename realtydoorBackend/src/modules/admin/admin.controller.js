@@ -3,6 +3,9 @@ const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./admin.service');
 const {
   assignLeadSchema,
+  createLeadSchema,
+  confirmLeadSchema,
+  rejectLeadSchema,
   rejectPropertySchema,
   verifyKycSchema,
   updateLoanStatusSchema,
@@ -24,6 +27,9 @@ const disputeService = require('../disputes/disputes.service');
 const reviewService  = require('../reviews/reviews.service');
 const configService  = require('../config/config.service');
 const { upsertConfigSchema } = require('../config/config.validator');
+const partnerService = require('../partners/partners.service');
+const { setPayoutStatusSchema } = require('../partners/partners.validator');
+const ApiError = require('../../utils/ApiError');
 
 async function getLeadById(req, res, next) {
   try {
@@ -45,6 +51,47 @@ async function assignLead(req, res, next) {
     const { partnerId } = assignLeadSchema.parse(req.body);
     const lead = await service.assignLead(req.params.id, partnerId, req.user.id, req.ip);
     success(res, lead, 'Lead assigned');
+  } catch (err) { next(err); }
+}
+
+async function createLead(req, res, next) {
+  try {
+    const data = createLeadSchema.parse(req.body);
+    const lead = await service.createLead(data, req.user.id, req.ip);
+    created(res, lead, 'Lead created');
+  } catch (err) { next(err); }
+}
+
+async function confirmLead(req, res, next) {
+  try {
+    const { partnerId } = confirmLeadSchema.parse(req.body ?? {});
+    const lead = await service.confirmLead(req.params.id, partnerId, req.user.id, req.ip);
+    success(res, lead, 'Lead confirmed');
+  } catch (err) { next(err); }
+}
+
+async function rejectLead(req, res, next) {
+  try {
+    const { reason } = rejectLeadSchema.parse(req.body);
+    const lead = await service.rejectLead(req.params.id, reason, req.user.id, req.ip);
+    success(res, lead, 'Lead rejected');
+  } catch (err) { next(err); }
+}
+
+async function overrideLeadOtp(req, res, next) {
+  try {
+    const { note } = req.body ?? {};
+    const result = await service.overrideLeadOtp(req.params.id, req.user.id, req.ip, note);
+    success(res, result, 'OTP unlocked and a fresh code sent to the buyer');
+  } catch (err) { next(err); }
+}
+
+// 3.5 — admin side of the payout-account clarification flow.
+async function setPayoutAccountStatus(req, res, next) {
+  try {
+    const { status, note } = setPayoutStatusSchema.parse(req.body);
+    const result = await partnerService.setPayoutAccountStatus(req.params.id, status, note, req.user.id, req.ip);
+    success(res, result, `Payout account marked ${status}`);
   } catch (err) { next(err); }
 }
 
@@ -449,7 +496,8 @@ async function deleteConfig(req, res, next) {
 }
 
 module.exports = {
-  getLeadById, getLeads, assignLead,
+  getLeadById, getLeads, assignLead, createLead, confirmLead, rejectLead, overrideLeadOtp,
+  setPayoutAccountStatus,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   getPendingKyc, verifyKyc,
   getRevenue, getAuditLogs, getPartnerMetrics,

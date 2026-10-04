@@ -12,9 +12,33 @@ model Lead {
   buyerId           String?    @db.ObjectId
   buyer             User?      @relation("BuyerLeads", fields: [buyerId], references: [id])
   buyerMessage      String?
-  propertyId        String     @db.ObjectId
-  property          Property   @relation(fields: [propertyId], references: [id])
+  // Optional since admin can log a lead for a property that isn't listed yet
+  // (POST /admin/leads) — propertyInterest below carries the free text in
+  // that case. Buyer-submitted and partner-added leads always set it.
+  // Consumers must treat `property` as nullable.
+  propertyId        String?    @db.ObjectId
+  property          Property?  @relation(fields: [propertyId], references: [id])
+  propertyInterest  String? // free text, only when propertyId is null
+  budget            String?
+  source            LeadSource @default(WEBSITE)
   status            LeadStatus @default(UNASSIGNED)
+
+  // Manual entry provenance — exactly one of these is set (neither, for a
+  // buyer's own WEBSITE submission).
+  addedByPartnerId String? @db.ObjectId
+  addedByPartner   User?   @relation("PartnerAddedLeads", fields: [addedByPartnerId], references: [id])
+  addedByAdminId   String? @db.ObjectId
+
+  // Repeat buyer: this lead is the same person enquiring about a different
+  // property, linked back to their earlier lead so admin sees the history.
+  // Plain scalar, deliberately NOT a Prisma @relation. Prisma requires
+  // self-relations to use onDelete: NoAction (SetNull is rejected), which made
+  // any lead referenced as a repeat-buyer parent permanently undeletable — and
+  // submitLead's race-guard rollback deletes the lead it just created. The link
+  // is informational, so a dangling id after a delete is fine and callers
+  // resolve it with an explicit lookup. Same pattern as addedByAdminId and
+  // droppedByAdminId above/below.
+  relatedLeadId String? @db.ObjectId
   assignedPartnerId String?    @db.ObjectId
   assignedPartner   User?      @relation("PartnerLeads", fields: [assignedPartnerId], references: [id])
   assignedAt        DateTime?
@@ -45,6 +69,25 @@ model Lead {
   visitPhotoUrls      String[]
   closureDocumentUrls String[]
   partnerNotes        String?
+
+  // B5.1/B5.3/B5.4 + admin 2.4 — the mark-as-closed gate. The allocation
+  // letter is mandatory before closeLead will accept a deal (alongside the
+  // existing Rule 6 HELD-escrow check).
+  closingPrice               Float?
+  allocationLetterUrl        String?
+  allocationLetterUploadedAt DateTime?
+  tokenReceiptUrl            String?
+
+  // 6.7 — who revealed the buyer's real phone, when, from where. The OTP
+  // verification is the reveal event; this is the audit trail for it.
+  contactRevealedAt          DateTime?
+  contactRevealedByPartnerId String?   @db.ObjectId
+  contactRevealedIp          String?
+
+  // Partner's post-visit outcome report — see enum VisitOutcome. Distinct
+  // from buyerFeedbackStatus above (the buyer's own answer to the bot).
+  visitOutcome   VisitOutcome?
+  visitOutcomeAt DateTime?
 
   // Buyer → partner rating (post site-visit / closure)
   buyerRating        Int?

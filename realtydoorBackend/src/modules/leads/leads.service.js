@@ -12,6 +12,7 @@ const { nextRefCode } = require('../../lib/refCode');
 
 const DEFAULT_MAX_ACTIVE_INQUIRIES = 5;
 const DEFAULT_MAX_INQUIRIES_PER_DAY = 3;
+const DEFAULT_PLATFORM_COMMISSION_PCT = 2;
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 // The actual UTC instant corresponding to 00:00:00 IST "today" — regardless
@@ -117,6 +118,77 @@ async function submitLead(data, user) {
   return sanitizeLeadForBuyer(lead);
 }
 
+const ACTIVE_LEAD_STATUSES = { notIn: ['CLOSED', 'DROPPED'] };
+
+// B3.1–B3.5 — partner logs a buyer they sourced themselves. Lands as
+// AWAITING_ADMIN: admin vets it before it enters the normal pipeline, so a
+// partner can't self-assign work or manufacture leads that look platform-sourced.
+//
+// buyerId is deliberately left null even when a registered account has this
+// phone. This is the partner's claim about someone who hasn't authenticated or
+// consented to it — attributing it to their account would surface it in that
+// buyer's own dashboard as an inquiry they never made, and would eat into
+// their submitLead quota.
+async function partnerAddLead(partnerId, data) {
+  // Scoped to the partner's own listings — they shouldn't be able to attach a
+  // self-sourced buyer to someone else's property.
+  const property = await prisma.property.findFirst({
+    where: { id: data.propertyId, partnerId },
+    select: { id: true, title: true },
+  });
+  if (!property) throw new ApiError(404, 'Property not found in your listings');
+
+  // B3.2 — same buyer, same property, still active.
+  const duplicate = await prisma.lead.findFirst({
+    where: { propertyId: data.propertyId, buyerPhone: data.buyerPhone, status: ACTIVE_LEAD_STATUSES },
+    select: { id: true, refCode: true, status: true },
+  });
+  if (duplicate) {
+    throw new ApiError(409, 'There is already an active lead for this buyer and property', {
+      code: 'DUPLICATE_LEAD',
+      lead: duplicate,
+    });
+  }
+
+  // B3.3 — same buyer, different property: link back to their latest lead so
+  // admin sees this is a repeat buyer rather than a new one.
+  const earlier = await prisma.lead.findFirst({
+    where: { buyerPhone: data.buyerPhone },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, refCode: true },
+  });
+
+  const refCode = await nextRefCode('lead');
+  const lead = await prisma.lead.create({
+    data: {
+      refCode,
+      buyerName: data.buyerName,
+      buyerPhone: data.buyerPhone,
+      // buyerEmail is required on the model; partner-added leads may not have
+      // one, so store empty rather than inventing an address.
+      buyerEmail: data.buyerEmail ?? '',
+      buyerMessage: data.note,
+      budget: data.budget,
+      propertyId: property.id,
+      source: 'PARTNER',
+      status: 'AWAITING_ADMIN',
+      addedByPartnerId: partnerId,
+      ...(earlier && { relatedLeadId: earlier.id }),
+    },
+  });
+
+  const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
+  await Promise.all(admins.map((admin) => createNotification({
+    userId: admin.id,
+    title: 'Partner-added lead needs review',
+    message: `${lead.refCode} · ${lead.buyerName} for "${property.title}" — added by a partner, awaiting your confirmation.`,
+    type: 'LEAD_NEW',
+    linkUrl: `/admin/leads/${lead.id}`,
+  })));
+
+  return { ...sanitizeLeadForPartner(lead), isRepeatBuyer: !!earlier, relatedLead: earlier ?? null };
+}
+
 // `buyer` is only present when the caller's query included it (getPartnerLeads/
 // getPartnerLeadById do; a bare prisma.lead.update() result, like uploadDocs
 // returns, does not) — buyerRef/buyerPhoneVerified just come out undefined
@@ -137,26 +209,81 @@ function sanitizeLeadForPartner(lead) {
 
 const PARTNER_LEAD_BUYER_SELECT = { select: { refCode: true, phoneVerified: true } };
 
+// B4.13 / 6.9 — "STALLED 6d" on the leads list and the admin stalled digest.
+// Computed, not stored: "last activity" is the newest of the timestamps that
+// represent someone actually doing something, so it can't go stale the way a
+// stored flag would. A lead in a terminal state is never stalled.
+const STALLED_AFTER_DAYS = 5;
+
+function stalledInfoFor(lead) {
+  if (['CLOSED', 'DROPPED', 'AWAITING_ADMIN'].includes(lead.status)) {
+    return { isStalled: false, daysStalled: 0 };
+  }
+  const activity = [
+    lead.visitOutcomeAt, lead.otpVerifiedAt, lead.siteVisitScheduledAt,
+    lead.otpGeneratedAt, lead.assignedAt, lead.createdAt,
+  ].filter(Boolean).map((d) => new Date(d).getTime());
+  if (!activity.length) return { isStalled: false, daysStalled: 0 };
+
+  const days = Math.floor((Date.now() - Math.max(...activity)) / 86_400_000);
+  return { isStalled: days >= STALLED_AFTER_DAYS, daysStalled: days };
+}
+
+const PARTNER_LEAD_ESCROW_SELECT = {
+  select: {
+    id: true, amount: true, currency: true, status: true,
+    heldAt: true, releasedAt: true, refundedAt: true, failedAt: true, createdAt: true,
+  },
+  orderBy: { createdAt: 'desc' },
+};
+
+// What the partner actually receives: the escrow amount less the platform fee.
+// The rate comes from the lead's own platformCommissionPct when set, so a deal
+// closed under an older rate keeps that rate, falling back to the current
+// platform_commission_pct config. null when there's no escrow yet — the
+// partner UI has nothing to show a net for until money is held.
+function netAmountFor(lead, fallbackPct) {
+  const escrow = lead.escrowTransactions?.[0];
+  if (!escrow || typeof escrow.amount !== 'number') return null;
+  const pct = lead.platformCommissionPct ?? fallbackPct;
+  return Math.round((escrow.amount - (escrow.amount * pct) / 100) * 100) / 100;
+}
+
 async function getPartnerLeads(partnerId) {
   // Rule 2: Partner sees only their assigned leads
-  const leads = await prisma.lead.findMany({
-    where: { assignedPartnerId: partnerId },
-    include: {
-      property: { select: { title: true, slug: true, locality: true, city: true } },
-      buyer: PARTNER_LEAD_BUYER_SELECT,
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-  return leads.map(sanitizeLeadForPartner);
+  const [leads, feePct] = await Promise.all([
+    prisma.lead.findMany({
+      where: { assignedPartnerId: partnerId },
+      include: {
+        property: { select: { title: true, slug: true, locality: true, city: true } },
+        buyer: PARTNER_LEAD_BUYER_SELECT,
+        escrowTransactions: PARTNER_LEAD_ESCROW_SELECT,
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    getConfigNumber('platform_commission_pct', DEFAULT_PLATFORM_COMMISSION_PCT),
+  ]);
+  return leads.map((lead) => ({
+    ...sanitizeLeadForPartner(lead),
+    netAmount: netAmountFor(lead, feePct),
+    ...stalledInfoFor(lead),
+  }));
 }
 
 async function getPartnerLeadById(leadId, partnerId) {
-  const lead = await prisma.lead.findFirst({
-    where: { id: leadId, assignedPartnerId: partnerId },
-    include: { property: true, buyer: PARTNER_LEAD_BUYER_SELECT },
-  });
+  const [lead, feePct] = await Promise.all([
+    prisma.lead.findFirst({
+      where: { id: leadId, assignedPartnerId: partnerId },
+      include: {
+        property: true,
+        buyer: PARTNER_LEAD_BUYER_SELECT,
+        escrowTransactions: PARTNER_LEAD_ESCROW_SELECT,
+      },
+    }),
+    getConfigNumber('platform_commission_pct', DEFAULT_PLATFORM_COMMISSION_PCT),
+  ]);
   if (!lead) throw new ApiError(404, 'Lead not found');
-  return sanitizeLeadForPartner(lead);
+  return { ...sanitizeLeadForPartner(lead), netAmount: netAmountFor(lead, feePct), ...stalledInfoFor(lead) };
 }
 
 async function scheduleVisit(leadId, partnerId, scheduledAt) {
@@ -243,7 +370,7 @@ async function requestOtpOverride(leadId, partnerId) {
   return { message: 'Admin has been notified.' };
 }
 
-async function verifyOtp(leadId, partnerId, inputOtp) {
+async function verifyOtp(leadId, partnerId, inputOtp, ip) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (!lead.siteVisitOTP) throw new ApiError(400, 'No OTP generated for this lead');
@@ -268,10 +395,20 @@ async function verifyOtp(leadId, partnerId, inputOtp) {
       otpVerifiedAt: new Date(),
       status: 'SITE_VISIT_DONE',
       siteVisitOTP: null,
+      // 6.7 — verifying the OTP IS the contact-reveal event, so record who
+      // did it and from where. Admin's deal-flow view needs this to answer
+      // "who saw this buyer's number".
+      contactRevealedAt: new Date(),
+      contactRevealedByPartnerId: partnerId,
+      contactRevealedIp: ip ?? null,
     },
   });
 
-  return { message: 'OTP verified. Buyer contact revealed.', buyerPhone: updated.buyerPhone };
+  return {
+    message: 'OTP verified. Buyer contact revealed.',
+    buyerPhone: updated.buyerPhone,
+    revealedAt: updated.contactRevealedAt,
+  };
 }
 
 async function uploadDocs(leadId, partnerId, data, fileUrls) {
@@ -289,12 +426,46 @@ async function uploadDocs(leadId, partnerId, data, fileUrls) {
       partnerNotes: data.partnerNotes,
       ...(fileUrls.visitPhotos ? { visitPhotoUrls: { push: fileUrls.visitPhotos } } : {}),
       ...(fileUrls.closureDocs ? { closureDocumentUrls: { push: fileUrls.closureDocs } } : {}),
+      // B5.3/B5.4 — single-file slots, not arrays: there is one allocation
+      // letter and one token receipt per deal, and closeLead gates on the
+      // letter being present. Re-uploading replaces.
+      ...(fileUrls.allocationLetter ? {
+        allocationLetterUrl: fileUrls.allocationLetter,
+        allocationLetterUploadedAt: new Date(),
+      } : {}),
+      ...(fileUrls.tokenReceipt ? { tokenReceiptUrl: fileUrls.tokenReceipt } : {}),
     },
   });
   return sanitizeLeadForPartner(updated);
 }
 
-async function closeLead(leadId, partnerId) {
+// B4.12 — partner reports what came of the visit. Informational only: it
+// never moves lead.status, so it can't be used to sidestep closeLead's
+// Rule 6 escrow gate or requestDrop's admin approval.
+async function updateVisitOutcome(leadId, partnerId, { outcome, note }) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (['CLOSED', 'DROPPED'].includes(lead.status)) {
+    throw new ApiError(400, `This lead is already ${lead.status.toLowerCase()}`);
+  }
+  // An outcome only means something once the visit actually happened, which
+  // is exactly what the OTP proves.
+  if (!lead.isOtpVerified) {
+    throw new ApiError(400, 'Verify the site-visit OTP before reporting an outcome', { code: 'OTP_NOT_VERIFIED' });
+  }
+
+  const updated = await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      visitOutcome: outcome,
+      visitOutcomeAt: new Date(),
+      ...(note !== undefined && { partnerNotes: note }),
+    },
+  });
+  return sanitizeLeadForPartner(updated);
+}
+
+async function closeLead(leadId, partnerId, { closingPrice } = {}) {
   const lead = await prisma.lead.findFirst({
     where: { id: leadId, assignedPartnerId: partnerId },
     include: { escrowTransactions: true },
@@ -308,7 +479,18 @@ async function closeLead(leadId, partnerId) {
   // Rule 7: CLOSED is irreversible by partner
   if (lead.status === 'CLOSED') throw new ApiError(400, 'Lead is already closed');
 
-  await prisma.lead.update({ where: { id: leadId }, data: { status: 'CLOSED' } });
+  // B5.3 — the allocation letter is mandatory before a deal can close. This
+  // gate existed only in the frontend until now, so a direct API call could
+  // close a deal with no letter on file at all. Upload it via
+  // PATCH /leads/partner/:id/document (field name `allocationLetter`).
+  if (!lead.allocationLetterUrl) {
+    throw new ApiError(400, 'Upload the allocation letter before closing this deal', { code: 'ALLOCATION_LETTER_REQUIRED' });
+  }
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: { status: 'CLOSED', ...(closingPrice !== undefined && { closingPrice }) },
+  });
 
   const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
   await Promise.all(admins.map((admin) => createNotification({
@@ -414,4 +596,4 @@ async function adminRejectDrop(leadId, adminId, ip) {
   return { message: 'Drop request rejected. Partner notified.' };
 }
 
-module.exports = { submitLead, sanitizeLeadForBuyer, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop };
+module.exports = { submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop };

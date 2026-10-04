@@ -1,5 +1,33 @@
 const { z } = require('zod');
 const { objectId, roleEnum } = require('../../utils/validators');
+const { phoneField } = require('../../lib/phoneUtils');
+
+// 6.4a — admin logs a lead that came in off-platform. Either propertyId (a
+// live listing) or propertyInterest (free text, when the property isn't
+// listed) must be present; refined below rather than made mutually exclusive,
+// since an admin may legitimately have both a listing and extra context.
+const createLeadSchema = z.object({
+  buyerName:        z.string().min(2).max(100),
+  buyerPhone:       phoneField,
+  buyerEmail:       z.string().email().optional(),
+  source:           z.enum(['PHONE', 'WALK_IN', 'REFERRAL', 'EMAIL', 'OTHER']),
+  propertyId:       objectId.optional(),
+  propertyInterest: z.string().max(300).optional(),
+  budget:           z.string().max(100).optional(),
+  note:             z.string().max(1000).optional(),
+  partnerId:        objectId.optional(),
+}).refine((d) => d.propertyId || d.propertyInterest, {
+  message: 'Provide either propertyId (a live listing) or propertyInterest (free text)',
+  path: ['propertyId'],
+});
+
+const confirmLeadSchema = z.object({
+  partnerId: objectId.optional(),
+});
+
+const rejectLeadSchema = z.object({
+  reason: z.string().min(5, 'Please provide a meaningful reason (min 5 characters)').max(500),
+});
 
 const assignLeadSchema = z.object({
   partnerId: objectId,
@@ -171,6 +199,9 @@ const updateVideoTourSchema = z.object({
 
 module.exports = {
   assignLeadSchema,
+  createLeadSchema,
+  confirmLeadSchema,
+  rejectLeadSchema,
   rejectPropertySchema,
   verifyKycSchema,
   updateLoanStatusSchema,

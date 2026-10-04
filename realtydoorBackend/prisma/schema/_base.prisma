@@ -56,12 +56,29 @@ enum PropertyStatus {
 }
 
 enum LeadStatus {
+  // Partner self-sourced the buyer and admin hasn't vetted it yet. Sits
+  // before UNASSIGNED: admin confirms (→ UNASSIGNED/ASSIGNED), reassigns, or
+  // drops it. Nothing in the OTP/visit/close flow accepts this status.
+  AWAITING_ADMIN
   UNASSIGNED
   ASSIGNED
   SITE_VISIT_SCHEDULED
   SITE_VISIT_DONE
   CLOSED
   DROPPED
+}
+
+// Where the lead came from. WEBSITE is the default because that's the only
+// path that existed before admin/partner manual entry — every pre-existing
+// row is a buyer who submitted through a property page.
+enum LeadSource {
+  WEBSITE
+  PHONE
+  WALK_IN
+  REFERRAL
+  EMAIL
+  PARTNER
+  OTHER
 }
 
 enum KycStatus {
@@ -91,6 +108,20 @@ enum EscrowStatus {
   // review; release()/refund() both reject anything that isn't HELD, so this
   // status deliberately blocks the normal retry path until someone looks.
   HELD_PAYOUT_FAILED
+}
+
+// The partner's own post-visit report (design artboard 50's status picker).
+// Deliberately separate from BuyerFeedbackStatus below, which is what the
+// BUYER told the WhatsApp bot — admin compares the two to catch a partner
+// misreporting an outcome, so one must never overwrite the other.
+// CLOSED/DROPPED are absent on purpose: those still go through
+// PATCH /leads/partner/:id/close (Rule 6 — needs a HELD escrow) and
+// /request-drop (needs admin approval). A free-text status write must not
+// become a way around either gate.
+enum VisitOutcome {
+  STILL_DECIDING
+  WANTS_ANOTHER_VISIT
+  NEGOTIATING
 }
 
 enum BuyerFeedbackStatus {

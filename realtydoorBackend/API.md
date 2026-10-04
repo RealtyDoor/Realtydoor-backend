@@ -961,6 +961,53 @@ Submit a buyer inquiry.
 
 ---
 
+### POST /api/leads/partner
+
+Partner logs a buyer they sourced themselves. Also mounted as `POST /api/partner/leads`.
+
+**Auth:** PARTNER + KYC verified
+
+**Request Body:**
+
+```json
+{
+  "buyerName": "Suresh Mehta",
+  "buyerPhone": "9876543210",
+  "buyerEmail": "suresh@example.com",
+  "propertyId": "64abc...",
+  "budget": "80L-1Cr",
+  "note": "Walk-in at the site on Saturday."
+}
+```
+
+`buyerEmail`, `budget` and `note` are optional. `buyerPhone` accepts the same formats as every other phone field (bare 10-digit Indian, or full international for NRI) and is normalized to E.164. `propertyId` **must be one of the partner's own listings** — anything else 404s.
+
+Creates the lead with `status: AWAITING_ADMIN` and `source: PARTNER`, so it stays out of the normal pipeline until an admin confirms it (see `PATCH /api/admin/leads/:id/confirm`). A partner can't self-assign work this way.
+
+`buyerId` is deliberately left `null` even if a registered account has that phone: the buyer hasn't authenticated or consented to this inquiry, so attributing it to their account would surface it in their own dashboard as something they never submitted, and would consume their `POST /api/leads` quota.
+
+**Response `201`:** the created lead (partner-sanitized), plus `isRepeatBuyer` and `relatedLead`.
+
+```json
+{
+  "success": true,
+  "message": "Lead added. Admin will confirm it shortly.",
+  "data": {
+    "refCode": "RD-L-000123",
+    "status": "AWAITING_ADMIN",
+    "source": "PARTNER",
+    "isRepeatBuyer": true,
+    "relatedLead": { "id": "64lead...", "refCode": "RD-L-000098" }
+  }
+}
+```
+
+If this phone already has an earlier lead on a **different** property, the new lead is linked to the most recent one via `relatedLeadId` and `isRepeatBuyer` is `true`, so admin sees a repeat buyer rather than a new one. The link is informational — deleting the earlier lead leaves a dangling id rather than blocking.
+
+**Errors:** `404` property not in your listings · `409 DUPLICATE_LEAD` — this buyer already has an active (not closed/dropped) lead for this same property; `data.lead` carries the existing one.
+
+---
+
 ### GET /api/leads/partner
 
 All leads assigned to the authenticated partner. Phone **and email** are masked until OTP is verified (previously only phone was masked — email leaked in full).
@@ -998,6 +1045,8 @@ All leads assigned to the authenticated partner. Phone **and email** are masked 
 ```
 
 `buyerRef` (the buyer's own user `refCode`) and `buyerPhoneVerified` back the frontend's "Verified buyer" badge — note this is the *account's* phone verification state, independent of `isOtpVerified` (which is this specific lead's site-visit OTP gate). `adminNotes` is never included in a partner-facing lead, regardless of OTP state.
+
+Each lead also carries `escrowTransactions` (newest first, same field set as the buyer-facing one) and `netAmount` — what the partner receives, i.e. the newest escrow's `amount` less the platform fee. The rate comes from that lead's own `platformCommissionPct` when set, so a deal closed under an older rate keeps it, otherwise from the `platform_commission_pct` config (currently **2%**, not the 2.5% some designs show — worth reconciling). `netAmount` is `null` when no escrow exists yet.
 
 ---
 
@@ -1039,7 +1088,7 @@ Single lead detail. Full property record included.
 
 ### POST /api/leads/partner/:id/schedule-visit
 
-Schedule a site visit and send a 4-digit OTP to the buyer via WhatsApp.
+Schedule a site visit and send a 6-digit OTP to the buyer via WhatsApp.
 
 **Auth:** PARTNER + KYC verified
 
@@ -1105,7 +1154,7 @@ Sets `otpOverrideRequestedByPartner`/`otpOverrideRequestedAt` on the lead (a rea
 
 ### POST /api/leads/partner/:id/verify-otp
 
-Verify the 4-digit site-visit OTP. Reveals buyer's full phone number on success.
+Verify the 6-digit site-visit OTP. Reveals the buyer's full phone number on success.
 
 **Auth:** PARTNER + KYC verified (rate-limited)
 
@@ -1185,6 +1234,28 @@ Request to drop/abandon a lead. Requires admin approval before the lead is actua
 ```
 
 **Errors:** `400` lead already closed or dropped · `404` not found or not assigned to partner.
+
+---
+
+### PATCH /api/leads/partner/:id/status
+
+Partner reports what came of the site visit. Also mounted as `PATCH /api/partner/leads/:id/status`.
+
+**Auth:** PARTNER + KYC verified
+
+**Request Body:**
+
+```json
+{ "outcome": "NEGOTIATING", "note": "Buyer negotiating on price, wants a second visit with family." }
+```
+
+`outcome` is one of `STILL_DECIDING` · `WANTS_ANOTHER_VISIT` · `NEGOTIATING`. `note` is optional (max 1000 chars) and writes `partnerNotes`.
+
+**This is informational only — it never moves `lead.status`.** Closing and dropping keep their own guarded endpoints (`/close` needs a HELD escrow per Rule 6; `/request-drop` needs admin approval), so `CLOSED`/`DROPPED` are rejected here with a message naming the right route. It's also deliberately separate from `buyerFeedbackStatus`, which is what the *buyer* told the WhatsApp bot — admin compares the two to catch a misreported outcome, so neither overwrites the other.
+
+**Response `200`:** the updated lead, same sanitized shape as `GET /api/leads/partner/:id`, with `visitOutcome` and `visitOutcomeAt` set.
+
+**Errors:** `400` outcome not one of the three allowed values · `400 OTP_NOT_VERIFIED` — the site visit hasn't been verified yet, so there's no outcome to report · `400` lead already closed or dropped · `404` not found or not assigned to this partner.
 
 ---
 
@@ -2089,6 +2160,20 @@ Ordered by `createdAt` descending.
 ## 5. Partner
 
 All `/api/partner/*` routes require `authenticate` + `requirePartner`.
+
+### POST /api/partner/terms/accept
+
+Record the partner's acceptance of a versioned commission/terms agreement.
+
+**Auth:** PARTNER
+
+**Request Body:** `{ "version": "2026-10-v1" }`
+
+Versioned rather than a boolean: when the agreement text changes, a partner who accepted `v1` must accept again, so the *version accepted* is the record. The accepting IP is stored for the same evidentiary reason (not returned). Accepting a new version overwrites the old one; re-posting the same version just refreshes the timestamp.
+
+**Response `200`:** `{ "success": true, "message": "Terms accepted", "data": { "partnerTermsVersion": "2026-10-v1", "partnerTermsAcceptedAt": "2026-10-04T10:00:00.000Z" } }`
+
+---
 
 ### POST /api/partner/kyc/consent
 
@@ -3614,6 +3699,64 @@ Reject a partner's drop request. Reverts lead back to `ASSIGNED`.
 
 ---
 
+### POST /api/admin/leads
+
+Admin logs a lead that arrived off-platform (phone call, walk-in, referral).
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "buyerName": "Phone Enquiry",
+  "buyerPhone": "9876543210",
+  "buyerEmail": "caller@example.com",
+  "source": "PHONE",
+  "propertyId": "64abc...",
+  "propertyInterest": "3BHK in Whitefield, not listed yet",
+  "budget": "1-1.2Cr",
+  "note": "Called the office, wants a callback this week.",
+  "partnerId": "64partner..."
+}
+```
+
+`source` is one of `PHONE` · `WALK_IN` · `REFERRAL` · `EMAIL` · `OTHER`. **Either `propertyId` or `propertyInterest` is required** — `propertyId` for a live listing, `propertyInterest` as free text when the property isn't on the platform (in which case `propertyId` comes back `null`, so treat `property` as nullable in responses). `buyerEmail`, `budget`, `note` and `partnerId` are optional.
+
+Passing `partnerId` assigns the lead immediately (`status: ASSIGNED`) and notifies that partner; the partner must be KYC-verified, same gate as `/assign`. Without it the lead lands as `UNASSIGNED`. Repeat buyers are linked via `relatedLeadId` exactly as in `POST /api/leads/partner`. `buyerId` stays `null` — nobody authenticated. Writes an audit log.
+
+**Response `201`:** the created lead.
+
+**Errors:** `400` neither `propertyId` nor `propertyInterest` given, or partner not found / not KYC verified · `404` property not found.
+
+---
+
+### PATCH /api/admin/leads/:id/confirm
+
+Admin vets a partner-added lead (one in `AWAITING_ADMIN`), moving it into the normal pipeline.
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "partnerId": "64partner..." }` — optional. Omit it to confirm into `UNASSIGNED` (the assignment queue); pass one to confirm *and* assign in a single step. Passing a partner other than the one who added the lead is the **reassign** case.
+
+**Response `200`:** the updated lead. Notifies the assigned partner, or the partner who added it when left unassigned. Writes an audit log.
+
+**Errors:** `400` the lead isn't `AWAITING_ADMIN` (the message names its actual status), or partner not found / not KYC verified · `404` lead not found.
+
+---
+
+### PATCH /api/admin/leads/:id/reject
+
+Admin rejects a partner-added lead outright. Sets `status: DROPPED` with the reason, and notifies the partner who added it.
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "reason": "Buyer not reachable on the given number" }` (min 5 chars)
+
+**Errors:** `400` the lead isn't `AWAITING_ADMIN` · `404` lead not found.
+
+---
+
 ### PATCH /api/admin/leads/:id/assign
 
 Assign lead to a KYC-verified partner.
@@ -4073,11 +4216,20 @@ Real aggregate figures over the whole table — not sampled from whichever page 
 {
   "success": true,
   "message": "Success",
-  "data": { "heldSum": 150000, "refundedSum": 0, "releasedSumThisMonth": 250000, "avgHoldDays": 6.5 }
+  "data": {
+    "heldSum": 150000,
+    "refundedSum": 0,
+    "releasedSumThisMonth": 250000,
+    "refundedSumThisMonth": 0,
+    "heldCount": 3,
+    "releasedCountThisMonth": 2,
+    "avgHoldDays": 6.5,
+    "payoutFailedCount": 0
+  }
 }
 ```
 
-`avgHoldDays` is the average of `releasedAt - createdAt` (in days) across all `RELEASED` transactions.
+`avgHoldDays` is the average of `releasedAt - createdAt` (in days) across all `RELEASED` transactions. `heldSum`/`heldCount` include `HELD_PAYOUT_FAILED` — that money hasn't left the account either, it's just stuck on a failed payout attempt; `payoutFailedCount` is what surfaces that it needs attention. The `*ThisMonth` figures are calendar-month-to-date.
 
 ---
 

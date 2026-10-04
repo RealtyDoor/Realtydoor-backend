@@ -60,12 +60,27 @@ model User {
   premiumValidUntil DateTime?
   premiumOrderId    String?
 
+  // Structured partner identity (admin 3.2/3.3, partner B1.6/B1.8). These
+  // were previously only readable by eyeballing the uploaded KYC documents.
+  reraNumber    String?
+  gstin         String?
+  panNumber     String?
+  coverageAreas String[]
+
   // KYC (Partners only)
   kycStatus        KycStatus @default(NOT_SUBMITTED)
   kycDocumentUrls  String[]
   kycRejectionNote String?
   kycVerifiedAt    DateTime?
   kycConsentAt     DateTime? // POST /partner/kyc/consent — previously had nowhere to be recorded
+
+  // B12.3 — partner acceptance of the commission/terms agreement. Versioned
+  // because the agreement text changes: a partner who accepted v1 has to
+  // accept again when v2 ships, so the version accepted is the record, not
+  // just a boolean. IP is kept for the same evidentiary reason.
+  partnerTermsVersion    String?
+  partnerTermsAcceptedAt DateTime?
+  partnerTermsAcceptedIp String?
 
   // Suspension (admin-managed)
   isSuspended   Boolean   @default(false)
@@ -113,8 +128,25 @@ model User {
   bankAccountNo          String?
   bankIfsc               String?
   bankHolderName         String?
+  // Vestigial. Route onboarding was evaluated and rejected in favour of
+  // RazorpayX Payouts (direct bank transfer, no linked-account onboarding) —
+  // see escrow.prisma. Kept only so old rows aren't silently dropped; nothing
+  // reads it. The RazorpayX ids below are the live ones.
   razorpayRouteAccountId String?
   bankLinkedAt           DateTime?
+
+  // B12.1/B12.4 — RazorpayX payout account. A contact + fund account are
+  // created once at onboarding and reused for every release, instead of being
+  // rebuilt from the release request each time (which left no pre-validated
+  // state and no status for the partner to see).
+  razorpayContactId     String?
+  razorpayFundAccountId String?
+  // PENDING_VALIDATION → ACTIVE | NEEDS_CLARIFICATION | SUSPENDED.
+  // NEEDS_CLARIFICATION is the penny-drop-failed / admin-flagged state that
+  // the review and clarification screens read.
+  payoutAccountStatus   String?
+  payoutAccountNote     String?
+  payoutValidatedAt     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -123,6 +155,7 @@ model User {
   properties        Property[]
   assignedLeads     Lead[]                 @relation("PartnerLeads")
   buyerLeads        Lead[]                 @relation("BuyerLeads")
+  partnerAddedLeads Lead[]                 @relation("PartnerAddedLeads")
   userDocuments     UserDocument[]
   subscriptions     UserSubscription[]
   tickets           ServiceTicket[]

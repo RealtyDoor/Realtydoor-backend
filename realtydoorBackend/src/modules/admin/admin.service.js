@@ -8,9 +8,12 @@ const {
   sendLeadAssigned, sendLeadInquiryConfirmed,
   sendLoanStatusUpdate,
 } = require('../../lib/email');
-const { sendLeadAssignedNotice } = require('../../lib/wati');
+const { sendLeadAssignedNotice, sendSiteVisitOtp } = require('../../lib/wati');
 const { setUserRole } = require('../../lib/clerkAdmin');
 const { ROLES } = require('../../utils/validators');
+const { nextRefCode } = require('../../lib/refCode');
+const { stalledInfoFor } = require('../leads/leads.service');
+const { generate, expiresAt } = require('../../lib/otp');
 const logger = require('../../lib/logger');
 const { cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
@@ -31,9 +34,13 @@ const ADMIN_LEAD_BUYER_INCLUDE = {
 };
 
 function flattenBuyerInquiryCount(lead) {
-  if (!lead?.buyer) return lead;
+  if (!lead) return lead;
+  // 6.9 — the lead monitor's stalled column was computed client-side from row
+  // age over a 50-row sample; this is the real per-lead value.
+  const stalled = stalledInfoFor(lead);
+  if (!lead.buyer) return { ...lead, ...stalled };
   const { _count, ...buyer } = lead.buyer;
-  return { ...lead, buyer, inquiryCount: _count?.buyerLeads ?? 0 };
+  return { ...lead, buyer, inquiryCount: _count?.buyerLeads ?? 0, ...stalled };
 }
 
 async function getLeadById(leadId) {
@@ -74,6 +81,220 @@ async function getAllLeads(filters, skip, limit) {
   ]);
 
   return { data: data.map(flattenBuyerInquiryCount), total };
+}
+
+// 6.4a — admin logs a lead that arrived off-platform (phone, walk-in, …).
+// buyerId stays null: nobody authenticated, so this is the admin's record of
+// a conversation, not an account's own inquiry (same reasoning as
+// partnerAddLead in leads.service.js).
+async function createLead(data, adminId, ip) {
+  let property = null;
+  if (data.propertyId) {
+    property = await prisma.property.findUnique({
+      where: { id: data.propertyId },
+      select: { id: true, title: true },
+    });
+    if (!property) throw new ApiError(404, 'Property not found');
+  }
+
+  let partner = null;
+  if (data.partnerId) {
+    // Same gate as assignLead — an unverified partner must not receive work.
+    partner = await prisma.user.findFirst({
+      where: { id: data.partnerId, role: 'PARTNER', kycStatus: 'VERIFIED' },
+      select: { id: true, name: true, companyName: true },
+    });
+    if (!partner) throw new ApiError(400, 'Partner not found or not KYC verified');
+  }
+
+  // Repeat buyer: link to this phone's most recent lead, same as the partner path.
+  const earlier = await prisma.lead.findFirst({
+    where: { buyerPhone: data.buyerPhone },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
+
+  const refCode = await nextRefCode('lead');
+  const lead = await prisma.lead.create({
+    data: {
+      refCode,
+      buyerName: data.buyerName,
+      buyerPhone: data.buyerPhone,
+      buyerEmail: data.buyerEmail ?? '',
+      buyerMessage: data.note,
+      budget: data.budget,
+      propertyId: data.propertyId ?? null,
+      propertyInterest: data.propertyInterest,
+      source: data.source,
+      addedByAdminId: adminId,
+      ...(earlier && { relatedLeadId: earlier.id }),
+      ...(partner
+        ? { assignedPartnerId: partner.id, status: 'ASSIGNED', assignedAt: new Date() }
+        : { status: 'UNASSIGNED' }),
+    },
+  });
+
+  if (partner) {
+    await createNotification({
+      userId: partner.id,
+      title: 'New Lead Assigned',
+      message: `${lead.refCode} · ${lead.buyerName}${property ? ` for "${property.title}"` : ''} has been assigned to you.`,
+      type: 'LEAD_ASSIGNED',
+      linkUrl: `/partners/leads/${lead.id}`,
+    });
+  }
+
+  await createAuditLog({
+    adminId, action: 'LEAD_CREATED', targetType: 'Lead', targetId: lead.id,
+    after: { refCode: lead.refCode, source: lead.source, assignedPartnerId: lead.assignedPartnerId },
+    ipAddress: ip,
+  });
+
+  return lead;
+}
+
+// 6.3 — admin vets a partner-added lead. Confirming moves it out of
+// AWAITING_ADMIN into the normal pipeline, optionally assigning in one step
+// (passing a different partnerId is the "reassign" case).
+async function confirmLead(leadId, partnerId, adminId, ip) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId }, include: { property: { select: { title: true } } } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.status !== 'AWAITING_ADMIN') {
+    throw new ApiError(400, `Only a lead awaiting admin review can be confirmed (this one is ${lead.status})`);
+  }
+
+  let partner = null;
+  if (partnerId) {
+    partner = await prisma.user.findFirst({
+      where: { id: partnerId, role: 'PARTNER', kycStatus: 'VERIFIED' },
+      select: { id: true },
+    });
+    if (!partner) throw new ApiError(400, 'Partner not found or not KYC verified');
+  }
+
+  const updated = await prisma.lead.update({
+    where: { id: leadId },
+    data: partner
+      ? { assignedPartnerId: partner.id, status: 'ASSIGNED', assignedAt: new Date() }
+      : { status: 'UNASSIGNED' },
+  });
+
+  if (partner) {
+    await createNotification({
+      userId: partner.id,
+      title: 'Lead Confirmed',
+      message: `${lead.refCode} · ${lead.buyerName} is confirmed and assigned to you.`,
+      type: 'LEAD_ASSIGNED',
+      linkUrl: `/partners/leads/${leadId}`,
+    });
+  } else if (lead.addedByPartnerId) {
+    await createNotification({
+      userId: lead.addedByPartnerId,
+      title: 'Lead Confirmed',
+      message: `${lead.refCode} · ${lead.buyerName} has been confirmed and is now in the assignment queue.`,
+      type: 'LEAD_ASSIGNED',
+      linkUrl: `/partners/leads/${leadId}`,
+    });
+  }
+
+  await createAuditLog({
+    adminId, action: 'LEAD_CONFIRMED', targetType: 'Lead', targetId: leadId,
+    before: { status: lead.status }, after: { status: updated.status, assignedPartnerId: updated.assignedPartnerId },
+    ipAddress: ip,
+  });
+
+  return updated;
+}
+
+// 6.3 — admin rejects a partner-added lead outright.
+async function rejectLead(leadId, reason, adminId, ip) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.status !== 'AWAITING_ADMIN') {
+    throw new ApiError(400, `Only a lead awaiting admin review can be rejected (this one is ${lead.status})`);
+  }
+
+  const updated = await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      status: 'DROPPED',
+      droppedReason: reason,
+      droppedAt: new Date(),
+      droppedByAdminId: adminId,
+    },
+  });
+
+  if (lead.addedByPartnerId) {
+    await createNotification({
+      userId: lead.addedByPartnerId,
+      title: 'Lead Not Accepted',
+      message: `${lead.refCode} · ${lead.buyerName} was not accepted. Reason: ${reason}`,
+      type: 'LEAD_DROPPED',
+      linkUrl: `/partners/leads/${leadId}`,
+    });
+  }
+
+  await createAuditLog({
+    adminId, action: 'LEAD_REJECTED', targetType: 'Lead', targetId: leadId,
+    before: { status: lead.status }, after: { status: 'DROPPED', reason },
+    ipAddress: ip,
+  });
+
+  return updated;
+}
+
+// 6.6 — admin clears a locked site-visit OTP. Partners could already REQUEST
+// an override (POST /leads/partner/:id/request-otp-override sets a flag and
+// notifies admins), but there was no endpoint for an admin to actually act on
+// it, so the queue had no exit. Resets the attempt counter and lock and issues
+// a fresh code so the partner can retry; it deliberately does NOT mark the
+// visit verified — only the buyer reading out a real OTP can do that.
+async function overrideLeadOtp(leadId, adminId, ip, note) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.isOtpVerified) throw new ApiError(400, 'This site visit is already verified');
+  if (!lead.siteVisitScheduledAt) throw new ApiError(400, 'No site visit scheduled for this lead');
+
+  const otp = generate();
+  const updated = await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      siteVisitOTP: otp,
+      otpGeneratedAt: new Date(),
+      otpExpiresAt: expiresAt(),
+      otpAttempts: 0,
+      otpLockedUntil: null,
+      otpOverrideRequestedByPartner: false,
+      otpOverrideRequestedAt: null,
+      ...(note && { adminNotes: note }),
+    },
+  });
+
+  try {
+    await sendSiteVisitOtp(lead.buyerPhone, otp);
+  } catch (err) {
+    logger.error('[overrideLeadOtp] WATI OTP send failed', { leadId, error: err.message });
+  }
+
+  if (lead.assignedPartnerId) {
+    await createNotification({
+      userId: lead.assignedPartnerId,
+      title: 'OTP Unlocked',
+      message: `${lead.refCode} · the site-visit OTP has been unlocked and a fresh code sent to the buyer.`,
+      type: 'OTP_OVERRIDE_REQUESTED',
+      linkUrl: `/partners/leads/${leadId}`,
+    });
+  }
+
+  await createAuditLog({
+    adminId, action: 'LEAD_OTP_OVERRIDE', targetType: 'Lead', targetId: leadId,
+    before: { otpAttempts: lead.otpAttempts, otpLockedUntil: lead.otpLockedUntil },
+    after: { otpAttempts: 0, otpLockedUntil: null, note: note ?? null },
+    ipAddress: ip,
+  });
+
+  // The new code itself is never returned — it goes to the buyer only.
+  return { leadId: updated.id, otpAttempts: 0, otpLockedUntil: null, otpExpiresAt: updated.otpExpiresAt };
 }
 
 async function assignLead(leadId, partnerId, adminId, ip) {
@@ -653,14 +874,31 @@ async function getAuditLogs(filters, skip, limit) {
 
 // ─── PARTNER DRILL-DOWN ───────────────────────────────────────────────────────
 
+// Account number and PAN are masked before returning — an admin partner page
+// doesn't need the full values, and this payload is easy to copy out.
+function maskPartnerPayout(p) {
+  if (!p) return p;
+  const tail = (v, keep = 4) => (v ? `${'X'.repeat(Math.max(0, String(v).length - keep))}${String(v).slice(-keep)}` : v);
+  return { ...p, bankAccountNo: tail(p.bankAccountNo), panNumber: tail(p.panNumber) };
+}
+
 async function getPartnerById(partnerId) {
   const partner = await prisma.user.findFirst({
     where: { id: partnerId, role: 'PARTNER' },
     select: {
       id: true, name: true, email: true, phone: true, companyName: true,
       partnerSubType: true, bio: true, profileImageUrl: true, websiteUrl: true,
-      kycStatus: true, kycRejectionNote: true, kycVerifiedAt: true,
+      kycStatus: true, kycRejectionNote: true, kycVerifiedAt: true, kycConsentAt: true,
       isPremiumPartner: true, premiumValidUntil: true,
+      // 3.2/3.3 — structured identity instead of reading the KYC PDFs.
+      reraNumber: true, gstin: true, coverageAreas: true, address: true,
+      partnerTermsVersion: true, partnerTermsAcceptedAt: true,
+      // 3.4/B5.8 — RazorpayX payout account (not Route; see user.prisma).
+      payoutAccountStatus: true, payoutAccountNote: true, payoutValidatedAt: true,
+      razorpayContactId: true, razorpayFundAccountId: true,
+      bankName: true, bankIfsc: true, bankHolderName: true, bankAccountNo: true,
+      bankLinkedAt: true, panNumber: true,
+      isSuspended: true, suspendedAt: true, suspendReason: true,
       createdAt: true,
       assignedLeads: {
         select: {
@@ -691,7 +929,7 @@ async function getPartnerById(partnerId) {
   ]);
 
   return {
-    ...partner,
+    ...maskPartnerPayout(partner),
     metrics: { totalLeads, closedLeads, droppedLeads, totalListings, activeListings },
   };
 }
@@ -832,6 +1070,8 @@ async function getUserByIdAdmin(userId) {
       isPremiumPartner: true, premiumValidUntil: true,
       kycStatus: true, kycRejectionNote: true, kycVerifiedAt: true,
       isSuspended: true, deletedAt: true,
+      reraNumber: true, gstin: true, panNumber: true, coverageAreas: true,
+      partnerTermsVersion: true, partnerTermsAcceptedAt: true, kycConsentAt: true,
       createdAt: true, updatedAt: true,
     },
   });
@@ -906,7 +1146,7 @@ async function adminDeleteTeamMember(id) {
 }
 
 module.exports = {
-  getLeadById, getAllLeads, assignLead,
+  getLeadById, getAllLeads, assignLead, createLead, confirmLead, rejectLead, overrideLeadOtp,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   getPendingKyc, verifyKyc,
   getRevenueSummary,

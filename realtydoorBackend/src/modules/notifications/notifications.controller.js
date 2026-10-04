@@ -2,11 +2,17 @@ const { success } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./notifications.service');
 const { broadcastSchema } = require('./notifications.validator');
+const { NOTIFICATION_CATEGORIES } = require('../../lib/notifications');
+const ApiError = require('../../utils/ApiError');
 
 async function getMyNotifications(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
-    const { data, total } = await service.getMyNotifications(req.user.id, skip, limit);
+    const { category } = req.query;
+    if (category && !NOTIFICATION_CATEGORIES.includes(category)) {
+      throw new ApiError(400, `category must be one of: ${NOTIFICATION_CATEGORIES.join(', ')}`);
+    }
+    const { data, total } = await service.getMyNotifications(req.user.id, skip, limit, category);
     success(res, paginate(data, total, page, limit));
   } catch (err) { next(err); }
 }

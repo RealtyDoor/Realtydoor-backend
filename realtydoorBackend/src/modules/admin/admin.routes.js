@@ -4,6 +4,7 @@ const escrowCtrl = require('../escrow/escrow.controller');
 const cmsCtrl = require('../cms/cms.controller');
 const notifCtrl = require('../notifications/notifications.controller');
 const leadsCtrl = require('../leads/leads.controller');
+const watiCtrl = require('../wati/wati.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
@@ -13,8 +14,15 @@ router.use(authenticate, requireAdmin, perUserLimiter);
 
 // Lead management
 router.get('/leads',        ctrl.getLeads);
+router.post('/leads',       ctrl.createLead);          // 6.4a — admin logs an off-platform lead
 router.get('/leads/:id',    ctrl.getLeadById);
 router.patch('/leads/:id/assign',        ctrl.assignLead);
+// 6.3 — vet a partner-added (AWAITING_ADMIN) lead. Confirm optionally assigns
+// in one step; passing a different partnerId is the reassign case.
+router.patch('/leads/:id/confirm',       ctrl.confirmLead);
+router.patch('/leads/:id/reject',        ctrl.rejectLead);
+// 6.6 — clear a locked site-visit OTP and issue a fresh code to the buyer.
+router.patch('/leads/:id/otp-override',  ctrl.overrideLeadOtp);
 router.patch('/leads/:id/approve-drop',  leadsCtrl.approveDrop);
 router.patch('/leads/:id/reject-drop',   leadsCtrl.rejectDrop);
 
@@ -39,6 +47,8 @@ router.get('/audit-logs', ctrl.getAuditLogs);
 // Partner metrics + drill-down
 router.get('/partners',     ctrl.getPartnerMetrics);
 router.get('/partners/:id', ctrl.getPartnerById);
+// 3.5 — flag a payout account for clarification, or clear it once fixed.
+router.patch('/partners/:id/payout-account/status', ctrl.setPayoutAccountStatus);
 
 // Escrow (admin actions)
 router.patch('/escrow/:id/release', escrowCtrl.releaseEscrow);
@@ -118,6 +128,18 @@ router.patch('/disputes/:id', ctrl.resolveDispute);
 // Review moderation
 router.get('/reviews',                ctrl.listReviews);
 router.patch('/reviews/:id/moderate', ctrl.moderateReview);
+
+// WhatsApp (WATI) — templates, delivery log, spend (docs 12.1-12.6)
+router.get('/wati/stats',                  watiCtrl.getStats);
+router.get('/wati/messages',               watiCtrl.listMessages);
+router.get('/wati/templates',              watiCtrl.listTemplates);
+router.post('/wati/templates',             watiCtrl.createTemplate);
+router.get('/wati/templates/:id',          watiCtrl.getTemplate);
+router.patch('/wati/templates/:id',        watiCtrl.updateTemplate);
+router.delete('/wati/templates/:id',       watiCtrl.deleteTemplate);
+router.post('/wati/templates/:id/submit',  watiCtrl.submitTemplate);
+router.patch('/wati/templates/:id/status', watiCtrl.syncStatus);
+router.post('/wati/templates/:id/test-send', watiCtrl.testSend);
 
 // Platform config
 router.get('/config',         ctrl.listConfig);

@@ -11,7 +11,7 @@ const DEFAULT_AUTO_ESCALATE_DAYS = 14;
 // §2.3). autoEscalatedAt marks a row as already-flagged so re-runs don't spam
 // admins with the same overdue escrow every night.
 async function runOnce() {
-  const days = await getConfigNumber('escrowAutoEscalateDays', DEFAULT_AUTO_ESCALATE_DAYS);
+  const days = await getConfigNumber('escrow_auto_escalate_days', DEFAULT_AUTO_ESCALATE_DAYS);
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
   // Filtered in JS, not in the query: on MongoDB, `autoEscalatedAt: null` only
