@@ -370,7 +370,17 @@ async function getPendingProperties(filters, skip, limit) {
   return { data, total };
 }
 
-async function approveProperty(propertyId, adminId, ip) {
+// 4.14 — approval now takes a visibility choice. The three levels are
+// independent rungs, not a single setting:
+//
+//   public   -> publishStatus APPROVED; reachable at its own URL. Always set
+//               by approving, since that is what approval means.
+//   search   -> isSearchable; appears in search and related-listing results.
+//   homepage -> isFeatured; appears in the featured strip.
+//
+// Omitting the visibility object keeps the previous behaviour exactly: public
+// and searchable, not featured. So existing callers are unaffected.
+async function approveProperty(propertyId, adminId, ip, visibility = {}) {
   const property = await prisma.property.findUnique({
     where: { id: propertyId },
     include: { partner: { select: { email: true } } },
@@ -379,7 +389,20 @@ async function approveProperty(propertyId, adminId, ip) {
 
   const updated = await prisma.property.update({
     where: { id: propertyId },
-    data: { publishStatus: 'APPROVED', rejectionNote: null },
+    data: {
+      publishStatus: 'APPROVED',
+      rejectionNote: null,
+      // Written explicitly rather than left missing, so an approved listing
+      // always has a definite answer for the search filter.
+      isSearchable: visibility.searchable !== undefined ? visibility.searchable : true,
+      ...(visibility.homepageFeatured !== undefined ? { isFeatured: visibility.homepageFeatured } : {}),
+      // Approving clears any outstanding change checklist: the fixes were
+      // either made or no longer being asked for.
+      requestedChanges: [],
+      requestedChangesNote: null,
+      changesRequestedAt: null,
+      changesRequestedByAdminId: null,
+    },
   });
 
   await createNotification({
@@ -392,7 +415,16 @@ async function approveProperty(propertyId, adminId, ip) {
 
   await createAuditLog({
     adminId, action: 'PROPERTY_APPROVED', targetType: 'Property', targetId: propertyId,
-    before: { publishStatus: 'PENDING_APPROVAL' }, after: { publishStatus: 'APPROVED' },
+    before: {
+      publishStatus: property.publishStatus,
+      isSearchable: property.isSearchable,
+      isFeatured: property.isFeatured,
+    },
+    after: {
+      publishStatus: 'APPROVED',
+      isSearchable: updated.isSearchable,
+      isFeatured: updated.isFeatured,
+    },
     ipAddress: ip,
   });
 
@@ -431,6 +463,74 @@ async function rejectProperty(propertyId, note, adminId, ip) {
   sendPropertyRejected(property.partner.email, property.title, note).catch(() => {});
   cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
   cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
+  return updated;
+}
+
+// 4.15 — ask the partner for specific fixes instead of rejecting outright.
+//
+// Distinct from rejectProperty: REJECTED is a refusal, CHANGES_REQUESTED is a
+// live submission the partner is expected to correct and resend. Both are
+// hidden from every public surface.
+//
+// Refused on an APPROVED listing on purpose. Moving a live listing to
+// CHANGES_REQUESTED would pull it out of public view as a side effect of
+// asking for a correction, which is rarely what anyone intends. Use the
+// change-request flow for edits to live listings, or reject to take it down
+// deliberately.
+async function requestPropertyChanges(propertyId, { items, note }, adminId, adminName, ip) {
+  const property = await prisma.property.findUnique({
+    where: { id: propertyId },
+    include: { partner: { select: { email: true } } },
+  });
+  if (!property) throw new ApiError(404, 'Property not found');
+
+  if (property.publishStatus === 'APPROVED') {
+    throw new ApiError(400,
+      'This listing is live. Requesting changes would remove it from public view. '
+      + 'Edit it directly, or reject it if it should come down.');
+  }
+  if (property.publishStatus === 'ARCHIVED') {
+    throw new ApiError(400, 'This listing is archived');
+  }
+
+  const updated = await prisma.property.update({
+    where: { id: propertyId },
+    data: {
+      publishStatus: 'CHANGES_REQUESTED',
+      requestedChanges: items,
+      requestedChangesNote: note || null,
+      changesRequestedAt: new Date(),
+      changesRequestedByAdminId: adminId,
+      // The listing is no longer refused, so a stale rejection note would
+      // contradict the checklist the partner is now being shown.
+      rejectionNote: null,
+    },
+  });
+
+  await createNotification({
+    userId: property.partnerId,
+    title: 'Changes requested on your listing',
+    message: `Admin asked for ${items.length} fix(es) on "${property.title}"${note ? `: ${note}` : ''}`,
+    type: 'PROPERTY_CHANGES_REQUESTED',
+    linkUrl: `/partner/listings/${propertyId}`,
+  });
+
+  await createAuditLog({
+    adminId, action: 'PROPERTY_CHANGES_REQUESTED', targetType: 'Property', targetId: propertyId,
+    before: { publishStatus: property.publishStatus },
+    after: { publishStatus: 'CHANGES_REQUESTED', items, note: note || null },
+    ipAddress: ip,
+  });
+
+  // Reuses the rejection email rather than adding a near-identical template:
+  // the partner needs the checklist, and this is the existing channel for
+  // "your listing needs work". The subject line is the template's own.
+  sendPropertyRejected(
+    property.partner.email,
+    property.title,
+    `${note ? note + ' ' : ''}Requested fixes: ${items.join('; ')}`,
+  ).catch(() => {});
+
   return updated;
 }
 
@@ -1176,6 +1276,7 @@ async function adminDeleteTeamMember(id) {
 module.exports = {
   getLeadById, getAllLeads, assignLead, createLead, confirmLead, rejectLead, overrideLeadOtp,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
+  requestPropertyChanges,
   getPendingKyc, verifyKyc,
   getRevenueSummary,
   getAuditLogs,

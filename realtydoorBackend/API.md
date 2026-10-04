@@ -707,6 +707,13 @@ instead, and poll `GET /api/partner/listings/change-requests` for the outcome.
 If nothing in the payload actually differs from the stored listing, no request
 is created and the message is `No changes to review` with `changeRequest: null`.
 
+**If `publishStatus` is `CHANGES_REQUESTED`** the edit applies immediately *and*
+resubmits the listing: `publishStatus` returns to `PENDING_APPROVAL` and the
+admin's fix checklist is cleared. The message is `Changes saved and resubmitted
+for review`. See **Listing visibility and requested changes (docs 4.14 / 4.15)**
+for the full flow — there is no separate resubmit endpoint, because acting on
+the feedback is the resubmission.
+
 Submitting a second edit while one is still `PENDING` marks the earlier request
 `SUPERSEDED`, so the admin queue only ever holds the latest diff per listing.
 
@@ -4023,16 +4030,19 @@ Each of the four status tabs on the admin Property Queue page now returns rows t
 
 ### PATCH /api/admin/properties/:id/approve
 
-Approve a pending listing. Notifies partner + sends email.
+Approve a pending listing. Notifies partner + sends email. Takes an optional
+visibility choice — see **Listing visibility and requested changes (docs 4.14 /
+4.15)** below for the request body, the three visibility levels and the
+`isSearchable` semantics.
 
 **Auth:** ADMIN
 
-**Request Body:** _(none)_
+**Request Body:** optional — `{ "visibility": { "searchable": true, "homepageFeatured": false } }`
 
 **Response `200`:**
 
 ```json
-{ "success": true, "message": "Property approved", "data": { "id": "...", "publishStatus": "APPROVED", "rejectionNote": null } }
+{ "success": true, "message": "Property approved (visible in: public, search)", "data": { "id": "...", "publishStatus": "APPROVED", "isSearchable": true, "isFeatured": false, "rejectionNote": null } }
 ```
 
 ---
@@ -4738,6 +4748,160 @@ because it changes on every call by definition.
 - `400` only one of `latitude`/`longitude` given
 - `400` neither `mapLink` nor a coordinate pair given
 - `404` property not found
+
+## Listing visibility and requested changes (docs 4.14 / 4.15)
+
+### Three independent visibility levels
+
+Approval is no longer one switch. The three rungs are separate and combinable:
+
+| Level | Field | Means |
+| --- | --- | --- |
+| public | `publishStatus: APPROVED` | Reachable at its own URL. Always set by approving — that is what approval *is*. |
+| search | `isSearchable` | Appears in search results and in the related-listings strip on a detail page. |
+| homepage | `isFeatured` | Appears in the featured strip. |
+
+So a listing can be **public-by-link but unlisted**: approved and reachable via
+`GET /api/properties/:slug`, absent from `GET /api/properties`.
+
+**`isSearchable` is nullable and `null` means searchable.** It was added after
+18 listings were already live and, on MongoDB, a Prisma `@default` is applied
+only at create time — so a required `Boolean @default(true)` would have been
+*missing* rather than `true` on all of them, and a required field offers no
+`isSet` filter to find them with. Those 18 listings would have silently
+vanished from search.
+
+Verified against the live database, which is worth recording because the
+intuitive filter is the broken one:
+
+| Filter | Rows matched (of 18 with the field missing) |
+| --- | --- |
+| `{ isSearchable: { isSet: false } }` | **18** |
+| `{ isSearchable: null }` | 0 |
+| `{ isSearchable: { not: false } }` | 0 |
+
+The live filter is therefore
+`{ OR: [{ isSearchable: true }, { isSearchable: { isSet: false } }] }`, and it
+is applied as an entry in `AND` — never spread at the top level — because
+`searchProperties` assigns `where.OR` for the free-text query, which would
+overwrite a top-level `OR` and drop the visibility filter from every keyword
+search.
+
+`isSearchable` does **not** affect direct access by slug, the aggregate city
+counts, or the B2B partner feed.
+
+---
+
+### PATCH /api/admin/properties/:id/approve — visibility options
+
+(The same endpoint listed earlier under Property approval; this is the full
+reference for its body.)
+
+**Auth:** ADMIN
+
+**Request Body:** optional.
+
+```json
+{ "visibility": { "searchable": true, "homepageFeatured": false } }
+```
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `visibility.searchable` | `true` | `false` approves the listing as public-by-link only. |
+| `visibility.homepageFeatured` | unchanged | Omitting it leaves `isFeatured` as it was. |
+
+**Sending no body at all is valid and keeps the previous behaviour exactly:**
+public and searchable, not featured. Existing callers need no change.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Property approved (visible in: public, search)",
+  "data": { "...": "the updated property" }
+}
+```
+
+The message names the levels actually granted. Approving also writes
+`isSearchable` explicitly rather than leaving it missing, so every approved
+listing carries a definite answer, and it **clears any outstanding change
+checklist** — the fixes were either made or are no longer being asked for.
+
+The audit entry records `isSearchable` and `isFeatured` before and after, not
+just `publishStatus`.
+
+---
+
+### PATCH /api/admin/properties/:id/request-changes
+
+Ask the partner for specific fixes instead of rejecting the listing (4.15).
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "items": ["Add interior photos", "Carpet area looks wrong", "RERA number missing"],
+  "note": "Resend once these are sorted and it will go straight back in the queue."
+}
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `items` | yes | 1–20 entries, each 3–300 chars. A change request with nothing in it tells the partner nothing. |
+| `note` | no | Max 1000 chars. |
+
+**Response `200`:** the property, now `publishStatus: "CHANGES_REQUESTED"`,
+with `requestedChanges`, `requestedChangesNote`, `changesRequestedAt` and
+`changesRequestedByAdminId` set. Any stale `rejectionNote` is cleared, since it
+would contradict the checklist the partner is now being shown.
+
+**`CHANGES_REQUESTED` is a new `PublishStatus` value.** It differs from
+`REJECTED` in intent: a rejection is a refusal, this is a live submission the
+partner is expected to correct and resend. Both are hidden from every public
+surface, exactly like `PENDING_APPROVAL`. Find them with
+`GET /api/admin/properties?status=CHANGES_REQUESTED`.
+
+**Refused on a live listing.** Moving an `APPROVED` listing to
+`CHANGES_REQUESTED` would pull it out of public view as a side effect of asking
+for a correction, which is rarely the intent. Use the change-request flow
+(`PATCH /api/properties/:id`) to edit a live listing, or reject it to take it
+down deliberately.
+
+**Errors:**
+- `400` the listing is `APPROVED` (message explains the alternatives)
+- `400` the listing is `ARCHIVED`
+- `400` `items` empty, over 20, or an entry under 3 chars
+- `404` property not found
+
+---
+
+### Resubmission
+
+**A partner editing a `CHANGES_REQUESTED` listing resubmits it.** `PATCH
+/api/properties/:id` sets `publishStatus` back to `PENDING_APPROVAL` and clears
+the whole checklist:
+
+```json
+{
+  "success": true,
+  "message": "Changes saved and resubmitted for review",
+  "data": { "property": { "publishStatus": "PENDING_APPROVAL", "requestedChanges": [] }, "changeRequest": null }
+}
+```
+
+There is no separate resubmit endpoint: acting on the feedback *is* the
+resubmission. Without this the listing would sit in `CHANGES_REQUESTED`
+indefinitely — invisible to buyers and absent from the admin's pending queue.
+
+Note this is the opposite of the live-listing path in the same endpoint: an
+edit to an `APPROVED` listing is held as a `changeRequest` and the listing is
+untouched, whereas an edit to a `CHANGES_REQUESTED` listing applies
+immediately, because there is nothing published to protect.
+
+---
 
 ---
 

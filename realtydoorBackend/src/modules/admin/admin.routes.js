@@ -58,6 +58,8 @@ router.patch('/properties/:id/location',              locationCtrl.updateLocatio
 router.get('/properties/:id',          ctrl.getPropertyById);
 router.patch('/properties/:id/approve', ctrl.approveProperty);
 router.patch('/properties/:id/reject',  ctrl.rejectProperty);
+// 4.15 — ask for fixes without refusing the listing.
+router.patch('/properties/:id/request-changes', ctrl.requestPropertyChanges);
 router.patch('/properties/:id',         ctrl.editProperty);
 
 // KYC

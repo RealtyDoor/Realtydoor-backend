@@ -32,6 +32,8 @@ const CATEGORY_BY_TYPE = {
   MANDATE_REVOKED: 'LISTINGS',
   // 4.7 — admin moved the listing on the map.
   PROPERTY_LOCATION_EDITED: 'LISTINGS',
+  // 4.15 — admin asked for fixes rather than rejecting.
+  PROPERTY_CHANGES_REQUESTED: 'LISTINGS',
   SERVICE_ACTIVATED: 'SYSTEM',
   LOAN_STATUS_UPDATE: 'SYSTEM',
   ANNOUNCEMENT: 'SYSTEM',

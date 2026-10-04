@@ -63,6 +63,25 @@ const changeUserRoleSchema = z.object({
   role: roleEnum,
 });
 
+// 4.14 — the visibility choice on the approve modal. All optional, so an
+// approve with no body keeps the previous behaviour: public and searchable,
+// not featured.
+const approvePropertySchema = z.object({
+  visibility: z.object({
+    searchable:       z.boolean().optional(),
+    homepageFeatured: z.boolean().optional(),
+  }).optional(),
+}).optional().default({});
+
+// 4.15 — the checklist of fixes. At least one item, because a change request
+// with nothing in it tells the partner nothing.
+const requestPropertyChangesSchema = z.object({
+  items: z.array(z.string().min(3, 'Each item must be at least 3 characters').max(300))
+    .min(1, 'At least one requested change is required')
+    .max(20, 'At most 20 requested changes'),
+  note: z.string().max(1000).optional(),
+});
+
 const editPropertySchema = z.object({
   title:         z.string().min(5).max(200).optional(),
   description:   z.string().max(5000).optional(),
@@ -207,6 +226,8 @@ module.exports = {
   updateLoanStatusSchema,
   changeUserRoleSchema,
   editPropertySchema,
+  approvePropertySchema,
+  requestPropertyChangesSchema,
   updateTicketSchema,
   createServiceSchema,
   updateServiceSchema,

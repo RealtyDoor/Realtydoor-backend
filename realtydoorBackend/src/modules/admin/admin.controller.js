@@ -11,6 +11,8 @@ const {
   updateLoanStatusSchema,
   changeUserRoleSchema,
   editPropertySchema,
+  approvePropertySchema,
+  requestPropertyChangesSchema,
   updateTicketSchema,
   createServiceSchema,
   updateServiceSchema,
@@ -105,8 +107,25 @@ async function getPendingProperties(req, res, next) {
 
 async function approveProperty(req, res, next) {
   try {
-    const property = await service.approveProperty(req.params.id, req.user.id, req.ip);
-    success(res, property, 'Property approved');
+    // 4.14 — body is optional; omitting it approves as public + searchable,
+    // not featured, which is what approving did before this existed.
+    const { visibility } = approvePropertySchema.parse(req.body ?? {});
+    const property = await service.approveProperty(req.params.id, req.user.id, req.ip, visibility || {});
+    const where = ['public'];
+    if (property.isSearchable) where.push('search');
+    if (property.isFeatured) where.push('homepage');
+    success(res, property, `Property approved (visible in: ${where.join(', ')})`);
+  } catch (err) { next(err); }
+}
+
+// 4.15 — ask for specific fixes without rejecting the listing.
+async function requestPropertyChanges(req, res, next) {
+  try {
+    const { items, note } = requestPropertyChangesSchema.parse(req.body);
+    const property = await service.requestPropertyChanges(
+      req.params.id, { items, note }, req.user.id, req.user.name, req.ip,
+    );
+    success(res, property, `Requested ${items.length} change(s)`);
   } catch (err) { next(err); }
 }
 
@@ -501,6 +520,7 @@ module.exports = {
   getLeadById, getLeads, assignLead, createLead, confirmLead, rejectLead, overrideLeadOtp,
   setPayoutAccountStatus,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
+  requestPropertyChanges,
   getPendingKyc, verifyKyc,
   getRevenue, getAuditLogs, getPartnerMetrics,
   getTickets, getTicket, updateTicket, getTicketStats,

@@ -43,6 +43,11 @@ enum ListingType {
 enum PublishStatus {
   PENDING_APPROVAL
   APPROVED
+  // 4.15 — admin asked for specific fixes. Distinct from REJECTED: the
+  // listing is still a live submission the partner is expected to correct and
+  // resend, not a refusal. Hidden from every public surface, like
+  // PENDING_APPROVAL.
+  CHANGES_REQUESTED
   REJECTED
   ARCHIVED
 }

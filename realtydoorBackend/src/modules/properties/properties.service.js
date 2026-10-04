@@ -5,6 +5,24 @@ const { withCache, cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 const logger = require('../../lib/logger');
 
+// 4.14 — "appears in search results". null means searchable: these fields were
+// added after 18 listings were already live, and on MongoDB a Prisma default
+// is applied only at create time, so those rows have the field MISSING rather
+// than set.
+//
+// The form matters. Verified against the real data: { isSet: false } matches
+// all 18, while { isSearchable: null } and { isSearchable: { not: false } }
+// each match ZERO — so the intuitive "not explicitly false" filter would have
+// emptied search completely.
+//
+// Scope is deliberate: this gates search and related-listing results only. It
+// does NOT affect direct access by slug (a listing can be public-by-link but
+// unlisted), the aggregate city counts, or the B2B partner feed.
+// Applied as an entry in `AND`, never spread at the top level: searchProperties
+// assigns where.OR for the free-text query, which would overwrite a top-level
+// OR and silently drop the visibility filter from every keyword search.
+const SEARCHABLE = { OR: [{ isSearchable: true }, { isSearchable: { isSet: false } }] };
+
 const SORT_MAP = {
   price_asc: { price: 'asc' },
   price_desc: { price: 'desc' },
@@ -16,6 +34,7 @@ async function searchProperties(query, skip, limit, page) {
   const where = {
     publishStatus: 'APPROVED',
     isB2BOnly: false,
+    AND: [SEARCHABLE],
   };
 
   if (query.q) {
@@ -120,6 +139,7 @@ async function getPropertyBySlug(slug) {
         publishStatus: 'APPROVED', isB2BOnly: false,
         city: property.city, propertyType: property.propertyType,
         id: { not: property.id },
+        AND: [SEARCHABLE],
       },
       take: 6,
       orderBy: { createdAt: 'desc' },
@@ -455,8 +475,28 @@ async function updateProperty(id, partnerId, data) {
     return { property, changeRequest, message: 'Changes submitted for admin review. Your listing stays live until they are reviewed.' };
   }
 
+  // 4.15 — editing a listing that is sitting on a change checklist resubmits
+  // it. The partner has acted on the feedback, so it belongs back in the
+  // review queue and the old checklist no longer applies. Without this the
+  // listing would stay in CHANGES_REQUESTED forever, invisible to buyers and
+  // absent from the admin's pending queue.
+  const resubmitting = property.publishStatus === 'CHANGES_REQUESTED';
+  if (resubmitting) {
+    data.publishStatus = 'PENDING_APPROVAL';
+    data.requestedChanges = [];
+    data.requestedChangesNote = null;
+    data.changesRequestedAt = null;
+    data.changesRequestedByAdminId = null;
+  }
+
   const updated = await prisma.property.update({ where: { id }, data });
-  return { property: updated, changeRequest: null, message: 'Listing updated' };
+  return {
+    property: updated,
+    changeRequest: null,
+    message: resubmitting
+      ? 'Changes saved and resubmitted for review'
+      : 'Listing updated',
+  };
 }
 
 async function getFeaturedProperties() {

@@ -974,6 +974,49 @@
               "body": "{\"success\":false,\"message\":\"Property not found\"}"
             }
           ]
+        },
+        {
+          "name": "Resubmit after Changes Requested (4.15)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"carpetArea\": 1250\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/properties/{{propertyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "properties",
+                "{{propertyId}}"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Back in the queue",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Changes saved and resubmitted for review\",\"data\":{\"property\":{\"id\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"slug\":\"3bhk-palm-grove\",\"publishStatus\":\"PENDING_APPROVAL\",\"isSearchable\":true,\"isFeatured\":false,\"rejectionNote\":null,\"requestedChanges\":[],\"requestedChangesNote\":null,\"changesRequestedAt\":null,\"changesRequestedByAdminId\":null},\"changeRequest\":null}}"
+            }
+          ]
         }
       ]
     },
@@ -5624,6 +5667,321 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":false,\"message\":\"latitude and longitude must be provided together\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Visibility & Requested Changes",
+          "item": [
+            {
+              "name": "Approve - default visibility (4.14)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/approve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "approve"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Public + search",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Property approved (visible in: public, search)\",\"data\":{\"id\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"slug\":\"3bhk-palm-grove\",\"publishStatus\":\"APPROVED\",\"isSearchable\":true,\"isFeatured\":false,\"rejectionNote\":null,\"requestedChanges\":[],\"requestedChangesNote\":null,\"changesRequestedAt\":null,\"changesRequestedByAdminId\":null}}"
+                }
+              ]
+            },
+            {
+              "name": "Approve - public-by-link only (4.14)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"visibility\": {\n    \"searchable\": false\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/approve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "approve"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Unlisted but reachable by slug",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Property approved (visible in: public)\",\"data\":{\"id\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"slug\":\"3bhk-palm-grove\",\"publishStatus\":\"APPROVED\",\"isSearchable\":false,\"isFeatured\":false,\"rejectionNote\":null,\"requestedChanges\":[],\"requestedChangesNote\":null,\"changesRequestedAt\":null,\"changesRequestedByAdminId\":null}}"
+                }
+              ]
+            },
+            {
+              "name": "Approve - homepage featured (4.14)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"visibility\": {\n    \"searchable\": true,\n    \"homepageFeatured\": true\n  }\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/approve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "approve"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - All three levels",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Property approved (visible in: public, search, homepage)\",\"data\":{\"id\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"slug\":\"3bhk-palm-grove\",\"publishStatus\":\"APPROVED\",\"isSearchable\":true,\"isFeatured\":true,\"rejectionNote\":null,\"requestedChanges\":[],\"requestedChangesNote\":null,\"changesRequestedAt\":null,\"changesRequestedByAdminId\":null}}"
+                }
+              ]
+            },
+            {
+              "name": "Request Changes (4.15)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"items\": [\n    \"Add interior photos\",\n    \"Carpet area looks wrong\",\n    \"RERA number missing\"\n  ],\n  \"note\": \"Resend once these are sorted and it will go straight back in the queue.\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/request-changes",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "request-changes"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Changes requested",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Requested 3 change(s)\",\"data\":{\"id\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"slug\":\"3bhk-palm-grove\",\"publishStatus\":\"CHANGES_REQUESTED\",\"isSearchable\":true,\"isFeatured\":false,\"rejectionNote\":null,\"requestedChanges\":[\"Add interior photos\",\"Carpet area looks wrong\",\"RERA number missing\"],\"requestedChangesNote\":\"Resend once these are sorted and it will go straight back in the queue.\",\"changesRequestedAt\":\"2026-10-04T13:20:00.000Z\",\"changesRequestedByAdminId\":\"6a44a679...\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Request Changes - 400 on a live listing",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"items\": [\n    \"Add interior photos\"\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/request-changes",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "request-changes"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "400 - Refused on APPROVED",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"This listing is live. Requesting changes would remove it from public view. Edit it directly, or reject it if it should come down.\"}"
+                }
+              ]
+            },
+            {
+              "name": "Request Changes - 400 empty checklist",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"items\": []\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/request-changes",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "request-changes"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "400 - Validation",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"At least one requested change is required\"}"
+                }
+              ]
+            },
+            {
+              "name": "Admin queue - CHANGES_REQUESTED (4.15)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties?status=CHANGES_REQUESTED",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties"
+                  ],
+                  "query": [
+                    {
+                      "key": "status",
+                      "value": "CHANGES_REQUESTED"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Listings awaiting fixes",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"slug\":\"3bhk-palm-grove\",\"publishStatus\":\"CHANGES_REQUESTED\",\"isSearchable\":true,\"isFeatured\":false,\"rejectionNote\":null,\"requestedChanges\":[\"Add interior photos\"],\"requestedChangesNote\":null,\"changesRequestedAt\":null,\"changesRequestedByAdminId\":null}],\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1}}"
                 }
               ]
             }

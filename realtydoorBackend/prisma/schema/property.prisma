@@ -18,6 +18,27 @@ model Property {
   adminEditNote     String?
   isFeatured        Boolean        @default(false)
   isFeaturedProject Boolean        @default(false)
+
+  // 4.14 — the middle rung of the three visibility levels an admin picks on
+  // approval: public (reachable at its own URL, i.e. publishStatus APPROVED),
+  // searchable (this field), and homepage-featured (isFeatured).
+  //
+  // Nullable, and null means SEARCHABLE. A Boolean @default(true) would be
+  // *missing* rather than true on every listing that already exists, and a
+  // required field has no `isSet` filter to find them with — so the 18 live
+  // listings would have silently dropped out of search. Verified against the
+  // database: { isSet: false } matches those rows, while both `null` and
+  // `{ not: false }` match zero of them.
+  isSearchable      Boolean?
+
+  // 4.15 — the checklist an admin sends back with CHANGES_REQUESTED. Replaced
+  // wholesale on each request and cleared when the partner resubmits; the
+  // durable history lives in PropertyEditLog and AuditLog as it does for every
+  // other admin action.
+  requestedChanges          String[]
+  requestedChangesNote      String?
+  changesRequestedAt        DateTime?
+  changesRequestedByAdminId String?   @db.ObjectId
   isB2BOnly         Boolean        @default(false)
 
   // Physical details
