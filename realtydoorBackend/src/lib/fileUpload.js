@@ -139,4 +139,5 @@ module.exports = {
   videoTourUploader,
   partnerProfilePhotoUploader,
   deleteFile,
+  s3Upload,
 };

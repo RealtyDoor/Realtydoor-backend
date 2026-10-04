@@ -5,6 +5,8 @@ const { createNotification } = require('../../lib/notifications');
 const { getConfigNumber } = require('../config/config.service');
 const { isSelfListedByAgent } = require('../listings/integrity.service');
 const { getActiveReferralForPhone } = require('../referrals/referral.service');
+const { buildCommissionReceiptPdf } = require('../../lib/pdfReceipt');
+const { s3Upload } = require('../../lib/fileUpload');
 
 // Platform default, the last fallback when no card matches. Admin-controlled
 // via platform config, consistent with the 2%-is-admin-controlled decision.
@@ -339,6 +341,10 @@ async function getLeadTerms(leadId) {
       id: true, feePct: true, dealPriceAtLock: true, commissionLockedAt: true,
       commissionVersion: true, rateCardId: true, rateCardVersion: true,
       platformCommissionPct: true, commissionAmountPaise: true, commissionStatus: true,
+      // R26 — otherwise invoiceLeadCommission/collectLeadCommission (which
+      // return getLeadTerms(leadId) after writing these) silently drop them
+      // from their own response despite the write having succeeded.
+      invoiceUrl: true, invoicedAt: true, collectedAt: true,
     },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
@@ -580,6 +586,128 @@ async function lockLeadTerms(leadId, adminId, ip) {
   return getLeadTerms(leadId);
 }
 
+// ─── R26 — owner success-fee payment record + receipt ───────────────────────
+// PENDING → INVOICED → COLLECTED, with DISPUTED as an off-ramp from either.
+// A simple payment receipt (confirms the amount and whether it's paid) —
+// deliberately not a GST tax invoice (no GSTIN/HSN/CGST-SGST split); see
+// lib/pdfReceipt.js. "The owner" here is whoever is actually on the hook for
+// the fee — property.partnerId, which is the real owner for an OWNER
+// listing and, after R21, also correctly resolves to the self-listing agent
+// rather than a third party that doesn't exist.
+async function invoiceLeadCommission(leadId, adminId, ip) {
+  const terms = await getLeadTerms(leadId);
+  if (!terms.commissionLockedAt) {
+    throw new ApiError(400, 'Lock the commission terms before invoicing', { code: 'COMMISSION_NOT_LOCKED' });
+  }
+  if (terms.commissionStatus !== 'PENDING') {
+    throw new ApiError(400, `Cannot invoice from status ${terms.commissionStatus}`, { code: 'INVALID_COMMISSION_STATUS' });
+  }
+
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: {
+      refCode: true,
+      property: { select: { title: true, partnerId: true, partner: { select: { name: true, companyName: true } } } },
+    },
+  });
+
+  const invoicedAt = new Date();
+  const pdfBuffer = await buildCommissionReceiptPdf({
+    refCode: lead.refCode,
+    propertyTitle: lead.property?.title,
+    payerName: lead.property?.partner?.companyName || lead.property?.partner?.name,
+    feePct: terms.feePct,
+    dealPrice: terms.dealPriceAtLock,
+    feeAmount: terms.amounts?.feeAmount,
+    invoicedAt,
+    collectedAt: null,
+  });
+  const { url } = await s3Upload(pdfBuffer, 'receipts', `receipt-${leadId}.pdf`, 'application/pdf');
+
+  const updated = await prisma.lead.update({
+    where: { id: leadId },
+    data: { commissionStatus: 'INVOICED', invoiceUrl: url, invoicedAt },
+  });
+
+  if (lead.property?.partnerId) {
+    await createNotification({
+      userId: lead.property.partnerId,
+      title: 'Success fee invoice issued',
+      message: terms.amounts?.feeAmount != null
+        ? `Your success fee of ₹${terms.amounts.feeAmount.toLocaleString('en-IN')} for "${lead.property.title}" is now due.`
+        : `Your success fee for "${lead.property.title}" is now due.`,
+      type: 'COMMISSION_INVOICED',
+      linkUrl: url,
+    });
+  }
+
+  await createAuditLog({
+    adminId, action: 'COMMISSION_INVOICED', targetType: 'Lead', targetId: leadId,
+    after: { invoiceUrl: url, invoicedAt }, ipAddress: ip,
+  });
+
+  return getLeadTerms(leadId);
+}
+
+async function collectLeadCommission(leadId, adminId, ip) {
+  const terms = await getLeadTerms(leadId);
+  if (terms.commissionStatus !== 'INVOICED') {
+    throw new ApiError(400, `Cannot collect from status ${terms.commissionStatus}`, { code: 'INVALID_COMMISSION_STATUS' });
+  }
+
+  const collectedAt = new Date();
+  await prisma.lead.update({ where: { id: leadId }, data: { commissionStatus: 'COLLECTED', collectedAt } });
+
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: { property: { select: { title: true, partnerId: true } } },
+  });
+  if (lead.property?.partnerId) {
+    await createNotification({
+      userId: lead.property.partnerId,
+      title: 'Success fee payment confirmed',
+      message: `Your success fee payment for "${lead.property.title}" has been confirmed. Thank you.`,
+      type: 'COMMISSION_COLLECTED',
+      linkUrl: '/partner/listings',
+    });
+  }
+
+  await createAuditLog({
+    adminId, action: 'COMMISSION_COLLECTED', targetType: 'Lead', targetId: leadId,
+    after: { collectedAt }, ipAddress: ip,
+  });
+
+  return getLeadTerms(leadId);
+}
+
+// A COLLECTED fee is already settled — disputing it needs a human to first
+// decide whether to reverse that, not a status flip, so it's refused rather
+// than silently reopening a closed payment. Re-disputing an already-DISPUTED
+// one is refused too; the existing dispute is what gets updated/resolved,
+// not replaced.
+async function disputeLeadCommission(leadId, reason, adminId, ip) {
+  const terms = await getLeadTerms(leadId);
+  if (!['PENDING', 'INVOICED'].includes(terms.commissionStatus)) {
+    throw new ApiError(400, `Cannot dispute from status ${terms.commissionStatus}`, { code: 'INVALID_COMMISSION_STATUS' });
+  }
+
+  const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { adminNotes: true } });
+  const updated = await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      commissionStatus: 'DISPUTED',
+      adminNotes: `${lead.adminNotes ? `${lead.adminNotes} | ` : ''}[Commission disputed] ${reason}`,
+    },
+  });
+
+  await createAuditLog({
+    adminId, action: 'COMMISSION_DISPUTED', targetType: 'Lead', targetId: leadId,
+    before: { status: terms.commissionStatus }, after: { status: 'DISPUTED', reason }, ipAddress: ip,
+  });
+
+  return getLeadTerms(leadId);
+}
+
 // 3.13 — every version ever written, newest first.
 async function getLeadTermsHistory(leadId) {
   const lines = await prisma.leadCommissionLine.findMany({
@@ -785,6 +913,7 @@ module.exports = {
   listOverrides, createOverride, revokeOverride, getPartnerRateCards,
   resolveRateCard, resolveOverride, previewTermsForLead,
   getLeadTerms, setLeadTerms, prefillLeadTerms, lockLeadTerms, getLeadTermsHistory,
+  invoiceLeadCommission, collectLeadCommission, disputeLeadCommission,
   resolveLinesWithPlatformResidual, resolveRateCardLines, assertStoredLinesSumTo100,
   applyPartnerShareOverride, computeAmounts, derivedFields,
   PAYEE_ROLES, PARTNER_ROLES, ASSIGNED_PARTNER_ROLES,

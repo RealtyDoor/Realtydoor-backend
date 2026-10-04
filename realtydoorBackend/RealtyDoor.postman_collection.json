@@ -8181,6 +8181,173 @@
               ]
             },
             {
+              "name": "Invoice Lead Commission (R26)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/{{leadId}}/commission/invoice",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "{{leadId}}",
+                    "commission",
+                    "invoice"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Invoiced",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Invoice issued\",\"data\":{\"id\":\"6a44...\",\"commissionStatus\":\"INVOICED\",\"invoiceUrl\":\"https://realtydoor-production.s3.ap-south-2.amazonaws.com/receipts/....pdf\",\"invoicedAt\":\"2026-10-04T15:36:39.436Z\",\"collectedAt\":null}}"
+                },
+                {
+                  "name": "400 - Not Locked Yet",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"Lock the commission terms before invoicing\"}"
+                }
+              ]
+            },
+            {
+              "name": "Collect Lead Commission (R26)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/{{leadId}}/commission/collect",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "{{leadId}}",
+                    "commission",
+                    "collect"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Collected",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Payment recorded as collected\",\"data\":{\"id\":\"6a44...\",\"commissionStatus\":\"COLLECTED\",\"collectedAt\":\"2026-10-04T15:37:35.220Z\"}}"
+                },
+                {
+                  "name": "400 - Not Invoiced Yet",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"Cannot collect from status PENDING\"}"
+                }
+              ]
+            },
+            {
+              "name": "Dispute Lead Commission (R26)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/{{leadId}}/commission/dispute",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "{{leadId}}",
+                    "commission",
+                    "dispute"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Owner disputes the deal price used\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Disputed",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Marked as disputed\",\"data\":{\"id\":\"6a44...\",\"commissionStatus\":\"DISPUTED\"}}"
+                },
+                {
+                  "name": "400 - Already Collected",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"Cannot dispute from status COLLECTED\"}"
+                }
+              ]
+            },
+            {
               "name": "Lead Commission Terms History",
               "request": {
                 "method": "GET",

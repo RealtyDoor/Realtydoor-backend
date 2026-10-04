@@ -3,6 +3,7 @@ const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./commission.service');
 const {
   createRateCardSchema, updateRateCardSchema, createOverrideSchema, setLeadTermsSchema,
+  disputeCommissionSchema,
 } = require('./commission.validator');
 
 // ─── Rate cards (admin) ──────────────────────────────────────────────────────
@@ -98,6 +99,27 @@ async function leadTermsHistory(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// ─── R26 — owner success-fee payment record + receipt (admin) ──────────────
+
+async function invoiceLeadCommission(req, res, next) {
+  try {
+    success(res, await service.invoiceLeadCommission(req.params.id, req.user.id, req.ip), 'Invoice issued');
+  } catch (err) { next(err); }
+}
+
+async function collectLeadCommission(req, res, next) {
+  try {
+    success(res, await service.collectLeadCommission(req.params.id, req.user.id, req.ip), 'Payment recorded as collected');
+  } catch (err) { next(err); }
+}
+
+async function disputeLeadCommission(req, res, next) {
+  try {
+    const { reason } = disputeCommissionSchema.parse(req.body);
+    success(res, await service.disputeLeadCommission(req.params.id, reason, req.user.id, req.ip), 'Marked as disputed');
+  } catch (err) { next(err); }
+}
+
 // ─── B12.2 (partner) ─────────────────────────────────────────────────────────
 
 async function myRateCards(req, res, next) {
@@ -110,5 +132,6 @@ module.exports = {
   listRateCards, createRateCard, updateRateCard, deleteRateCard,
   listOverrides, createOverride, revokeOverride,
   previewLeadTerms, getLeadTerms, prefillLeadTerms, setLeadTerms, lockLeadTerms, leadTermsHistory,
+  invoiceLeadCommission, collectLeadCommission, disputeLeadCommission,
   myRateCards,
 };

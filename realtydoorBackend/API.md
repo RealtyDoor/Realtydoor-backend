@@ -5817,6 +5817,62 @@ a figure that isn't final yet isn't worth notifying about.
 
 ---
 
+### POST /api/admin/leads/:id/commission/invoice
+
+R26 — the owner's success-fee payment record, step 1: generates a simple
+payment receipt (confirms the fee amount; **not** a GST tax invoice — no
+GSTIN/HSN/CGST-SGST split) and moves `Lead.commissionStatus` from `PENDING`
+to `INVOICED`. Requires terms to be locked first — invoicing an amount that
+could still change isn't meaningful.
+
+"The owner" here is `Property.partnerId` — the real owner for an `OWNER`
+listing, and, after R21, also correctly the self-listing agent rather than a
+third party that doesn't exist. Notified (`COMMISSION_INVOICED`, `FEES`
+category) with a link straight to the receipt PDF.
+
+**Auth:** ADMIN
+
+**Response `200`:** the lead's terms, `commissionStatus: "INVOICED"`,
+`invoiceUrl` set to the receipt PDF, `invoicedAt` set.
+
+**Errors:**
+- `400` `COMMISSION_NOT_LOCKED` — lock terms first
+- `400` `INVALID_COMMISSION_STATUS` — not currently `PENDING`
+
+---
+
+### POST /api/admin/leads/:id/commission/collect
+
+R26 — step 2: records that the invoiced fee was actually paid.
+`INVOICED` → `COLLECTED`, `collectedAt` set. Notifies the owner
+(`COMMISSION_COLLECTED`, `FEES` category).
+
+**Auth:** ADMIN
+
+**Response `200`:** the lead's terms, `commissionStatus: "COLLECTED"`.
+
+**Errors:** `400` `INVALID_COMMISSION_STATUS` — not currently `INVOICED`.
+
+---
+
+### POST /api/admin/leads/:id/commission/dispute
+
+R26 — the owner disputes the fee. `PENDING` or `INVOICED` → `DISPUTED`; the
+reason is appended to `Lead.adminNotes` (no separate dispute-reason field).
+Refused once `COLLECTED` (a settled payment needs a human decision to
+reverse, not a status flip) or already `DISPUTED` (the existing one gets
+resolved, not replaced).
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "reason": "Owner disputes the deal price used" }` — required, 5–500 chars.
+
+**Response `200`:** the lead's terms, `commissionStatus: "DISPUTED"`.
+
+**Errors:** `400` `INVALID_COMMISSION_STATUS` — currently `COLLECTED` or already `DISPUTED`.
+
+---
+
 ### GET /api/admin/leads/:id/commission/history
 
 Every version ever written for this lead, newest first.

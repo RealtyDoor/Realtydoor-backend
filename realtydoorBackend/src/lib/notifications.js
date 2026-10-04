@@ -48,6 +48,9 @@ const CATEGORY_BY_TYPE = {
   COMMISSION_LOCKED: 'FEES',
   // R29 — affects whether an advisor earns anything on a referred buyer at all.
   ADVISOR_REFERRAL_REVOKED: 'FEES',
+  // R26 — the owner's success-fee payment lifecycle.
+  COMMISSION_INVOICED: 'FEES',
+  COMMISSION_COLLECTED: 'FEES',
 };
 
 const NOTIFICATION_CATEGORIES = ['LEADS', 'ESCROW', 'KYC', 'LISTINGS', 'FEES', 'SYSTEM'];

@@ -82,7 +82,13 @@ const setLeadTermsSchema = z.object({
   note:      z.string().max(500).optional(),
 });
 
+// R26
+const disputeCommissionSchema = z.object({
+  reason: z.string().min(5).max(500),
+});
+
 module.exports = {
   createRateCardSchema, updateRateCardSchema, createOverrideSchema, setLeadTermsSchema,
+  disputeCommissionSchema,
   PAYEE_ROLES, SELLER_TYPES,
 };

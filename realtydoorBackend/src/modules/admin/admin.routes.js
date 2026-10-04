@@ -237,6 +237,10 @@ router.get('/leads/:id/commission/history',  commissionCtrl.leadTermsHistory);
 router.post('/leads/:id/commission/prefill', commissionCtrl.prefillLeadTerms);
 router.put('/leads/:id/commission',          commissionCtrl.setLeadTerms);
 router.post('/leads/:id/commission/lock',    commissionCtrl.lockLeadTerms);
+// R26 — owner success-fee payment record + receipt.
+router.post('/leads/:id/commission/invoice', commissionCtrl.invoiceLeadCommission);
+router.post('/leads/:id/commission/collect', commissionCtrl.collectLeadCommission);
+router.post('/leads/:id/commission/dispute', commissionCtrl.disputeLeadCommission);
 
 // R29 — advisor referrals (oversight; creation is self-service, see
 // POST /api/partner/referrals).
