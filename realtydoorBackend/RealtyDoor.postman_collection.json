@@ -4951,6 +4951,347 @@
           ]
         },
         {
+          "name": "Mandates & Conflicts",
+          "item": [
+            {
+              "name": "Create Mandate (4.3)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ownerName\": \"Suresh Mehta\",\n  \"ownerPhone\": \"+919000000099\",\n  \"ownerEmail\": \"suresh@example.com\",\n  \"ownerPan\": \"ABCDE1234F\",\n  \"startDate\": \"2026-10-01T00:00:00.000Z\",\n  \"expiryDate\": \"2026-12-31T00:00:00.000Z\",\n  \"documentUrl\": \"https://files.realtydoor.com/mandates/mandate.pdf\",\n  \"note\": \"Signed hard copy held at the Pune office\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/mandates",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "mandates"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "201 - Created, conflict raised",
+                  "status": "Created",
+                  "code": 201,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Mandate created; 1 conflict(s) detected\",\"data\":{\"mandate\":{\"id\":\"6ac22c4e...\",\"propertyId\":\"6a44a67d...\",\"partnerId\":\"6a44a67a...\",\"ownerName\":\"Suresh Mehta\",\"ownerPhone\":\"+919000000099\",\"ownerEmail\":\"suresh@example.com\",\"ownerPan\":\"ABCDE1234F\",\"startDate\":\"2026-10-01T00:00:00.000Z\",\"expiryDate\":\"2026-12-31T00:00:00.000Z\",\"status\":\"ACTIVE\",\"effectiveStatus\":\"ACTIVE\",\"revokedAt\":null,\"revokedReason\":null,\"documentUrl\":\"https://files.realtydoor.com/mandates/mandate.pdf\",\"note\":\"Signed hard copy held at the Pune office\",\"createdAt\":\"2026-10-04T12:00:00.000Z\"},\"conflicts\":[{\"id\":\"6ac22c93...\",\"type\":\"AGENT_OWNER_PAN_MATCH\",\"detail\":\"Mandate 6ac22c93... names \\\"Self Dealing Owner\\\" as owner, but the owner PAN matches the submitting partner's own PAN (XYZAB9876C). The partner is registered as AGENT.\",\"unitKey\":null,\"status\":\"OPEN\",\"conflictingPropertyId\":null,\"conflictingProperty\":null,\"resolution\":null,\"resolvedByAdminId\":null,\"resolvedAt\":null,\"detectedAt\":\"2026-10-04T12:10:00.000Z\"}]}}"
+                }
+              ]
+            },
+            {
+              "name": "Create Mandate - 409 already in force",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ownerName\": \"Suresh Mehta\",\n  \"ownerPhone\": \"+919000000099\",\n  \"ownerEmail\": \"suresh@example.com\",\n  \"ownerPan\": \"ABCDE1234F\",\n  \"startDate\": \"2026-10-01T00:00:00.000Z\",\n  \"expiryDate\": \"2026-12-31T00:00:00.000Z\",\n  \"documentUrl\": \"https://files.realtydoor.com/mandates/mandate.pdf\",\n  \"note\": \"Signed hard copy held at the Pune office\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/mandates",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "mandates"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "409 - Mandate already in force",
+                  "status": "Conflict",
+                  "code": 409,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"This listing already has a mandate in force until 2026-12-31. Revoke it before issuing a new one.\"}"
+                }
+              ]
+            },
+            {
+              "name": "List Mandates (4.3)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/mandates?status=ACTIVE",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "mandates"
+                  ],
+                  "query": [
+                    {
+                      "key": "status",
+                      "value": "ACTIVE"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Active mandates",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6ac22c4e...\",\"propertyId\":\"6a44a67d...\",\"partnerId\":\"6a44a67a...\",\"ownerName\":\"Suresh Mehta\",\"ownerPhone\":\"+919000000099\",\"ownerEmail\":\"suresh@example.com\",\"ownerPan\":\"ABCDE1234F\",\"startDate\":\"2026-10-01T00:00:00.000Z\",\"expiryDate\":\"2026-12-31T00:00:00.000Z\",\"status\":\"ACTIVE\",\"effectiveStatus\":\"ACTIVE\",\"revokedAt\":null,\"revokedReason\":null,\"documentUrl\":\"https://files.realtydoor.com/mandates/mandate.pdf\",\"note\":\"Signed hard copy held at the Pune office\",\"createdAt\":\"2026-10-04T12:00:00.000Z\",\"property\":{\"id\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"slug\":\"3bhk-palm-grove\",\"city\":\"Pune\",\"locality\":\"Kothrud\",\"publishStatus\":\"APPROVED\"},\"partner\":{\"id\":\"6a44a67a...\",\"name\":\"Sunetra\",\"companyName\":\"Sunetra Realty\",\"partnerSubType\":\"AGENT\"}}],\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1}}"
+                }
+              ]
+            },
+            {
+              "name": "Mandate Detail (4.3)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/mandates/{{mandateId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "mandates",
+                    "{{mandateId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Mandate detail",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"id\":\"6ac22c4e...\",\"propertyId\":\"6a44a67d...\",\"partnerId\":\"6a44a67a...\",\"ownerName\":\"Suresh Mehta\",\"ownerPhone\":\"+919000000099\",\"ownerEmail\":\"suresh@example.com\",\"ownerPan\":\"ABCDE1234F\",\"startDate\":\"2026-10-01T00:00:00.000Z\",\"expiryDate\":\"2026-12-31T00:00:00.000Z\",\"status\":\"ACTIVE\",\"effectiveStatus\":\"ACTIVE\",\"revokedAt\":null,\"revokedReason\":null,\"documentUrl\":\"https://files.realtydoor.com/mandates/mandate.pdf\",\"note\":\"Signed hard copy held at the Pune office\",\"createdAt\":\"2026-10-04T12:00:00.000Z\",\"property\":{\"id\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"slug\":\"3bhk-palm-grove\",\"city\":\"Pune\",\"locality\":\"Kothrud\",\"publishStatus\":\"APPROVED\",\"address\":\"Flat 302, Tower B, Palm Grove\"},\"partner\":{\"id\":\"6a44a67a...\",\"name\":\"Sunetra\",\"companyName\":\"Sunetra Realty\",\"partnerSubType\":\"AGENT\",\"panNumber\":\"XYZAB9876C\"}}}"
+                }
+              ]
+            },
+            {
+              "name": "Revoke Mandate (4.3)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Owner withdrew from the market\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/mandates/{{mandateId}}/revoke",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "mandates",
+                    "{{mandateId}}",
+                    "revoke"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Revoked",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Mandate revoked\",\"data\":{\"id\":\"6ac22c4e...\",\"propertyId\":\"6a44a67d...\",\"partnerId\":\"6a44a67a...\",\"ownerName\":\"Suresh Mehta\",\"ownerPhone\":\"+919000000099\",\"ownerEmail\":\"suresh@example.com\",\"ownerPan\":\"ABCDE1234F\",\"startDate\":\"2026-10-01T00:00:00.000Z\",\"expiryDate\":\"2026-12-31T00:00:00.000Z\",\"status\":\"REVOKED\",\"effectiveStatus\":\"REVOKED\",\"revokedAt\":\"2026-10-04T13:00:00.000Z\",\"revokedReason\":\"Owner withdrew from the market\",\"documentUrl\":\"https://files.realtydoor.com/mandates/mandate.pdf\",\"note\":\"Signed hard copy held at the Pune office\",\"createdAt\":\"2026-10-04T12:00:00.000Z\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Detect Conflicts (4.4)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/detect-conflicts",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "detect-conflicts"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Detected",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"1 new conflict(s) detected\",\"data\":{\"detected\":1,\"conflicts\":[{\"id\":\"6ac22cf2...\",\"type\":\"DUPLICATE_UNIT\",\"detail\":\"The same unit is listed by a different partner as \\\"3BHK in Palm Grove\\\".\",\"unitKey\":\"302-b-grove-palm-tower|411038|3|3\",\"status\":\"OPEN\",\"conflictingPropertyId\":\"6a44a67e...\",\"resolution\":null,\"resolvedByAdminId\":null,\"resolvedAt\":null,\"detectedAt\":\"2026-10-04T12:10:00.000Z\"}]}}"
+                }
+              ]
+            },
+            {
+              "name": "Conflicts Queue (4.4)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/conflicts?status=OPEN",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "conflicts"
+                  ],
+                  "query": [
+                    {
+                      "key": "status",
+                      "value": "OPEN"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Open conflicts",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6ac22cf2...\",\"type\":\"DUPLICATE_UNIT\",\"detail\":\"The same unit is listed by a different partner as \\\"3BHK in Palm Grove\\\".\",\"unitKey\":\"302-b-grove-palm-tower|411038|3|3\",\"status\":\"OPEN\",\"property\":{\"id\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"slug\":\"3bhk-palm-grove\",\"city\":\"Pune\",\"locality\":\"Kothrud\",\"publishStatus\":\"APPROVED\"},\"conflictingPropertyId\":\"6a44a67e...\",\"conflictingProperty\":{\"id\":\"6a44a67e...\",\"title\":\"3 BHK Palm Grove Tower B\",\"slug\":\"3-bhk-palm-grove-tower-b\",\"publishStatus\":\"PENDING_APPROVAL\",\"partnerId\":\"6a44a67b...\"},\"resolution\":null,\"resolvedByAdminId\":null,\"resolvedAt\":null,\"detectedAt\":\"2026-10-04T12:10:00.000Z\"}],\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1}}"
+                }
+              ]
+            },
+            {
+              "name": "Resolve / Dismiss Conflict (4.4)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"DISMISSED\",\n  \"resolution\": \"Different units; the address omitted the unit number\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/conflicts/{{conflictId}}/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "conflicts",
+                    "{{conflictId}}",
+                    "resolve"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Dismissed",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Conflict dismissed\",\"data\":{\"id\":\"6ac22cf2...\",\"type\":\"DUPLICATE_UNIT\",\"detail\":\"The same unit is listed by a different partner as \\\"3BHK in Palm Grove\\\".\",\"unitKey\":\"302-b-grove-palm-tower|411038|3|3\",\"status\":\"DISMISSED\",\"conflictingPropertyId\":\"6a44a67e...\",\"resolution\":\"Different units; the address omitted the unit number\",\"resolvedByAdminId\":null,\"resolvedAt\":\"2026-10-04T13:05:00.000Z\",\"detectedAt\":\"2026-10-04T12:10:00.000Z\"}}"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "KYC",
           "item": [
             {

@@ -66,6 +66,21 @@ model Property {
   reraNumber    String?
   bankApprovals String[]
 
+  // 4.5 — a mortgaged unit cannot transfer without the lender's NOC, so the
+  // owner-listing review needs both the flag and where the NOC has got to.
+  //
+  // isMortgaged is nullable on purpose. A required Boolean @default(false)
+  // would be MISSING (not false) on every property that already exists,
+  // because a Prisma default is only applied at create time — and a required
+  // field offers no `isSet` filter, so those rows could not be queried or
+  // repaired from the client at all. Nullable means `null` reads as "not
+  // recorded", which is the truth for a pre-existing listing, and is
+  // distinguishable from someone having actively answered "no".
+  isMortgaged    Boolean?
+  mortgageLender String?
+  loanNocStatus  LoanNocStatus?
+  loanNocUrl     String?
+
   // Media
   images          String[]
   videos          String[]
@@ -108,6 +123,8 @@ model Property {
   rateCards           RateCard[]
   serviceTickets      ServiceTicket[]
   changeRequests      PropertyChangeRequest[]
+  mandates            ExclusiveMandate[]
+  conflicts           ListingConflict[]
 
   @@index([publishStatus, isB2BOnly])
   @@index([partnerId])

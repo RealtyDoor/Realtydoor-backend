@@ -10,6 +10,7 @@ const contactCtrl = require('../contact/contact.admin.controller');
 const commissionCtrl = require('../commission/commission.controller');
 const analyticsCtrl = require('../analytics/analytics.controller');
 const listingCtrl = require('../listings/listings.admin.controller');
+const integrityCtrl = require('../listings/integrity.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
@@ -41,6 +42,15 @@ router.get('/properties/change-requests/:id',        listingCtrl.getChangeReques
 router.patch('/properties/change-requests/:id/approve', listingCtrl.approveChangeRequest);
 router.patch('/properties/change-requests/:id/reject',  listingCtrl.rejectChangeRequest);
 router.get('/properties/edit-logs',                  listingCtrl.listEditLogs);
+// 4.3 / 4.4 — mandates and conflict detection. Static segments stay above the
+// /properties/:id param route for the same reason as the change-request ones.
+router.get('/properties/mandates',                   integrityCtrl.listMandates);
+router.get('/properties/mandates/:id',               integrityCtrl.getMandate);
+router.patch('/properties/mandates/:id/revoke',      integrityCtrl.revokeMandate);
+router.get('/properties/conflicts',                  integrityCtrl.listConflicts);
+router.patch('/properties/conflicts/:id/resolve',    integrityCtrl.resolveConflict);
+router.post('/properties/:id/mandates',              integrityCtrl.createMandate);
+router.post('/properties/:id/detect-conflicts',      integrityCtrl.detectConflicts);
 router.get('/properties/:id',          ctrl.getPropertyById);
 router.patch('/properties/:id/approve', ctrl.approveProperty);
 router.patch('/properties/:id/reject',  ctrl.rejectProperty);

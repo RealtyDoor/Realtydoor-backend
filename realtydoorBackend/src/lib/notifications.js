@@ -28,6 +28,8 @@ const CATEGORY_BY_TYPE = {
   // 4.8 / 4.9 — outcome of a partner's edit to a live listing.
   PROPERTY_CHANGES_APPROVED: 'LISTINGS',
   PROPERTY_CHANGES_REJECTED: 'LISTINGS',
+  // 4.3 — mandate lifecycle.
+  MANDATE_REVOKED: 'LISTINGS',
   SERVICE_ACTIVATED: 'SYSTEM',
   LOAN_STATUS_UPDATE: 'SYSTEM',
   ANNOUNCEMENT: 'SYSTEM',

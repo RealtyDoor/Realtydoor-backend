@@ -4294,6 +4294,282 @@ presentational. That list is the whole definition, and it is returned in the
 response so a caller can see exactly what `HIGH` means instead of guessing.
 `impact=HIGH` and `impact=NORMAL` partition the unfiltered set exactly.
 
+## Exclusive mandates (docs 4.3)
+
+The mandate a partner holds to market a specific unit on an owner's behalf.
+The owner's identity is recorded here because conflict detection (4.4) uses it
+to check an agent is not quietly listing their own property as somebody
+else's.
+
+**Only `ACTIVE` and `REVOKED` are stored.** `EXPIRED` is derived from
+`expiryDate` against the current time on every read, so there is no scheduled
+job and no window in which a mandate is past its expiry but still reads as
+active. Every mandate response therefore carries **`effectiveStatus`**, which
+is one of `ACTIVE`, `EXPIRED` or `REVOKED` — read that, not `status`.
+
+---
+
+### POST /api/admin/properties/:id/mandates
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "ownerName": "Suresh Mehta",
+  "ownerPhone": "+919000000099",
+  "ownerEmail": "suresh@example.com",
+  "ownerPan": "ABCDE1234F",
+  "startDate": "2026-10-01T00:00:00.000Z",
+  "expiryDate": "2026-12-31T00:00:00.000Z",
+  "documentUrl": "https://.../mandate.pdf",
+  "note": "Signed hard copy held at the Pune office",
+  "partnerId": "6a44a67a..."
+}
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `ownerName` | yes | 2–120 chars. |
+| `ownerPhone` | yes | Indian phone format. |
+| `ownerEmail` | no | |
+| `ownerPan` | no | Validated as `AAAAA9999A` and stored uppercased with spaces stripped, so a formatting difference cannot defeat the 4.4 PAN comparison. Format only — not a checksum. |
+| `startDate` / `expiryDate` | yes | ISO datetimes. `expiryDate` must be after `startDate`. |
+| `documentUrl` | no | Must be a URL. |
+| `partnerId` | no | Defaults to the listing's own partner. |
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "Mandate created; 1 conflict(s) detected",
+  "data": {
+    "mandate": { "id": "...", "status": "ACTIVE", "effectiveStatus": "ACTIVE", "ownerPan": "ABCDE1234F", "...": "..." },
+    "conflicts": [{ "id": "...", "type": "AGENT_OWNER_PAN_MATCH", "detail": "...", "status": "OPEN" }]
+  }
+}
+```
+
+Creating a mandate runs conflict detection immediately, because this is the
+moment the agent/owner and overlap checks become answerable. Any conflicts
+raised come back in the same response.
+
+**Errors:**
+- `409` the listing already has a mandate in force — the message gives its
+  expiry date. Revoke it first.
+- `400` `expiryDate` not after `startDate`, or a malformed `ownerPan`
+- `404` property not found
+
+One-mandate-in-force is enforced by a check, not a unique index, because "in
+force" depends on the current time and a partial index cannot express that. Two
+admins creating a mandate in the same instant could both pass; that case shows
+up as a `MANDATE_OVERLAP` conflict rather than going unnoticed.
+
+---
+
+### GET /api/admin/properties/mandates
+
+**Auth:** ADMIN
+
+**Query:** `propertyId` · `partnerId` · `status` (`ACTIVE`, `EXPIRED`,
+`REVOKED`) · `page` · `limit`
+
+Filtering by `status` filters on the **derived** meaning: `ACTIVE` means stored
+`ACTIVE` and not yet past expiry, `EXPIRED` means stored `ACTIVE` but past it.
+
+**Response `200`:** paginated mandates, each with `effectiveStatus`, its
+`property` and its `partner` (including `partnerSubType`).
+
+---
+
+### GET /api/admin/properties/mandates/:id
+
+**Auth:** ADMIN
+
+**Response `200`:** the mandate, with `effectiveStatus`, the property
+(including `address`) and the partner (including `panNumber`, so the PAN
+comparison behind an `AGENT_OWNER_PAN_MATCH` conflict can be checked by eye).
+
+**Errors:** `404` not found.
+
+---
+
+### PATCH /api/admin/properties/mandates/:id/revoke
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "reason": "Owner withdrew from the market" }` — required,
+5–500 chars. The partner is notified with this text verbatim.
+
+**Response `200`:** the mandate, `status: "REVOKED"`, `effectiveStatus:
+"REVOKED"`.
+
+Revoking frees the listing to receive a new mandate.
+
+**Errors:** `400` already revoked · `404` not found.
+
+---
+
+## Listing conflicts (docs 4.4)
+
+Detected automatically when a listing is created and when a mandate is issued,
+and re-runnable on demand. Three types:
+
+| Type | Means |
+| --- | --- |
+| `DUPLICATE_UNIT` | The same physical unit appears on another listing. |
+| `AGENT_OWNER_PAN_MATCH` | A mandate's owner PAN equals the submitting partner's own PAN — the partner is listing their own property as someone else's. |
+| `MANDATE_OVERLAP` | Two unexpired mandates cover the same unit, held by different partners. |
+
+**How "the same unit" is decided.** There is no unit identifier anywhere in
+this schema, so `DUPLICATE_UNIT` uses a heuristic key: the address is
+lowercased, split on anything non-alphanumeric, stripped of unit-designator
+words (`flat`, `apt`, `unit`, `no`, `house`, `shop`, …), and the remaining
+tokens are **sorted** before joining. `pincode`, `floorNumber` and `bhk` must
+all match too.
+
+- Catches: punctuation, case, spacing, word order, and a leading
+  "Flat"/"Apt"/"No." — so `Flat 302, Tower B, Palm Grove` matches
+  `302  tower-b   palm grove`.
+- Will also match two genuinely different units when the address records only
+  the building and not the unit number. This is why `DISMISSED` exists, and why
+  the key is stored on the conflict row as `unitKey` — a false positive can be
+  traced to exactly what matched.
+- Will miss the same unit described with different wording (`Palm Grove` vs
+  `Palmgrove Residency`), or a different pincode/floor/BHK typed for the same
+  unit.
+
+Words like `road`, `street`, `tower`, `block` and `wing` are deliberately
+**not** stripped, because they distinguish real addresses — dropping `road`
+would make `5 Palm Road` and `5 Palm Street` collide.
+
+A listing with no `address` or no `pincode` cannot be keyed, so duplicate
+detection is **skipped** for it rather than guessed at.
+
+**Detection is a prompt for a human, not a verdict.**
+
+---
+
+### POST /api/admin/properties/:id/detect-conflicts
+
+Re-runs all three checks for one listing.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "1 new conflict(s) detected",
+  "data": { "detected": 1, "conflicts": [{ "id": "...", "type": "DUPLICATE_UNIT", "detail": "...", "unitKey": "302-b-grove-palm-tower|411038|3|3" }] }
+}
+```
+
+Idempotent: a conflict is written only when an `OPEN` one of the same type and
+same counterpart listing is not already there, so re-running never piles up
+duplicate rows. `detected` counts only newly created rows.
+
+Detection also runs automatically inside `POST /api/properties` (listing
+submission) and `POST /api/admin/properties/:id/mandates`. In the submission
+case a detector failure is logged and swallowed — a transient problem finding
+conflicts must not reject a listing the partner legitimately submitted — so
+this endpoint is the way to catch up if that happens.
+
+**Errors:** `404` property not found.
+
+---
+
+### GET /api/admin/properties/conflicts
+
+**Auth:** ADMIN
+
+**Query:** `status` — `OPEN` (default), `RESOLVED`, `DISMISSED`, or `ALL` ·
+`type` · `propertyId` · `page` · `limit`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "data": [
+      {
+        "id": "...",
+        "type": "DUPLICATE_UNIT",
+        "detail": "The same unit is listed by a different partner as \"3BHK in Palm Grove\".",
+        "unitKey": "302-b-grove-palm-tower|411038|3|3",
+        "status": "OPEN",
+        "property": { "id": "...", "title": "...", "slug": "...", "city": "Pune", "publishStatus": "PENDING_APPROVAL", "partnerId": "..." },
+        "conflictingPropertyId": "6a44a67e...",
+        "conflictingProperty": { "id": "...", "title": "...", "slug": "...", "publishStatus": "APPROVED", "partnerId": "..." },
+        "resolution": null, "resolvedByAdminId": null, "resolvedAt": null,
+        "detectedAt": "2026-10-04T12:10:00.000Z"
+      }
+    ],
+    "total": 1, "page": 1, "limit": 20, "totalPages": 1
+  }
+}
+```
+
+`conflictingProperty` is `null` for a conflict that is not about a second
+listing (`AGENT_OWNER_PAN_MATCH`), or when that listing has since been deleted.
+It is stored as a plain id rather than a relation because Prisma forbids
+`onDelete: SetNull` on a self-relation, which would have made a referenced
+property undeletable.
+
+**Errors:** `400` unrecognised `status`.
+
+---
+
+### PATCH /api/admin/properties/conflicts/:id/resolve
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{ "status": "DISMISSED", "resolution": "Different units; the address omitted the unit number" }
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `status` | yes | `RESOLVED` (a real conflict, dealt with elsewhere) or `DISMISSED` (the detector matched two genuinely different units). |
+| `resolution` | yes | 5–1000 chars. Mandatory for both outcomes: the next person needs to know which it was and why. |
+
+**Response `200`:** the updated conflict.
+
+**Errors:** `400` not `OPEN`, bad `status`, or `resolution` too short ·
+`404` not found.
+
+---
+
+## Mortgage and loan NOC (docs 4.5)
+
+Four fields on `Property`, settable on create and update by the partner and by
+admin edit, and returned on the property detail:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `isMortgaged` | `Boolean?` | **Nullable on purpose.** `null` means "not recorded", which is the truth for every listing predating these fields, and is a different thing from someone having actively answered "no". |
+| `mortgageLender` | `String?` | Max 200 chars. |
+| `loanNocStatus` | enum? | `NOT_REQUIRED`, `PENDING`, `RECEIVED`, `REJECTED`. |
+| `loanNocUrl` | `String?` | Must be a URL. |
+
+**Why `isMortgaged` is nullable rather than `Boolean @default(false)`:** a
+Prisma default is applied only at create time, so a required boolean added now
+would be *missing*, not `false`, on the 28 listings that already exist. A
+required field offers no `isSet` filter, so those rows could not have been
+queried or repaired from the Prisma client at all. Nullable keeps them
+queryable (`{ isMortgaged: { isSet: false } }`) and avoids a backfill.
+
+Treat `null` as "unknown, ask" rather than as "no" in the owner-listing review.
+
+---
+
 ---
 
 

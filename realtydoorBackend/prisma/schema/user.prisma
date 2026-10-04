@@ -171,6 +171,7 @@ model User {
   supportTickets    PartnerSupportTicket[]
   commissionOverrides PartnerCommissionOverride[]
   changeRequests      PropertyChangeRequest[]
+  mandates            ExclusiveMandate[]
 
   @@index([phone])
   @@index([deletedAt])

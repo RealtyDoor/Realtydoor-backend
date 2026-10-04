@@ -3,6 +3,7 @@ const ApiError = require('../../utils/ApiError');
 const { paginate } = require('../../utils/pagination');
 const { withCache, cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
+const logger = require('../../lib/logger');
 
 const SORT_MAP = {
   price_asc: { price: 'asc' },
@@ -372,9 +373,24 @@ async function createProperty(data, partnerId) {
   if (!data.facing) data.facing = 'East';
   if (!data.furnishing) data.furnishing = 'Unfurnished';
 
-  return prisma.property.create({
+  const property = await prisma.property.create({
     data: { ...data, slug, partnerId, publishStatus: 'PENDING_APPROVAL' },
   });
+
+  // 4.4 — submission is the moment a duplicate becomes detectable, so the
+  // conflict check runs here rather than waiting for an admin to ask. Required
+  // lazily to avoid a circular import, and a detector failure is logged rather
+  // than propagated: a transient problem finding conflicts must not reject a
+  // listing the partner has legitimately submitted. Admin can re-run it on
+  // demand via POST /admin/properties/:id/detect-conflicts.
+  try {
+    const { detectConflicts } = require('../listings/integrity.service');
+    await detectConflicts(property.id);
+  } catch (err) {
+    logger.error('[createProperty] conflict detection failed', { propertyId: property.id, error: err.message });
+  }
+
+  return property;
 }
 
 // Compares a submitted patch against the stored row and returns only the

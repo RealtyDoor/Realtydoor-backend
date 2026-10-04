@@ -33,6 +33,15 @@ const createPropertySchema = z.object({
   nearbyLandmarks: z.array(z.string()).optional(),
   reraNumber: z.string().optional(),
   bankApprovals: z.array(z.string()).optional(),
+
+  // 4.5 — a mortgaged unit cannot transfer without the lender's NOC.
+  // isMortgaged is nullable rather than defaulted: null means "not recorded",
+  // which is the truth for every listing that predates these fields, and is
+  // a different thing from someone having actively answered "no".
+  isMortgaged: z.boolean().optional(),
+  mortgageLender: z.string().max(200).optional(),
+  loanNocStatus: z.enum(['NOT_REQUIRED', 'PENDING', 'RECEIVED', 'REJECTED']).optional(),
+  loanNocUrl: z.string().url().optional(),
   amenities: z.array(z.string()).optional(),
   societyFeatures: z.array(z.string()).optional(),
   metaTitle: z.string().max(60).optional(),

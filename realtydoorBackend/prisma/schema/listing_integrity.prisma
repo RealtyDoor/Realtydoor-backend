@@ -1,0 +1,113 @@
+// ─── LISTING INTEGRITY ────────────────────────────────────────────────────────
+// Docs 4.3 (exclusive mandate) and 4.4 (listing conflict detection) — the
+// backing for the admin conflicts screen: is this listing legitimately
+// sellable by the partner who submitted it, and has the same unit turned up
+// twice?
+
+// 4.3 — the mandate a partner holds to market a specific unit on an owner's
+// behalf, with the owner's identity recorded so 4.4 can check an agent is not
+// quietly listing their own property as somebody else's.
+model ExclusiveMandate {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  propertyId String   @db.ObjectId
+  property   Property @relation(fields: [propertyId], references: [id])
+  partnerId  String   @db.ObjectId
+  partner    User     @relation(fields: [partnerId], references: [id])
+
+  ownerName  String
+  ownerPhone String
+  ownerEmail String?
+  // 4.4 — compared against the submitting partner's own panNumber. Stored
+  // uppercased and trimmed by the service so the comparison is not defeated
+  // by formatting.
+  ownerPan   String?
+
+  startDate  DateTime
+  expiryDate DateTime
+
+  // Deliberately only ACTIVE or REVOKED. "Expired" is a function of
+  // expiryDate against the current time, so storing it would need a scheduled
+  // job and would be wrong in the window before that job ran. It is derived
+  // at read time instead (see effectiveStatusOf in the service), which cannot
+  // go stale.
+  status        MandateStatus @default(ACTIVE)
+  revokedAt     DateTime?
+  revokedReason String?
+
+  documentUrl String?
+  note        String?
+
+  createdByAdminId String? @db.ObjectId
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([propertyId])
+  @@index([partnerId])
+  @@index([status, expiryDate])
+}
+
+enum MandateStatus {
+  ACTIVE
+  REVOKED
+}
+
+// 4.4 — one detected integrity problem on a listing. Rows are written by the
+// detector rather than by hand, and an admin then resolves or dismisses them.
+model ListingConflict {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  propertyId String   @db.ObjectId
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  // The other listing involved, for DUPLICATE_UNIT and MANDATE_OVERLAP. A
+  // plain scalar rather than a relation: Prisma forbids onDelete SetNull on a
+  // self-relation, and a formal relation here would make a referenced
+  // property undeletable.
+  conflictingPropertyId String? @db.ObjectId
+
+  type   ConflictType
+  // Human-readable explanation of what matched, so the admin screen does not
+  // have to reconstruct the detector's reasoning.
+  detail String
+  // The normalised unit key that caused a DUPLICATE_UNIT match, recorded so a
+  // false positive can be traced back to the heuristic that produced it.
+  unitKey String?
+
+  status            ConflictStatus @default(OPEN)
+  resolution        String?
+  resolvedByAdminId String?        @db.ObjectId
+  resolvedAt        DateTime?
+
+  detectedAt DateTime @default(now())
+
+  @@index([status, detectedAt])
+  @@index([propertyId, status])
+  @@index([type, status])
+}
+
+enum ConflictType {
+  // The same physical unit appears on two different listings.
+  DUPLICATE_UNIT
+  // An AGENT partner submitted a mandate whose owner PAN is their own.
+  AGENT_OWNER_PAN_MATCH
+  // Two unexpired mandates cover the same unit, held by different partners.
+  MANDATE_OVERLAP
+}
+
+enum ConflictStatus {
+  OPEN
+  // A real conflict that has been dealt with (one listing pulled, mandate
+  // revoked, and so on).
+  RESOLVED
+  // Not a real conflict — the detector matched two genuinely different units.
+  DISMISSED
+}
+
+// 4.5 — loan NOC state for a mortgaged property. Optional, so a listing that
+// was never mortgaged simply leaves it unset; NOT_REQUIRED is for the case
+// where someone has actively confirmed no NOC is needed.
+enum LoanNocStatus {
+  NOT_REQUIRED
+  PENDING
+  RECEIVED
+  REJECTED
+}
