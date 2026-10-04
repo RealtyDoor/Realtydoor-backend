@@ -13,6 +13,7 @@ const {
   editPropertySchema,
   approvePropertySchema,
   requestPropertyChangesSchema,
+  requestKycDocumentsSchema,
   updateTicketSchema,
   createServiceSchema,
   updateServiceSchema,
@@ -119,6 +120,17 @@ async function approveProperty(req, res, next) {
 }
 
 // 4.15 — ask for specific fixes without rejecting the listing.
+// R9 — ask for specific KYC documents instead of rejecting.
+async function requestKycDocuments(req, res, next) {
+  try {
+    const { items, note, dueInDays } = requestKycDocumentsSchema.parse(req.body);
+    const user = await service.requestKycDocuments(
+      req.params.userId, { items, note, dueInDays }, req.user.id, req.ip,
+    );
+    success(res, user, `Requested ${items.length} document(s)`);
+  } catch (err) { next(err); }
+}
+
 async function requestPropertyChanges(req, res, next) {
   try {
     const { items, note } = requestPropertyChangesSchema.parse(req.body);
@@ -521,6 +533,7 @@ module.exports = {
   setPayoutAccountStatus,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   requestPropertyChanges,
+  requestKycDocuments,
   getPendingKyc, verifyKyc,
   getRevenue, getAuditLogs, getPartnerMetrics,
   getTickets, getTicket, updateTicket, getTicketStats,

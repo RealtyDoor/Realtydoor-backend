@@ -2227,6 +2227,74 @@ Versioned rather than a boolean: when the agreement text changes, a partner who 
 
 ---
 
+### POST /api/partner/data-acknowledgments
+
+Record acceptance of a lead-data-handling or post-OTP-restricted-use notice
+(R34 / R35).
+
+**Auth:** PARTNER
+
+**Request Body:**
+
+```json
+{ "type": "LEAD_DATA_HANDLING", "version": "2026-10-v1" }
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `type` | yes | `LEAD_DATA_HANDLING` or `POST_OTP_RESTRICTED_USE`. |
+| `version` | yes | Whatever version string the frontend showed — recorded as given, not validated against a registry (same convention as `partnerTermsVersion`). |
+| `leadId` | conditional | **Required** for `POST_OTP_RESTRICTED_USE` (recorded per lead) · **must be omitted** for `LEAD_DATA_HANDLING` (recorded once per partner). |
+
+Re-posting the same `(type, version, leadId)` refreshes the timestamp rather
+than erroring or duplicating.
+
+**Response `201`:** the acknowledgment row.
+
+**Errors:** `400` `leadId` missing for `POST_OTP_RESTRICTED_USE`, or present for
+`LEAD_DATA_HANDLING`.
+
+---
+
+### GET /api/partner/data-acknowledgments
+
+**Auth:** PARTNER
+
+**Query:** `type` (default `LEAD_DATA_HANDLING`) · `leadId` (for
+`POST_OTP_RESTRICTED_USE`)
+
+**Response `200`:**
+
+```json
+{
+  "success": true, "message": "Success",
+  "data": {
+    "type": "LEAD_DATA_HANDLING", "accepted": true, "version": "2026-10-v1",
+    "acceptedAt": "2026-10-04T12:00:00.000Z",
+    "requiredVersion": "2026-10-v1", "isCurrent": true
+  }
+}
+```
+
+**`requiredVersion`/`isCurrent` are `null` until the business configures a
+required version** via the admin config key
+`lead_data_handling_required_version`. Until then, every partner's
+acknowledgment reads as accepted-but-not-applicable-for-currency — there is
+nothing to be current against yet.
+
+**`LEAD_DATA_HANDLING` gates lead dispatch (R34).** `PATCH
+/api/admin/leads/:id/assign` refuses with `400` when the target partner's
+latest acceptance doesn't match the configured required version. **This gate
+is off by default** — it only activates once
+`lead_data_handling_required_version` is set, so it cannot lock out every
+partner the day this ships.
+
+**`POST_OTP_RESTRICTED_USE` gates nothing yet.** Whether it should gate
+anything (e.g. "call the buyer") is an explicit open decision — this endpoint
+only records the acknowledgment.
+
+---
+
 ### POST /api/partner/kyc/consent
 
 Record KYC consent. Must be called before `POST /api/partner/kyc` will accept documents. Idempotent — calling it again after consent is already recorded just returns the original timestamp, it doesn't overwrite it.
@@ -5208,6 +5276,59 @@ Approve or reject partner KYC.
 
 **Response `200`:** `{ "success": true, "message": "KYC approved", "data": null }`
 
+### POST /api/admin/kyc/:userId/request-documents
+
+Ask for specific additional or corrected documents instead of a flat reject
+(R9). Distinct from `REJECT`: this is a submission still in progress, not a
+refusal.
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "items": ["PAN card is blurry, reupload", "Missing latest bank statement"],
+  "note": "Resend once these are fixed and it goes straight back into review",
+  "dueInDays": 3
+}
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `items` | yes | 1–20 entries, each 3–300 chars. |
+| `note` | no | Max 1000 chars. |
+| `dueInDays` | no | 1–90. **Informational only — nothing auto-rejects when it passes.** |
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Requested 2 document(s)", "data": { "id": "...", "name": "...", "kycStatus": "DOCUMENTS_REQUESTED", "kycRequestedDocuments": ["PAN card is blurry, reupload", "Missing latest bank statement"], "kycRequestedDueAt": "2026-10-07T12:00:00.000Z" } }
+```
+
+**`kycStatus` can now be `DOCUMENTS_REQUESTED`.** This is a new value
+alongside `NOT_SUBMITTED` / `PENDING_REVIEW` / `VERIFIED` / `REJECTED` — update
+any client-side status switch that assumes only those four.
+
+**A due date that passes does not change anything server-side.** There is no
+scheduled job. A UI that wants to show "overdue" should compare
+`kycRequestedDueAt` against now itself; the backend never derives or exposes
+a separate overdue flag for this (unlike the listing checklist's
+`OwnerConfirmation`, which does expose a derived `TIMED_OUT`, because that one
+has an endpoint to read it through — this is read straight off the user
+record, so there's nothing to derive it on behalf of).
+
+**Resubmitting clears the checklist.** `POST /partner/kyc` (existing endpoint)
+sets `kycStatus` back to `PENDING_REVIEW` and clears
+`kycRequestedDocuments` / `kycRequestedNote` / `kycRequestedDueAt` — the
+partner acted on the request, so it goes back to a normal review rather than
+sitting in `DOCUMENTS_REQUESTED` indefinitely.
+
+**Errors:** `400` already `VERIFIED` · `400` `items` empty/too long/too short
+· `404` user not found.
+
+---
+
 ---
 
 ### GET /api/admin/kyc/:userId
@@ -5434,6 +5555,38 @@ Same atomic-claim protection as release above — a race between two refund requ
 ```
 
 **Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race).
+
+---
+
+### POST /api/admin/escrow/:id/freeze
+
+Freeze a HELD escrow for a dispute (R10). Blocks `release` and `refund` — both
+already reject anything that is not `HELD`, so setting the escrow to `FROZEN`
+blocks both for free, the same way the existing `HELD_PAYOUT_FAILED` status
+blocks the retry path.
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "reason": "Buyer disputes the deal terms, pending admin review" }` —
+required, 5–500 chars.
+
+**Response `200`:** the escrow, `status: "FROZEN"`.
+
+**Errors:** `400` escrow is not currently `HELD` (names its actual status) ·
+`404` not found.
+
+---
+
+### POST /api/admin/escrow/:id/unfreeze
+
+**Auth:** ADMIN
+
+**Request Body:** none.
+
+**Response `200`:** the escrow, `status: "HELD"` — unfreezing always restores
+`HELD`, since that is the only status `FROZEN` is ever entered from.
+
+**Errors:** `400` escrow is not currently `FROZEN` · `404` not found.
 
 ---
 

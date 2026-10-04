@@ -1,0 +1,42 @@
+// ─── PARTNER DATA ACKNOWLEDGMENTS ─────────────────────────────────────────────
+// R34 / R35 — versioned consent to the lead-data-handling rules (PC-2) and the
+// post-OTP restricted-use notice (PC-3). A single boolean+timestamp field, the
+// pattern User.kycConsentAt already uses, can't represent this: there are two
+// independent acknowledgment types, versions change over time and a partner
+// must be able to re-accept a new version, and POST_OTP_RESTRICTED_USE is
+// recorded per LEAD rather than once per partner.
+
+model PartnerDataAcknowledgment {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  partnerId String   @db.ObjectId
+  partner   User     @relation(fields: [partnerId], references: [id])
+
+  type    DataAcknowledgmentType
+  // Whatever version string the frontend showed the partner. Accepted as
+  // given rather than validated against a registry, the same convention
+  // User.partnerTermsVersion already uses for terms acceptance in this
+  // codebase — the backend records what was presented, it does not maintain
+  // a second source of truth for version text.
+  version String
+
+  // Only set for POST_OTP_RESTRICTED_USE, which R35 ties to a specific lead
+  // rather than to the partner account as a whole.
+  leadId String? @db.ObjectId
+
+  acceptedAt DateTime @default(now())
+  ipAddress  String?
+
+  // One row per (partner, type, version, lead). For LEAD_DATA_HANDLING,
+  // leadId is always null, so this is one row per version per partner —
+  // re-accepting the SAME version just needs an upsert, not a duplicate.
+  // For POST_OTP_RESTRICTED_USE, leadId is set, so each lead gets its own row
+  // even at the same version.
+  @@unique([partnerId, type, version, leadId])
+  @@index([partnerId, type])
+  @@index([leadId])
+}
+
+enum DataAcknowledgmentType {
+  LEAD_DATA_HANDLING
+  POST_OTP_RESTRICTED_USE
+}

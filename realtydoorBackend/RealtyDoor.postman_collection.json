@@ -4289,6 +4289,126 @@
               "body": "{\"success\":true,\"message\":\"Change request withdrawn\",\"data\":{\"id\":\"6a44b1...\",\"status\":\"REJECTED\",\"reviewNote\":\"Withdrawn by partner\"}}"
             }
           ]
+        },
+        {
+          "name": "Record Lead-Data-Handling Acknowledgment (R34)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"LEAD_DATA_HANDLING\",\n  \"version\": \"2026-10-v1\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/partner/data-acknowledgments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "partner",
+                "data-acknowledgments"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "201 - Recorded",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Acknowledgment recorded\",\"data\":{\"type\":\"LEAD_DATA_HANDLING\",\"version\":\"2026-10-v1\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Record Post-OTP Restricted-Use Ack (R35)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"POST_OTP_RESTRICTED_USE\",\n  \"version\": \"2026-10-v1\",\n  \"leadId\": \"{{leadId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/partner/data-acknowledgments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "partner",
+                "data-acknowledgments"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "201 - Recorded",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Acknowledgment recorded\",\"data\":{\"type\":\"POST_OTP_RESTRICTED_USE\",\"version\":\"2026-10-v1\",\"leadId\":\"{{leadId}}\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Get Acknowledgment Status (R34)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/partner/data-acknowledgments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "partner",
+                "data-acknowledgments"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Status",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"type\":\"LEAD_DATA_HANDLING\",\"accepted\":true,\"version\":\"2026-10-v1\",\"acceptedAt\":\"2026-10-04T12:00:00.000Z\",\"requiredVersion\":null,\"isCurrent\":null}}"
+            }
+          ]
         }
       ]
     },
@@ -6659,6 +6779,51 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":false,\"message\":\"User not found\"}"
+                }
+              ]
+            },
+            {
+              "name": "Request KYC Documents (R9)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"items\": [\n    \"PAN card is blurry, reupload\",\n    \"Missing latest bank statement\"\n  ],\n  \"note\": \"Resend once these are fixed and it goes straight back into review\",\n  \"dueInDays\": 3\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/kyc/{{partnerId}}/request-documents",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "kyc",
+                    "{{partnerId}}",
+                    "request-documents"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Requested",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Requested 2 document(s)\",\"data\":{\"id\":\"{{partnerId}}\",\"kycStatus\":\"DOCUMENTS_REQUESTED\",\"kycRequestedDocuments\":[\"PAN card is blurry, reupload\",\"Missing latest bank statement\"],\"kycRequestedDueAt\":\"2026-10-07T12:00:00.000Z\"}}"
                 }
               ]
             }
@@ -9743,6 +9908,87 @@
                   "body": "{\"success\":false,\"message\":\"Config key \\\"support_phone\\\" not found\"}"
                 }
               ]
+            }
+          ]
+        },
+        {
+          "name": "Freeze Escrow for Dispute (R10)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Buyer disputes the deal terms, pending admin review\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/escrow/{{escrowId}}/freeze",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "escrow",
+                "{{escrowId}}",
+                "freeze"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Frozen",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Escrow frozen\",\"data\":{\"id\":\"{{escrowId}}\",\"status\":\"FROZEN\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Unfreeze Escrow (R10)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/escrow/{{escrowId}}/unfreeze",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "escrow",
+                "{{escrowId}}",
+                "unfreeze"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Unfrozen",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Escrow unfrozen\",\"data\":{\"id\":\"{{escrowId}}\",\"status\":\"HELD\"}}"
             }
           ]
         }

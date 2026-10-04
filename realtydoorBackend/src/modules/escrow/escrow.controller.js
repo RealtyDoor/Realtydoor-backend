@@ -1,7 +1,7 @@
 const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./escrow.service');
-const { createOrderSchema, releaseEscrowSchema } = require('./escrow.validator');
+const { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema } = require('./escrow.validator');
 const { verifyPaymentSignature } = require('../../lib/razorpay');
 const ApiError = require('../../utils/ApiError');
 
@@ -49,6 +49,22 @@ async function refundEscrow(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// R10 — freeze / unfreeze for dispute.
+async function freezeEscrow(req, res, next) {
+  try {
+    const { reason } = freezeEscrowSchema.parse(req.body);
+    const escrow = await service.freeze(req.params.id, reason, req.user.id, req.ip);
+    success(res, escrow, 'Escrow frozen');
+  } catch (err) { next(err); }
+}
+
+async function unfreezeEscrow(req, res, next) {
+  try {
+    const escrow = await service.unfreeze(req.params.id, req.user.id, req.ip);
+    success(res, escrow, 'Escrow unfrozen');
+  } catch (err) { next(err); }
+}
+
 async function getAllEscrow(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
@@ -78,4 +94,7 @@ async function verifyPayment(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { createOrder, getEscrowById, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats };
+module.exports = {
+  createOrder, getEscrowById, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
+  freezeEscrow, unfreezeEscrow,
+};

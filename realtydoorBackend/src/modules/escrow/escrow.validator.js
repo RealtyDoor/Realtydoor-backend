@@ -51,4 +51,11 @@ const releaseEscrowSchema = z.object({
   { message: 'partnerShare is required (and must be positive) when partnerDetails is provided', path: ['partnerShare'] }
 );
 
-module.exports = { createOrderSchema, releaseEscrowSchema };
+// R10 — freeze for dispute. The reason is required and audited; whether it
+// is ever surfaced to the partner/buyer is a product decision not made yet,
+// so this does not assume either way.
+const freezeEscrowSchema = z.object({
+  reason: z.string().min(5, 'A reason of at least 5 characters is required').max(500),
+});
+
+module.exports = { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema };

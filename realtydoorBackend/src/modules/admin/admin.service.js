@@ -17,6 +17,7 @@ const { CONTACT_STATUSES } = require('../contact/contact.admin.validator');
 const { generate, expiresAt } = require('../../lib/otp');
 const logger = require('../../lib/logger');
 const { cacheDel } = require('../../lib/cache');
+const dataAckService = require('../partners/dataAck.service');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 
 // ─── LEAD MANAGEMENT ─────────────────────────────────────────────────────────
@@ -312,6 +313,13 @@ async function assignLead(leadId, partnerId, adminId, ip) {
   const partner = await prisma.user.findFirst({ where: { id: partnerId, role: 'PARTNER', kycStatus: 'VERIFIED' } });
   if (!partner) throw new ApiError(400, 'Partner not found or not KYC verified');
 
+  // R34 — gate the first (and every) lead dispatch on the current
+  // lead-data-handling acknowledgment. Off by default: checkLeadDataHandlingGate
+  // returns null until the business configures a required version, so this
+  // cannot lock out every partner the day it ships.
+  const gateReason = await dataAckService.checkLeadDataHandlingGate(partnerId);
+  if (gateReason) throw new ApiError(400, gateReason);
+
   const updated = await prisma.lead.update({
     where: { id: leadId },
     data: { assignedPartnerId: partnerId, status: 'ASSIGNED', assignedAt: new Date() },
@@ -555,6 +563,61 @@ async function getPendingKyc(skip, limit, statusFilter) {
     prisma.user.count({ where }),
   ]);
   return { data, total };
+}
+
+// R9 — ask for specific documents instead of rejecting outright.
+//
+// dueInDays is informational, not enforced server-side: nothing auto-rejects
+// when it passes. kycRequestEffectiveStatus reports it as overdue, for an
+// admin to act on, the same non-destructive default already used for the
+// listing change-request and owner-confirmation timeouts in this codebase.
+async function requestKycDocuments(userId, { items, note, dueInDays }, adminId, ip) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new ApiError(404, 'User not found');
+  if (user.kycStatus === 'VERIFIED') throw new ApiError(400, 'KYC is already verified');
+
+  const dueAt = dueInDays ? new Date(Date.now() + dueInDays * 86400000) : null;
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      kycStatus: 'DOCUMENTS_REQUESTED',
+      kycRequestedDocuments: items,
+      kycRequestedNote: note || null,
+      kycRequestedAt: new Date(),
+      kycRequestedDueAt: dueAt,
+      kycRequestedByAdminId: adminId,
+      // A stale rejection note would contradict the checklist now being shown.
+      kycRejectionNote: null,
+    },
+    select: { id: true, name: true, kycStatus: true, kycRequestedDocuments: true, kycRequestedDueAt: true },
+  });
+
+  await createNotification({
+    userId,
+    title: 'Additional KYC documents needed',
+    message: `Admin asked for ${items.length} document(s)${note ? `: ${note}` : ''}`,
+    type: 'KYC_UPDATE',
+    linkUrl: '/partner/profile',
+  });
+
+  await createAuditLog({
+    adminId, action: 'KYC_DOCUMENTS_REQUESTED', targetType: 'User', targetId: userId,
+    before: { kycStatus: user.kycStatus },
+    after: { kycStatus: 'DOCUMENTS_REQUESTED', items, note: note || null, dueAt },
+    ipAddress: ip,
+  });
+
+  return updated;
+}
+
+// Overdue is derived at read time, never stored — a stored flag would need a
+// scheduled job and would be wrong for the whole window between the deadline
+// and the next run.
+function kycRequestEffectiveStatus(user) {
+  if (user.kycStatus !== 'DOCUMENTS_REQUESTED') return user.kycStatus;
+  if (user.kycRequestedDueAt && user.kycRequestedDueAt < new Date()) return 'DOCUMENTS_REQUESTED_OVERDUE';
+  return 'DOCUMENTS_REQUESTED';
 }
 
 async function verifyKyc(userId, action, note, adminId, ip) {
@@ -1277,7 +1340,7 @@ module.exports = {
   getLeadById, getAllLeads, assignLead, createLead, confirmLead, rejectLead, overrideLeadOtp,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   requestPropertyChanges,
-  getPendingKyc, verifyKyc,
+  getPendingKyc, verifyKyc, requestKycDocuments, kycRequestEffectiveStatus,
   getRevenueSummary,
   getAuditLogs,
   getAllTickets, getTicketById, updateTicketStatus, getTicketStats,

@@ -91,6 +91,11 @@ enum KycStatus {
   PENDING_REVIEW
   VERIFIED
   REJECTED
+  // R9 — admin asked for specific additional/corrected documents instead of
+  // rejecting outright. Distinct from REJECTED in the same way the listing
+  // CHANGES_REQUESTED status is distinct from REJECTED: this is a submission
+  // still in progress, not a refusal.
+  DOCUMENTS_REQUESTED
 }
 
 enum TicketStatus {
@@ -113,6 +118,12 @@ enum EscrowStatus {
   // review; release()/refund() both reject anything that isn't HELD, so this
   // status deliberately blocks the normal retry path until someone looks.
   HELD_PAYOUT_FAILED
+  // R10 — admin froze this escrow for a dispute. Restricted to escrows that
+  // were HELD at the time of freezing: release() and refund() already reject
+  // anything that isn't HELD, so setting this status blocks both for free,
+  // the same way HELD_PAYOUT_FAILED above blocks the retry path. Unfreezing
+  // always restores HELD, since that is the only status this is entered from.
+  FROZEN
 }
 
 // The partner's own post-visit report (design artboard 50's status picker).

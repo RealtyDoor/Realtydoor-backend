@@ -82,6 +82,16 @@ const requestPropertyChangesSchema = z.object({
   note: z.string().max(1000).optional(),
 });
 
+// R9 — the checklist of specific documents admin wants. dueInDays is
+// optional and purely informational, not enforced server-side.
+const requestKycDocumentsSchema = z.object({
+  items: z.array(z.string().min(3, 'Each item must be at least 3 characters').max(300))
+    .min(1, 'At least one requested document is required')
+    .max(20, 'At most 20 requested documents'),
+  note: z.string().max(1000).optional(),
+  dueInDays: z.number().int().positive().max(90).optional(),
+});
+
 const editPropertySchema = z.object({
   title:         z.string().min(5).max(200).optional(),
   description:   z.string().max(5000).optional(),
@@ -228,6 +238,7 @@ module.exports = {
   editPropertySchema,
   approvePropertySchema,
   requestPropertyChangesSchema,
+  requestKycDocumentsSchema,
   updateTicketSchema,
   createServiceSchema,
   updateServiceSchema,

@@ -72,6 +72,18 @@ model User {
   kycDocumentUrls  String[]
   kycRejectionNote String?
   kycVerifiedAt    DateTime?
+
+  // R9 — checklist of specific documents admin asked for, with a due date.
+  // The due date is read-only informational: nothing auto-rejects when it
+  // passes (see admin.service.js::kycRequestEffectiveStatus) — it is
+  // reported as overdue for an admin to act on, the same non-destructive
+  // default used for the listing change-request and owner-confirmation
+  // timeouts elsewhere in this schema.
+  kycRequestedDocuments String[]
+  kycRequestedNote      String?
+  kycRequestedAt        DateTime?
+  kycRequestedDueAt     DateTime?
+  kycRequestedByAdminId String?   @db.ObjectId
   kycConsentAt     DateTime? // POST /partner/kyc/consent — previously had nowhere to be recorded
 
   // B12.3 — partner acceptance of the commission/terms agreement. Versioned
@@ -172,6 +184,7 @@ model User {
   commissionOverrides PartnerCommissionOverride[]
   changeRequests      PropertyChangeRequest[]
   mandates            ExclusiveMandate[]
+  dataAcknowledgments PartnerDataAcknowledgment[]
 
   @@index([phone])
   @@index([deletedAt])

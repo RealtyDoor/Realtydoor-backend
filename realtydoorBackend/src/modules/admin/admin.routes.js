@@ -73,6 +73,8 @@ router.patch('/properties/:id',         ctrl.editProperty);
 router.get('/kyc',                ctrl.getPendingKyc);
 router.get('/kyc/:userId',        ctrl.getKycById);
 router.patch('/kyc/:userId/verify', ctrl.verifyKyc);
+// R9 — ask for specific documents instead of a flat reject.
+router.post('/kyc/:userId/request-documents', ctrl.requestKycDocuments);
 
 // Revenue
 router.get('/revenue', ctrl.getRevenue);
@@ -89,6 +91,9 @@ router.patch('/partners/:id/payout-account/status', ctrl.setPayoutAccountStatus)
 // Escrow (admin actions)
 router.patch('/escrow/:id/release', escrowCtrl.releaseEscrow);
 router.post('/escrow/:id/refund', escrowCtrl.refundEscrow);
+// R10 — freeze / unfreeze for dispute.
+router.post('/escrow/:id/freeze',   escrowCtrl.freezeEscrow);
+router.post('/escrow/:id/unfreeze', escrowCtrl.unfreezeEscrow);
 router.get('/escrow', escrowCtrl.getAllEscrow);
 router.get('/escrow/stats', escrowCtrl.getEscrowStats);
 // 2.8/2.9 — split entitlements + release conditions, before releasing.

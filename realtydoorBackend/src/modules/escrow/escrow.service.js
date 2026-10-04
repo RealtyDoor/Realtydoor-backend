@@ -593,4 +593,47 @@ async function getEscrowStats() {
   };
 }
 
-module.exports = { createOrder, getById, getReleasePlan, confirmPayment, release, refund, getAllEscrow, getEscrowStats };
+// R10 — freeze a HELD escrow for a dispute. Blocks release() and refund()
+// for free, since both already reject anything that is not HELD.
+async function freeze(escrowId, reason, adminId, ip) {
+  const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
+  if (!escrow) throw new ApiError(404, 'Escrow not found');
+  if (escrow.status !== 'HELD') throw new ApiError(400, `Cannot freeze escrow with status ${escrow.status} — only a HELD escrow can be frozen`);
+
+  const updated = await prisma.escrowTransaction.update({
+    where: { id: escrowId },
+    data: { status: 'FROZEN', frozenAt: new Date(), frozenReason: reason, frozenByAdminId: adminId, unfrozenAt: null },
+  });
+
+  await createAuditLog({
+    adminId, action: 'ESCROW_FROZEN', targetType: 'EscrowTransaction', targetId: escrowId,
+    before: { status: 'HELD' }, after: { status: 'FROZEN', reason }, ipAddress: ip,
+  });
+
+  return updated;
+}
+
+// Always restores HELD — FROZEN is only ever entered from HELD above, so
+// there is nothing else to restore to.
+async function unfreeze(escrowId, adminId, ip) {
+  const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
+  if (!escrow) throw new ApiError(404, 'Escrow not found');
+  if (escrow.status !== 'FROZEN') throw new ApiError(400, `Escrow is not frozen (status: ${escrow.status})`);
+
+  const updated = await prisma.escrowTransaction.update({
+    where: { id: escrowId },
+    data: { status: 'HELD', unfrozenAt: new Date() },
+  });
+
+  await createAuditLog({
+    adminId, action: 'ESCROW_UNFROZEN', targetType: 'EscrowTransaction', targetId: escrowId,
+    before: { status: 'FROZEN' }, after: { status: 'HELD' }, ipAddress: ip,
+  });
+
+  return updated;
+}
+
+module.exports = {
+  createOrder, getById, getReleasePlan, confirmPayment, release, refund, getAllEscrow, getEscrowStats,
+  freeze, unfreeze,
+};

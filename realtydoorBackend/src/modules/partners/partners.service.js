@@ -56,7 +56,18 @@ async function submitKyc(partnerId, documentUrls) {
 
   const updated = await prisma.user.update({
     where: { id: partnerId },
-    data: { kycStatus: 'PENDING_REVIEW', kycDocumentUrls: documentUrls },
+    data: {
+      kycStatus: 'PENDING_REVIEW',
+      kycDocumentUrls: documentUrls,
+      // R9 — resubmitting after a document request clears the checklist:
+      // the partner acted on it, so it goes back to a normal review rather
+      // than sitting in DOCUMENTS_REQUESTED (or OVERDUE) forever.
+      kycRequestedDocuments: [],
+      kycRequestedNote: null,
+      kycRequestedAt: null,
+      kycRequestedDueAt: null,
+      kycRequestedByAdminId: null,
+    },
   });
 
   const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });

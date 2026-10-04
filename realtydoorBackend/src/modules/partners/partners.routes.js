@@ -4,6 +4,7 @@ const leadsCtrl = require('../leads/leads.controller');
 const commissionCtrl = require('../commission/commission.controller');
 const analyticsCtrl = require('../analytics/analytics.controller');
 const listingCtrl = require('../listings/listings.partner.controller');
+const dataAckCtrl = require('./dataAck.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
@@ -16,6 +17,9 @@ router.use(authenticate, requirePartner, perUserLimiter);
 router.post('/kyc/consent', ctrl.recordKycConsent);
 // B12.3 — accept a versioned commission/terms agreement.
 router.post('/terms/accept', ctrl.acceptTerms);
+// R34 / R35 — lead-data-handling and post-OTP restricted-use consent.
+router.get('/data-acknowledgments',  dataAckCtrl.getStatus);
+router.post('/data-acknowledgments', dataAckCtrl.record);
 // B12.2 — the partner's effective default plus their agreed per-lead terms.
 router.get('/rate-cards', commissionCtrl.myRateCards);
 router.post('/kyc', uploadLimiter, kycDocUploader.array('documents', 5), ctrl.submitKyc);
