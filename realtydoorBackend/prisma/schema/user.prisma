@@ -191,6 +191,7 @@ model User {
   supportTickets    PartnerSupportTicket[]
   commissionOverrides PartnerCommissionOverride[]
   changeRequests      PropertyChangeRequest[]
+  builderProjects     Project[] @relation("BuilderProjects")
   mandates            ExclusiveMandate[]
   dataAcknowledgments PartnerDataAcknowledgment[]
 

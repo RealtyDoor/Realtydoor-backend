@@ -1102,6 +1102,84 @@
               "body": "{\"success\":true,\"message\":\"Document uploaded\",\"data\":{\"id\":\"6ac4...\",\"documentType\":\"SALE_DEED\",\"status\":\"PENDING_REVIEW\",\"fileUrl\":\"https://files.realtydoor.com/properties/documents/sale-deed.pdf\",\"fileName\":\"sale-deed.pdf\"}}"
             }
           ]
+        },
+        {
+          "name": "Projects",
+          "item": [
+            {
+              "name": "List Approved Projects",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/projects?city=Pune",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "projects"
+                  ],
+                  "query": [
+                    {
+                      "key": "city",
+                      "value": "Pune"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Projects",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"APPROVED\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000}}],\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1}}"
+                }
+              ]
+            },
+            {
+              "name": "Project Detail by Slug",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/projects/{{projectSlug}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "projects",
+                    "{{projectSlug}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Public detail, AVAILABLE units only",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"APPROVED\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000},\"units\":[{\"id\":\"6a44...\",\"unitNumber\":\"A-101\",\"bhk\":2,\"carpetArea\":650,\"price\":4500000,\"floorNumber\":1,\"status\":\"AVAILABLE\"}]}}"
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -4443,6 +4521,388 @@
               "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"override\":null,\"leads\":[{\"leadId\":\"6a...\",\"refCode\":\"L-2231\",\"property\":{\"title\":\"3BHK in Kothrud\",\"city\":\"Pune\"},\"feePct\":2,\"partnerSharePct\":50,\"partnerAmount\":75000,\"locked\":false,\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":50}]}]}}"
             }
           ]
+        },
+        {
+          "name": "Projects",
+          "item": [
+            {
+              "name": "Create Project (4.10)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"Skyline Towers\",\n  \"description\": \"A 2-tower residential project in Hinjewadi.\",\n  \"address\": \"Survey 45, NH-4\",\n  \"locality\": \"Hinjewadi\",\n  \"city\": \"Pune\",\n  \"state\": \"Maharashtra\",\n  \"pincode\": \"411057\",\n  \"reraProjectNumber\": \"P52100012345\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/projects",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "projects"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "201 - Submitted",
+                  "status": "Created",
+                  "code": 201,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Project submitted for review\",\"data\":{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"PENDING_APPROVAL\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":null}}"
+                }
+              ]
+            },
+            {
+              "name": "My Projects",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/projects",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "projects"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - My projects",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"APPROVED\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000}}],\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1}}"
+                }
+              ]
+            },
+            {
+              "name": "My Project Detail",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/projects/{{projectId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "projects",
+                    "{{projectId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Own detail",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"APPROVED\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000},\"units\":[{\"id\":\"6a44...\",\"unitNumber\":\"A-101\",\"bhk\":2,\"carpetArea\":650,\"price\":4500000,\"floorNumber\":1,\"status\":\"AVAILABLE\"}]}}"
+                }
+              ]
+            },
+            {
+              "name": "Update Project",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reraProjectNumber\": \"P52100012345-FIXED\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/projects/{{projectId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "projects",
+                    "{{projectId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Updated, reverted for re-review if was live",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Project updated\",\"data\":{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"PENDING_APPROVAL\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000}}}"
+                }
+              ]
+            },
+            {
+              "name": "Add Unit (4.10)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"unitNumber\": \"A-101\",\n  \"bhk\": 2,\n  \"carpetArea\": 650,\n  \"builtUpArea\": 780,\n  \"price\": 4500000,\n  \"floorNumber\": 1\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/projects/{{projectId}}/units",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "projects",
+                    "{{projectId}}",
+                    "units"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "201 - Added",
+                  "status": "Created",
+                  "code": 201,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Unit added\",\"data\":{\"id\":\"6a44...\",\"unitNumber\":\"A-101\",\"bhk\":2,\"carpetArea\":650,\"price\":4500000,\"floorNumber\":1,\"status\":\"AVAILABLE\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Bulk Add Units",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"units\": [\n    {\n      \"unitNumber\": \"A-102\",\n      \"bhk\": 3,\n      \"carpetArea\": 900,\n      \"price\": 6500000,\n      \"floorNumber\": 1\n    },\n    {\n      \"unitNumber\": \"A-103\",\n      \"bhk\": 2,\n      \"carpetArea\": 650,\n      \"price\": 4600000,\n      \"floorNumber\": 1\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/projects/{{projectId}}/units/bulk",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "projects",
+                    "{{projectId}}",
+                    "units",
+                    "bulk"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "201 - Batch added",
+                  "status": "Created",
+                  "code": 201,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"2 unit(s) added\",\"data\":{\"createdCount\":2,\"failedCount\":0,\"created\":[\"...\"],\"failed\":[]}}"
+                }
+              ]
+            },
+            {
+              "name": "Update Unit",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"price\": 4700000\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/projects/{{projectId}}/units/{{unitId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "projects",
+                    "{{projectId}}",
+                    "units",
+                    "{{unitId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Updated",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Unit updated\",\"data\":{\"id\":\"6a44...\",\"unitNumber\":\"A-101\",\"bhk\":2,\"carpetArea\":650,\"price\":4700000,\"floorNumber\":1,\"status\":\"AVAILABLE\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Mark Unit Sold",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"SOLD\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/projects/{{projectId}}/units/{{unitId}}/status",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "projects",
+                    "{{projectId}}",
+                    "units",
+                    "{{unitId}}",
+                    "status"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Status updated",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Unit marked SOLD\",\"data\":{\"id\":\"6a44...\",\"unitNumber\":\"A-101\",\"bhk\":2,\"carpetArea\":650,\"price\":4500000,\"floorNumber\":1,\"status\":\"SOLD\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Delete Unit",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/projects/{{projectId}}/units/{{unitId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "projects",
+                    "{{projectId}}",
+                    "units",
+                    "{{unitId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Removed (AVAILABLE only)",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Unit removed\",\"data\":{\"id\":\"6a44...\",\"unitNumber\":\"A-101\",\"bhk\":2,\"carpetArea\":650,\"price\":4500000,\"floorNumber\":1,\"status\":\"AVAILABLE\"}}"
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -7270,6 +7730,258 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":true,\"message\":\"Success\",\"data\":[{\"version\":1,\"setAt\":\"2026-10-04T12:00:00.000Z\",\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":50,\"payeeUserId\":\"6a...\",\"flatAmountPaise\":null},{\"payeeRole\":\"ADVISOR\",\"pct\":6.67,\"payeeUserId\":\"6a...\",\"flatAmountPaise\":5000000},{\"payeeRole\":\"PLATFORM\",\"pct\":43.33,\"payeeUserId\":null,\"flatAmountPaise\":null}]}]}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Projects",
+          "item": [
+            {
+              "name": "Review Queue (4.10)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/projects?status=PENDING_APPROVAL",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "projects"
+                  ],
+                  "query": [
+                    {
+                      "key": "status",
+                      "value": "PENDING_APPROVAL"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Pending projects",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"PENDING_APPROVAL\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000}}],\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1}}"
+                }
+              ]
+            },
+            {
+              "name": "Project Full Detail (admin)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/projects/{{projectId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "projects",
+                    "{{projectId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Every unit regardless of status",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"APPROVED\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000},\"units\":[{\"id\":\"6a44...\",\"unitNumber\":\"A-101\",\"bhk\":2,\"carpetArea\":650,\"price\":4500000,\"floorNumber\":1,\"status\":\"AVAILABLE\"},{\"id\":\"6a44...\",\"unitNumber\":\"A-102\",\"bhk\":2,\"carpetArea\":650,\"price\":4500000,\"floorNumber\":1,\"status\":\"SOLD\"}]}}"
+                }
+              ]
+            },
+            {
+              "name": "Approve Project (4.11)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/projects/{{projectId}}/approve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "projects",
+                    "{{projectId}}",
+                    "approve"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - All units live together",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Project approved \\u2014 all units now live\",\"data\":{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"APPROVED\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000}}}"
+                }
+              ]
+            },
+            {
+              "name": "Reject Project",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"note\": \"Land title documentation incomplete\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/projects/{{projectId}}/reject",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "projects",
+                    "{{projectId}}",
+                    "reject"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Rejected",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Project rejected\",\"data\":{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"REJECTED\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000},\"rejectionNote\":\"Land title documentation incomplete\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Request Changes on Project (4.15 equivalent)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"items\": [\n    \"RERA number format looks wrong, double-check it\"\n  ],\n  \"note\": \"Resend once confirmed.\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/projects/{{projectId}}/request-changes",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "projects",
+                    "{{projectId}}",
+                    "request-changes"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Changes requested",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Requested 1 change(s)\",\"data\":{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"CHANGES_REQUESTED\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000}}}"
+                }
+              ]
+            },
+            {
+              "name": "Review One Approval Item",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"APPROVED\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/projects/{{projectId}}/approvals/approvedPlan",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "projects",
+                    "{{projectId}}",
+                    "approvals",
+                    "approvedPlan"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Item reviewed",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"approvedPlan marked APPROVED\",\"data\":{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"APPROVED\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000},\"approvedPlanStatus\":\"APPROVED\"}}"
                 }
               ]
             }

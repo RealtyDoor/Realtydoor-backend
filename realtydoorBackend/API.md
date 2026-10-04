@@ -5594,6 +5594,276 @@ figure. The platform's cut is not their business and is not returned.
 
 **Auth:** PARTNER
 
+## Projects (docs 4.10 / 4.11, R22 / R23)
+
+A developer-led **multi-unit project** (a tower, a township) — distinct from
+a single-unit `Property` listing. A `BUILDER` partner's inventory lives
+here, not as individual partner-owned `Property` rows: a project can hold
+hundreds of units, which is unit **tracking** (count, type, price, status),
+not hundreds of standalone listings each needing its own photos and
+approval.
+
+Reuses `PublishStatus` — the same lifecycle (submit → approve / request
+changes / reject) that `Property` already has, including resubmission after
+`CHANGES_REQUESTED`.
+
+**4.11 — "all units go live together".** There is no per-unit approval.
+Every `AVAILABLE` unit becomes publicly visible the instant the *project's*
+`publishStatus` flips to `APPROVED`, and none before — gated entirely at the
+project level in every public read.
+
+**"Commercials" (4.10) are derived, not stored.** `priceFrom`/`priceTo`/unit
+counts are computed from the `AVAILABLE` units at read time, so they can
+never go stale the way a separately-maintained summary field would after a
+unit sells.
+
+**Inventory management is independent of project approval status.** A
+builder's compliance documents are vetted once, at project approval; adding
+a unit, correcting a price, or marking one `SOLD` afterward is routine
+inventory upkeep, not a fresh compliance event — none of it touches
+`publishStatus`.
+
+---
+
+### GET /api/projects
+
+Public. Approved projects only.
+
+**Query:** `city` · `page` · `limit`
+
+**Response `200`:**
+
+```json
+{
+  "success": true, "message": "Success",
+  "data": {
+    "data": [{
+      "id": "...", "title": "Skyline Towers", "slug": "skyline-towers-...",
+      "city": "Pune", "locality": "Hinjewadi", "publishStatus": "APPROVED",
+      "commercials": { "totalUnits": 40, "availableUnits": 22, "bookedUnits": 10, "soldUnits": 8, "priceFrom": 4500000, "priceTo": 9500000 }
+    }],
+    "total": 1, "page": 1, "limit": 20, "totalPages": 1
+  }
+}
+```
+
+---
+
+### GET /api/projects/:slug
+
+Public. Returns `404` for anything not currently `APPROVED` — same as a
+`Property` reached by an unapproved slug.
+
+**Response `200`:** the project plus `units` (only `AVAILABLE` ones,
+`BOOKED`/`SOLD`/`ON_HOLD` are never shown publicly) and `commercials`.
+
+**Errors:** `404` not found or not approved.
+
+---
+
+### POST /api/partner/projects
+
+Builder submits a new project. Lands `PENDING_APPROVAL`, invisible publicly.
+
+**Auth:** PARTNER + KYC verified
+
+**Request Body:**
+
+```json
+{
+  "title": "Skyline Towers", "description": "...",
+  "address": "Survey 45, NH-4", "locality": "Hinjewadi", "city": "Pune", "state": "Maharashtra", "pincode": "411057",
+  "reraProjectNumber": "P52100012345",
+  "approvedPlanUrl": "https://...", "commencementCertificateUrl": "https://...", "landTitleDocUrl": "https://...",
+  "designatedAccountBankName": "HDFC Bank", "designatedAccountNumber": "...", "designatedAccountIfsc": "HDFC0000634"
+}
+```
+
+All the approval-document fields are optional — a project can be submitted
+with some still pending; the admin review screen shows exactly which.
+
+**Response `201`:** the created project.
+
+---
+
+### GET /api/partner/projects · GET /api/partner/projects/:id
+
+The builder's own projects (list) / one project with its full unit list and
+`commercials` (detail, their own only — `403` otherwise).
+
+**Auth:** PARTNER + KYC verified
+
+---
+
+### PATCH /api/partner/projects/:id
+
+**Auth:** PARTNER + KYC verified (must own the project)
+
+**Request Body:** any subset of the create fields.
+
+**If the project is currently `APPROVED`**, editing reverts it to
+`PENDING_APPROVAL` for re-review — a conscious simplification, not Property's
+change-request machinery duplicated: a project's compliance fields rarely
+change post-approval, and when they do, the whole project goes back to
+review rather than holding a separate diff. Units are unaffected by this —
+inventory changes never touch `publishStatus` (see above).
+
+**If the project is `CHANGES_REQUESTED`**, editing resubmits it
+(`PENDING_APPROVAL`, checklist cleared) — same as `Property`.
+
+**Errors:** `403` not your project · `404` not found.
+
+---
+
+### POST /api/partner/projects/:id/units
+
+Add one unit.
+
+**Auth:** PARTNER + KYC verified (must own the project)
+
+**Request Body:**
+
+```json
+{ "unitNumber": "A-101", "bhk": 2, "carpetArea": 650, "builtUpArea": 780, "price": 4500000, "floorNumber": 1 }
+```
+
+Only `unitNumber` is required. `unitType` (same enum as `Property.propertyType`),
+`bhk`, `carpetArea`, `builtUpArea`, `price`, `floorNumber` are all optional.
+
+**Errors:** `409` a unit with this `unitNumber` already exists in this project.
+
+---
+
+### POST /api/partner/projects/:id/units/bulk
+
+Add many units in one call — a real project can have hundreds, and builders
+enter inventory in batches, not one row at a time.
+
+**Auth:** PARTNER + KYC verified
+
+**Request Body:** `{ "units": [ { "unitNumber": "A-101", ... }, { "unitNumber": "A-102", ... } ] }` — 1 to 500 entries.
+
+**Response `201`:**
+
+```json
+{
+  "success": true, "message": "2 unit(s) added, 1 failed",
+  "data": {
+    "createdCount": 2, "failedCount": 1,
+    "created": ["...the 2 created rows..."],
+    "failed": [{ "unitNumber": "A-101", "reason": "duplicate unit number" }]
+  }
+}
+```
+
+**One bad row never drops the rest of the batch.** Each unit is attempted
+independently; both lists are returned so nothing from a large upload is
+silently lost.
+
+---
+
+### PATCH /api/partner/projects/:id/units/:unitId
+
+Edit a unit's details (any subset of the add-unit fields, including
+`unitNumber` itself).
+
+**Auth:** PARTNER + KYC verified
+
+---
+
+### PATCH /api/partner/projects/:id/units/:unitId/status
+
+**Auth:** PARTNER + KYC verified
+
+**Request Body:** `{ "status": "SOLD" }` — one of `AVAILABLE`, `BOOKED`, `SOLD`, `ON_HOLD`.
+
+---
+
+### DELETE /api/partner/projects/:id/units/:unitId
+
+**Auth:** PARTNER + KYC verified
+
+**Only an `AVAILABLE` unit can be deleted** — a `BOOKED`/`SOLD`/`ON_HOLD` unit
+represents a real transaction or a deliberate hold; removing that record
+rather than correcting its status would lose history. Set it back to
+`AVAILABLE` first if it was entered in error.
+
+**Errors:** `400` unit is not `AVAILABLE` · `404` not found.
+
+---
+
+### GET /api/admin/projects
+
+Review queue. Defaults to `PENDING_APPROVAL`; `?status=ALL` for every
+project.
+
+**Auth:** ADMIN
+
+**Query:** `status` · `city` · `builderId` · `page` · `limit`
+
+---
+
+### GET /api/admin/projects/:id
+
+Full detail — every field, every unit regardless of status, `commercials`.
+
+**Auth:** ADMIN
+
+---
+
+### PATCH /api/admin/projects/:id/approve
+
+**All units go live together** the instant this is called — see above.
+
+**Auth:** ADMIN
+
+**Request Body:** none.
+
+**Response `200`:** the project, `publishStatus: "APPROVED"`.
+
+---
+
+### PATCH /api/admin/projects/:id/reject
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "note": "Land title documentation incomplete" }` — required, 5–500 chars.
+
+---
+
+### PATCH /api/admin/projects/:id/request-changes
+
+Same pattern as `Property`'s 4.15 — ask for specific fixes without
+rejecting.
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "items": ["RERA number format looks wrong"], "note": "..." }`
+
+**Refused on a currently-`APPROVED` project** — pulling a live project (and
+every one of its units) out of public view as a side effect of asking for
+one fix is rarely the intent. Edit it directly, or reject it to take it
+down deliberately.
+
+**Errors:** `400` the project is live.
+
+---
+
+### PATCH /api/admin/projects/:id/approvals/:item
+
+Per-document approval review — the admin screen needs to accept or reject
+each compliance document independently, not just the project as a whole.
+
+**Auth:** ADMIN
+
+**Path:** `:item` is one of `approvedPlan`, `commencement`, `landTitle`.
+
+**Request Body:** `{ "status": "APPROVED" }` or `{ "status": "REJECTED" }`.
+
+**Errors:** `400` unknown `:item`.
+
+---
+
 ---
 ### GET /api/admin/kyc
 

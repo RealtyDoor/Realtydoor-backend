@@ -1,0 +1,122 @@
+// ─── PROJECT ──────────────────────────────────────────────────────────────────
+// Docs 4.10 / 4.11, R22 / R23 — a developer-led multi-unit project (an
+// apartment complex, a township), distinct from a single-unit Property
+// listing. A BUILDER partner's inventory lives here, not as individual
+// partner-owned Property rows — a project can hold hundreds of units, which
+// is unit TRACKING (count, type, price, status), not hundreds of standalone
+// listings each needing its own photos, description and approval.
+//
+// Reuses PublishStatus rather than a dedicated enum — the same lifecycle
+// (submit, approve, request changes, reject) applies identically, and the
+// request-changes / resubmit pattern already built for Property
+// (listings.admin.service.js) is the template this follows.
+
+model Project {
+  id      String  @id @default(auto()) @map("_id") @db.ObjectId
+  title   String
+  slug    String  @unique
+  description String
+
+  builderId String @db.ObjectId
+  builder   User   @relation("BuilderProjects", fields: [builderId], references: [id])
+
+  address  String
+  locality String
+  city     String
+  state    String
+  pincode  String
+  latitude  Float?
+  longitude Float?
+
+  // ─── Approvals (4.10) ──────────────────────────────────────────────────────
+  // Each is optional on purpose — a project can be submitted with some
+  // approvals still pending, and the admin review screen needs to see
+  // exactly which ones, not a single pass/fail flag.
+  reraProjectNumber         String?
+  approvedPlanUrl           String?
+  approvedPlanStatus        ApprovalStatus @default(PENDING)
+  commencementCertificateUrl String?
+  commencementStatus        ApprovalStatus @default(PENDING)
+  landTitleDocUrl           String?
+  landTitleStatus           ApprovalStatus @default(PENDING)
+  // RERA mandates sale proceeds into a separate, designated account — not
+  // the builder's general account. Bank details, not a Razorpay account.
+  designatedAccountBankName   String?
+  designatedAccountNumber     String?
+  designatedAccountIfsc       String?
+
+  // ─── Lifecycle ──────────────────────────────────────────────────────────────
+  publishStatus PublishStatus @default(PENDING_APPROVAL)
+  rejectionNote String?
+
+  // 4.15's equivalent for a project — admin asks for specific fixes rather
+  // than rejecting outright. Mirrors Property.requestedChanges exactly.
+  requestedChanges          String[]
+  requestedChangesNote      String?
+  changesRequestedAt        DateTime?
+  changesRequestedByAdminId String?   @db.ObjectId
+
+  reviewedByAdminId String?   @db.ObjectId
+  reviewedAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  units ProjectUnit[]
+
+  @@index([builderId])
+  @@index([publishStatus])
+  @@index([city, locality, publishStatus])
+}
+
+// Admin's per-approval-item review state. Deliberately not just a boolean —
+// "pending" and "rejected" need different handling on the review screen, and
+// a document can be resubmitted after rejection the same way a KYC document
+// can (checklist.service.js's PropertyDocument).
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ─── PROJECT UNIT ─────────────────────────────────────────────────────────────
+// Inventory tracking (4.10, R23) — count, type, carpet area, price, status.
+// Not a Property row: a unit only becomes a full listing if someone
+// specifically creates one for it (out of scope here — nothing does that
+// automatically).
+
+model ProjectUnit {
+  id        String  @id @default(auto()) @map("_id") @db.ObjectId
+  projectId String  @db.ObjectId
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // e.g. "A-1203" — builder's own numbering, free text since every builder's
+  // convention differs (tower-floor-number, block-unit, etc.).
+  unitNumber String
+  unitType   PropertyType?
+  bhk        Int?
+  carpetArea Float?
+  builtUpArea Float?
+  price      Float?
+  floorNumber Int?
+
+  status ProjectUnitStatus @default(AVAILABLE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // A builder re-numbering or re-entering the same unit twice is a data
+  // error worth catching rather than silently duplicating inventory.
+  @@unique([projectId, unitNumber])
+  @@index([projectId])
+  @@index([projectId, status])
+}
+
+enum ProjectUnitStatus {
+  AVAILABLE
+  BOOKED
+  SOLD
+  // A builder taking a unit off the market temporarily (e.g. a show flat),
+  // distinct from BOOKED (a buyer has committed) and SOLD (deal closed).
+  ON_HOLD
+}

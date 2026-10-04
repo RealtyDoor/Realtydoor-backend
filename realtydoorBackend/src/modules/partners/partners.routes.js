@@ -5,6 +5,7 @@ const commissionCtrl = require('../commission/commission.controller');
 const analyticsCtrl = require('../analytics/analytics.controller');
 const listingCtrl = require('../listings/listings.partner.controller');
 const dataAckCtrl = require('./dataAck.controller');
+const projectCtrl = require('../projects/project.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
@@ -56,6 +57,18 @@ router.get('/listings',    requireKyc, ctrl.getMyListings);
 router.get('/listings/change-requests',              requireKyc, listingCtrl.myChangeRequests);
 router.patch('/listings/change-requests/:id/withdraw', requireKyc, listingCtrl.withdrawChangeRequest);
 router.get('/listings/:id', requireKyc, ctrl.getListing);
+
+// 4.10 / 4.11 — builder's own projects and unit inventory (KYC required).
+// Static segments above /projects/:id for the same reason as /listings above.
+router.post('/projects',                     requireKyc, projectCtrl.create);
+router.get('/projects',                      requireKyc, projectCtrl.listMine);
+router.get('/projects/:id',                  requireKyc, projectCtrl.getMine);
+router.patch('/projects/:id',                requireKyc, projectCtrl.update);
+router.post('/projects/:id/units',           requireKyc, projectCtrl.addUnit);
+router.post('/projects/:id/units/bulk',      requireKyc, projectCtrl.bulkAddUnits);
+router.patch('/projects/:id/units/:unitId',          requireKyc, projectCtrl.updateUnit);
+router.patch('/projects/:id/units/:unitId/status',   requireKyc, projectCtrl.setUnitStatus);
+router.delete('/projects/:id/units/:unitId',         requireKyc, projectCtrl.deleteUnit);
 
 // Finance/escrow summary (KYC required)
 router.get('/finance',    requireKyc, ctrl.getFinanceSummary);

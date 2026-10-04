@@ -17,12 +17,14 @@ const serviceRequestsRoutes = require('../modules/serviceRequests/serviceRequest
 const localityRoutes = require('../modules/locality/locality.routes');
 const b2bRoutes = require('../modules/b2b/b2b.routes');
 const configRoutes = require('../modules/config/config.routes');
+const projectRoutes = require('../modules/projects/project.routes');
 
 // Auth (sync on login, profile)
 router.use('/auth', authRoutes);
 
 // Public
 router.use('/properties', propertiesRoutes);
+router.use('/projects', projectRoutes); // 4.10/4.11 — developer-led multi-unit projects
 router.use('/services', servicesRoutes);
 router.use('/blog', cmsRoutes);           // GET /api/blog and /api/blog/:slug
 router.use('/faqs', faqRoutes);           // GET /api/faqs and /api/faqs/:slug (content pre-parsed)

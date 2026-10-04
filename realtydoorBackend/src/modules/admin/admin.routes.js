@@ -13,6 +13,7 @@ const listingCtrl = require('../listings/listings.admin.controller');
 const integrityCtrl = require('../listings/integrity.controller');
 const locationCtrl = require('../listings/location.controller');
 const checklistCtrl = require('../listings/checklist.controller');
+const projectCtrl = require('../projects/project.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
@@ -72,6 +73,14 @@ router.patch('/properties/:id/reject',  ctrl.rejectProperty);
 // 4.15 — ask for fixes without refusing the listing.
 router.patch('/properties/:id/request-changes', ctrl.requestPropertyChanges);
 router.patch('/properties/:id',         ctrl.editProperty);
+
+// 4.10 / 4.11 — builder projects. Static segments stay above /projects/:id.
+router.get('/projects',                      projectCtrl.listAdmin);
+router.get('/projects/:id',                  projectCtrl.getAdmin);
+router.patch('/projects/:id/approve',        projectCtrl.approve);
+router.patch('/projects/:id/reject',         projectCtrl.reject);
+router.patch('/projects/:id/request-changes', projectCtrl.requestChanges);
+router.patch('/projects/:id/approvals/:item', projectCtrl.setApprovalItem);
 
 // KYC
 router.get('/kyc',                ctrl.getPendingKyc);
