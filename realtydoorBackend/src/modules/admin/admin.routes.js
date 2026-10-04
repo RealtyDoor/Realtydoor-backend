@@ -5,6 +5,7 @@ const cmsCtrl = require('../cms/cms.controller');
 const notifCtrl = require('../notifications/notifications.controller');
 const leadsCtrl = require('../leads/leads.controller');
 const watiCtrl = require('../wati/wati.controller');
+const b2bCtrl = require('../b2b/b2b.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
@@ -140,6 +141,11 @@ router.delete('/wati/templates/:id',       watiCtrl.deleteTemplate);
 router.post('/wati/templates/:id/submit',  watiCtrl.submitTemplate);
 router.patch('/wati/templates/:id/status', watiCtrl.syncStatus);
 router.post('/wati/templates/:id/test-send', watiCtrl.testSend);
+
+// B2B network oversight (B5.10) — admin watches these connections to catch
+// offline bypass, so unlike the partner views this one does include contacts.
+router.get('/b2b',         b2bCtrl.adminList);
+router.patch('/b2b/:id',   b2bCtrl.adminUpdate);
 
 // Platform config
 router.get('/config',         ctrl.listConfig);

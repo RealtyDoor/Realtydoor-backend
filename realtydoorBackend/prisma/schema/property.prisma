@@ -85,6 +85,10 @@ model Property {
 
   // B2B (Phase 2)
   commissionSplitOffer String?
+  // B5.9 — the "urgent" badge on the B2B feed. A listing-partner/admin flag
+  // rather than something derived: "urgent" is a commercial signal the owner
+  // sets, not a function of listing age or units left.
+  b2bUrgent            Boolean @default(false)
 
   // Ownership
   partnerId String @db.ObjectId

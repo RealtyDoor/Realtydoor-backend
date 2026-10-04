@@ -15,6 +15,7 @@ const contactRoutes = require('../modules/contact/contact.routes');
 const nriLeadsRoutes = require('../modules/nriLeads/nriLeads.routes');
 const serviceRequestsRoutes = require('../modules/serviceRequests/serviceRequests.routes');
 const localityRoutes = require('../modules/locality/locality.routes');
+const b2bRoutes = require('../modules/b2b/b2b.routes');
 const configRoutes = require('../modules/config/config.routes');
 
 // Auth (sync on login, profile)
@@ -29,6 +30,7 @@ router.use('/contact', contactRoutes);
 router.use('/nri-leads', nriLeadsRoutes);
 router.use('/service-requests', serviceRequestsRoutes);
 router.use('/locality-insights', localityRoutes);
+router.use('/partner/b2b', b2bRoutes);
 router.use('/config', configRoutes);
 
 // Authenticated
