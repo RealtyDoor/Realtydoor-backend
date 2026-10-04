@@ -2,6 +2,7 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { createNotification } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
+const { isSelfListedByAgent } = require('./integrity.service');
 
 // ─── 4.1 — persona-specific document checklist ──────────────────────────────
 //
@@ -95,7 +96,13 @@ async function getChecklist(propertyId, requirePartnerId = null) {
     throw new ApiError(403, 'Not your listing');
   }
 
-  const persona = checklistFor(property.partner.partnerSubType);
+  // R21 — an AGENT whose in-force mandate names their own PAN as the owner's
+  // is not representing a third party at all. There's no genuine mandate
+  // letter/owner-PAN/owner-confirmation to collect from anyone else, so this
+  // listing needs the OWNER persona's actual documents instead of pointing
+  // at AGENT's "elsewhere" placeholders for items that can't exist here.
+  const selfListed = property.partner.partnerSubType === 'AGENT' && await isSelfListedByAgent(propertyId);
+  const persona = checklistFor(selfListed ? 'OWNER' : property.partner.partnerSubType);
 
   const [docs, mandate, confirmations] = await Promise.all([
     prisma.propertyDocument.findMany({ where: { propertyId } }),
@@ -172,6 +179,9 @@ async function getChecklist(propertyId, requirePartnerId = null) {
   return {
     propertyId: property.id,
     partnerSubType: property.partner.partnerSubType,
+    // R21 — true when the checklist above was routed to OWNER documents
+    // despite the partner being registered as AGENT.
+    selfListedByAgent: selfListed,
     persona: persona.persona,
     available: persona.available !== false,
     reason: persona.reason || null,
@@ -206,7 +216,11 @@ async function uploadChecklistDocument(propertyId, partnerId, { documentType, fi
   });
   if (!property) throw new ApiError(404, 'Property not found');
   if (property.partnerId !== partnerId) throw new ApiError(403, 'Not your listing');
-  if (property.partner.partnerSubType !== 'OWNER') {
+  // R21 — a self-listing agent is routed to the OWNER checklist above, so
+  // they must be allowed to upload against it too.
+  const isOwnerPersona = property.partner.partnerSubType === 'OWNER'
+    || (property.partner.partnerSubType === 'AGENT' && await isSelfListedByAgent(propertyId));
+  if (!isOwnerPersona) {
     throw new ApiError(400,
       `This checklist document type is for the OWNER persona. This listing's partner is ${property.partner.partnerSubType || 'unset'}.`);
   }

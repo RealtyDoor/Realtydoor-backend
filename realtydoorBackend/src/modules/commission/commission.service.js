@@ -2,6 +2,7 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { createAuditLog } = require('../../lib/auditLog');
 const { getConfigNumber } = require('../config/config.service');
+const { isSelfListedByAgent } = require('../listings/integrity.service');
 
 // Platform default, the last fallback when no card matches. Admin-controlled
 // via platform config, consistent with the 2%-is-admin-controlled decision.
@@ -196,14 +197,25 @@ async function previewTermsForLead(leadId) {
     where: { id: leadId },
     select: {
       id: true, assignedPartnerId: true, propertyId: true,
-      property: { select: { id: true, city: true, price: true, partner: { select: { partnerSubType: true } } } },
+      property: { select: { id: true, city: true, price: true, partnerId: true, partner: { select: { partnerSubType: true } } } },
     },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
 
   // Who is selling drives which template applies. Falls back to AGENT, the
   // most common case, when the listing partner has no subtype set.
-  const sellerType = lead.property?.partner?.partnerSubType || 'AGENT';
+  //
+  // R21 — an AGENT who is also the mandate's owner-of-record isn't bringing
+  // a genuinely separate listing; there's no third-party owner paying an
+  // agent's cut on top of the platform fee, so this resolves against the
+  // OWNER rate card/template instead of AGENT's. assertPartnerNotOwnProperty
+  // (3.17) is the hard backstop if a line still tries to pay that partner —
+  // the fold below is what keeps prefill from hitting that error in the
+  // first place, by not offering the line at all when it would only ever be
+  // rejected.
+  const listingSubType = lead.property?.partner?.partnerSubType || 'AGENT';
+  const selfListed = listingSubType === 'AGENT' && !!lead.propertyId && await isSelfListedByAgent(lead.propertyId);
+  const sellerType = selfListed ? 'OWNER' : listingSubType;
   const { card, source } = await resolveRateCard({
     propertyId: lead.propertyId, city: lead.property?.city, sellerType,
   });
@@ -223,12 +235,24 @@ async function previewTermsForLead(leadId) {
         { payeeRole: 'CLOSING_AGENT', pct: defaultPartnerShare },
       ];
 
+  // R21 — the template's LISTING_AGENT/CLOSING_AGENT line assumes whoever
+  // ends up assigned is a genuine third party. When the lead has in fact
+  // been assigned back to the self-listing agent themselves, that line
+  // would always be refused at lock time — folded into PLATFORM instead,
+  // the same shape a sale with no agent in the loop at all would have. A
+  // *different* partner later assigned to close the deal is unaffected:
+  // this only fires when the assignee IS the owner-of-record.
+  if (selfListed && lead.assignedPartnerId && lead.assignedPartnerId === lead.property?.partnerId) {
+    lines = foldSelfListedPartnerLines(lines);
+  }
+
   const override = await resolveOverride(lead.assignedPartnerId, lead.propertyId);
   if (override) lines = applyPartnerShareOverride(lines, override.partnerSharePct);
 
   return {
     leadId,
     sellerType,
+    selfListed,
     feePct,
     lines,
     dealPrice: lead.property?.price ?? null,
@@ -267,6 +291,23 @@ function applyPartnerShareOverride(lines, partnerSharePct) {
 
   const platformPct = round2(100 - out.reduce((s, l) => s + l.pct, 0));
   if (platformPct > 0) out.unshift({ payeeRole: 'PLATFORM', pct: platformPct });
+  return out;
+}
+
+// R21 — folds LISTING_AGENT/CLOSING_AGENT lines into PLATFORM. ADVISOR is
+// left untouched, same reasoning as applyPartnerShareOverride above: an
+// advisor's flat, deal-specific fee has nothing to do with whether the
+// listing/closing partner happens to be the owner.
+function foldSelfListedPartnerLines(lines) {
+  const partnerPct = lines
+    .filter((l) => ASSIGNED_PARTNER_ROLES.includes(l.payeeRole))
+    .reduce((s, l) => s + l.pct, 0);
+  if (partnerPct === 0) return lines;
+
+  const out = lines.filter((l) => !ASSIGNED_PARTNER_ROLES.includes(l.payeeRole));
+  const platformLine = out.find((l) => l.payeeRole === 'PLATFORM');
+  if (platformLine) platformLine.pct = round2(platformLine.pct + partnerPct);
+  else out.unshift({ payeeRole: 'PLATFORM', pct: round2(partnerPct) });
   return out;
 }
 
@@ -452,6 +493,20 @@ async function prefillLeadTerms(leadId, adminId, ip) {
   }
 
   const preview = await previewTermsForLead(leadId);
+
+  // R21 — the fold in previewTermsForLead strips the only partner line this
+  // lead had (it would just be rejected by assertPartnerNotOwnProperty
+  // anyway), which leaves nothing to prefill. That's a real "needs a human
+  // decision" state, not a bug — surfaced here with the actual cause instead
+  // of letting it fall through to setLeadTerms' generic "at least one line
+  // is required", which doesn't say why there's no line to begin with.
+  if (preview.selfListed && !preview.lines.some((l) => l.payeeRole !== 'PLATFORM')) {
+    throw new ApiError(400,
+      "This lead is assigned to the property's own self-listing partner, who cannot earn commission on their "
+      + 'own listing. Assign a different partner to close this deal, then set commission terms.',
+      { code: 'SELF_LISTED_NO_PARTNER_ASSIGNED' });
+  }
+
   const saved = await setLeadTerms(leadId, {
     feePct: preview.feePct,
     dealPrice: preview.dealPrice,

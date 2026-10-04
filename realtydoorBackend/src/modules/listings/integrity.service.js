@@ -30,6 +30,25 @@ function normalisePan(pan) {
   return pan ? pan.replace(/\s+/g, '').toUpperCase() : null;
 }
 
+// R21 — the same PAN-match fact that creates an AGENT_OWNER_PAN_MATCH
+// conflict below, exposed directly rather than read back off the conflict
+// row: a conflict can be dismissed by an admin as resolved/false-positive,
+// which is a judgment call about the *conflict*, not a change to the
+// underlying fact that this agent's own PAN is the mandate's owner PAN.
+// checklist.service.js (which documents to require) and commission.service.js
+// (which fee template to resolve) both need that fact directly, live.
+async function isSelfListedByAgent(propertyId) {
+  const mandates = await prisma.exclusiveMandate.findMany({
+    where: { propertyId, ...inForceFilter() },
+    include: { partner: { select: { panNumber: true } } },
+  });
+  return mandates.some((m) => {
+    const ownerPan = normalisePan(m.ownerPan);
+    const partnerPan = normalisePan(m.partner.panNumber);
+    return !!ownerPan && !!partnerPan && ownerPan === partnerPan;
+  });
+}
+
 async function createMandate(propertyId, data, adminId, ip) {
   const property = await prisma.property.findUnique({
     where: { id: propertyId },
@@ -393,7 +412,7 @@ async function resolveConflict(id, { status, resolution, adminId }, ip) {
 }
 
 module.exports = {
-  effectiveStatusOf, unitKeyFor, inForceFilter,
+  effectiveStatusOf, unitKeyFor, inForceFilter, isSelfListedByAgent,
   createMandate, listMandates, getMandate, revokeMandate,
   detectConflicts, listConflicts, resolveConflict,
   CONFLICT_STATUSES,

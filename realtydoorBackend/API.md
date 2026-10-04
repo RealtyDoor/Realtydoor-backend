@@ -4965,6 +4965,35 @@ derived at read time, the same way `ExclusiveMandate.effectiveStatus` derives
 `EXPIRED`. There is no scheduled job, and the stored row's `status` column
 never actually becomes `TIMED_OUT`; only the response does.
 
+**Response, AGENT persona who is self-listing (R21):**
+
+```json
+{
+  "...": "...",
+  "partnerSubType": "AGENT",
+  "selfListedByAgent": true,
+  "persona": "OWNER",
+  "items": [
+    { "type": "SALE_DEED", "label": "Sale deed", "status": "MISSING", "fileUrl": null, "uploadedAt": null, "rejectionNote": null },
+    { "type": "ENCUMBRANCE_CERTIFICATE", "...": "..." },
+    { "type": "KHATA", "...": "..." },
+    { "type": "SOCIETY_NOC", "...": "..." }
+  ],
+  "elsewhere": []
+}
+```
+
+When an in-force `ExclusiveMandate` on the listing names the owner's PAN as
+the *submitting partner's own* PAN, this partner isn't representing a third
+party at all — there's no genuine mandate letter/owner-PAN/owner-confirmation
+to collect from anyone else. The checklist is routed to the OWNER persona's
+real documents instead of AGENT's "elsewhere" placeholders, and
+`POST /api/properties/:id/checklist-documents` (below) accepts uploads from
+this partner for exactly the same reason. `partnerSubType` still reports the
+partner's actual registered type; `selfListedByAgent` is what changed the
+routing. See also `GET .../commission/preview`'s `sellerType`/`selfListed`,
+which routes the fee side of the same fact.
+
 **Response, BUILDER persona:**
 
 ```json
@@ -5021,8 +5050,12 @@ than creating a second row — there is a unique index on
 is cleared and `status` resets to `PENDING_REVIEW`, so resubmitting after a
 rejection puts the document straight back in front of an admin.
 
+**R21 — also accepted from a persona-`AGENT` partner who is self-listing**
+(an in-force mandate on the property names their own PAN as the owner's —
+see `GET .../checklist`'s `selfListedByAgent`). Refused for any other AGENT.
+
 **Errors:**
-- `400` the listing's partner is not persona `OWNER`
+- `400` the listing's partner is not persona `OWNER` (and not a self-listing AGENT)
 - `400` `documentType` not one of the six values, or no file provided
 - `403` not your listing
 - `404` property not found
@@ -5574,7 +5607,7 @@ partner override applied. Writes nothing.
 
 ```json
 {
-  "leadId": "...", "sellerType": "AGENT", "feePct": 2,
+  "leadId": "...", "sellerType": "AGENT", "selfListed": false, "feePct": 2,
   "lines": [{ "payeeRole": "CLOSING_AGENT", "pct": 45 }, { "payeeRole": "PLATFORM", "pct": 55 }],
   "dealPrice": 7500000, "resolvedFrom": "CITY", "rateCardId": "...", "rateCardVersion": 3
 }
@@ -5582,6 +5615,32 @@ partner override applied. Writes nothing.
 
 `resolvedFrom` is `PROPERTY`, `CITY`, `PLATFORM_DEFAULT`, or
 `PARTNER_OVERRIDE` when an override applied on top.
+
+**R21 — `sellerType` resolves to `OWNER` (not the partner's actual
+registered type) when the listing partner is an AGENT who is self-listing**
+(same fact as the checklist's `selfListedByAgent` — an in-force mandate
+names their own PAN as the owner's). `selfListed` reports that directly.
+There's no genuinely separate listing agent earning a cut on top of the
+platform fee in that case, so this resolves against the OWNER rate
+card/template rather than AGENT's.
+
+**If the lead is also currently *assigned* to that same self-listing
+partner**, the `LISTING_AGENT`/`CLOSING_AGENT` line that would otherwise
+default to them is dropped and folded into `PLATFORM` instead — paying them
+is always refused (`OWN_PROPERTY_COMMISSION`, 3.17), so the preview doesn't
+offer a line that could only ever be rejected:
+
+```json
+{
+  "leadId": "...", "sellerType": "OWNER", "selfListed": true, "feePct": 2,
+  "lines": [{ "payeeRole": "PLATFORM", "pct": 100 }],
+  "dealPrice": 9000000, "resolvedFrom": "PLATFORM_DEFAULT", "rateCardId": null, "rateCardVersion": null
+}
+```
+
+A *different* partner assigned to close the same self-listed deal is
+unaffected — they're a genuine third party, so their `CLOSING_AGENT` line is
+offered normally.
 
 ---
 
@@ -5592,7 +5651,14 @@ terms in one call.
 
 **Auth:** ADMIN
 
-**Errors:** `400` already locked — revise with `PUT .../commission` instead.
+**R21 — refused when the preview's only line was folded away** because the
+lead is assigned to the property's own self-listing partner (see the preview
+endpoint above). Assign a different partner to close the deal first, then
+prefill or set terms manually.
+
+**Errors:**
+- `400` already locked — revise with `PUT .../commission` instead
+- `400` `SELF_LISTED_NO_PARTNER_ASSIGNED` — self-listed, no genuine partner assigned to pay
 
 ---
 
