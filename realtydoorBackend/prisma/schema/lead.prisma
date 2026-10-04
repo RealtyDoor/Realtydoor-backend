@@ -29,6 +29,16 @@ model Lead {
   addedByPartner   User?   @relation("PartnerAddedLeads", fields: [addedByPartnerId], references: [id])
   addedByAdminId   String? @db.ObjectId
 
+  // docs-backend-gaps-handoff.md #4 — required when a THIRD PARTY (partner or
+  // admin) is the one claiming this buyer's data; the buyer hasn't directly
+  // interacted with the platform, so someone else is attesting consent on
+  // their behalf. Not required for a buyer's own WEBSITE submission — they
+  // are the one submitting, so there is no third party to attest for them.
+  // Timestamp-presence, the same convention as User.kycConsentAt /
+  // partnerTermsAcceptedAt elsewhere in this schema, rather than a bare
+  // boolean — it is also the evidentiary record of *when* consent was given.
+  buyerConsentAt DateTime?
+
   // Repeat buyer: this lead is the same person enquiring about a different
   // property, linked back to their earlier lead so admin sees the history.
   // Plain scalar, deliberately NOT a Prisma @relation. Prisma requires

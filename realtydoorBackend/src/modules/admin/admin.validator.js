@@ -16,6 +16,11 @@ const createLeadSchema = z.object({
   budget:           z.string().max(100).optional(),
   note:             z.string().max(1000).optional(),
   partnerId:        objectId.optional(),
+  // docs-backend-gaps-handoff.md #4 — admin is attesting consent on behalf of
+  // a buyer who never interacted with the platform directly, same as the
+  // partner self-sourced path. Must be the literal boolean true, not merely
+  // truthy — a checkbox that was left unchecked.
+  consent: z.literal(true, { errorMap: () => ({ message: 'Buyer consent is required to log this lead' }) }),
 }).refine((d) => d.propertyId || d.propertyInterest, {
   message: 'Provide either propertyId (a live listing) or propertyInterest (free text)',
   path: ['propertyId'],

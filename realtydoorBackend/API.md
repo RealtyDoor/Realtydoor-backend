@@ -1028,15 +1028,18 @@ Partner logs a buyer they sourced themselves. Also mounted as `POST /api/partner
   "buyerEmail": "suresh@example.com",
   "propertyId": "64abc...",
   "budget": "80L-1Cr",
-  "note": "Walk-in at the site on Saturday."
+  "note": "Walk-in at the site on Saturday.",
+  "consent": true
 }
 ```
 
 `buyerEmail`, `budget` and `note` are optional. `buyerPhone` accepts the same formats as every other phone field (bare 10-digit Indian, or full international for NRI) and is normalized to E.164. `propertyId` **must be one of the partner's own listings** — anything else 404s.
 
+**`consent` is required and must be the literal boolean `true`** (docs-backend-gaps-handoff.md #4) — not merely truthy. The design already showed a consent checkbox on this form; this is what actually enforces and records it. Recorded as `buyerConsentAt` on the lead — a timestamp, the evidentiary record of *when* the partner attested it, not a bare boolean.
+
 Creates the lead with `status: AWAITING_ADMIN` and `source: PARTNER`, so it stays out of the normal pipeline until an admin confirms it (see `PATCH /api/admin/leads/:id/confirm`). A partner can't self-assign work this way.
 
-`buyerId` is deliberately left `null` even if a registered account has that phone: the buyer hasn't authenticated or consented to this inquiry, so attributing it to their account would surface it in their own dashboard as something they never submitted, and would consume their `POST /api/leads` quota.
+`buyerId` is deliberately left `null` even if a registered account has that phone: the buyer hasn't authenticated, so attributing it to their account would surface it in their own dashboard as something they never submitted, and would consume their `POST /api/leads` quota. `consent` above is the partner attesting the buyer's consent to being contacted about this inquiry — a separate thing from the buyer having an authenticated account at all.
 
 **Response `201`:** the created lead (partner-sanitized), plus `isRepeatBuyer` and `relatedLead`.
 
@@ -1056,7 +1059,7 @@ Creates the lead with `status: AWAITING_ADMIN` and `source: PARTNER`, so it stay
 
 If this phone already has an earlier lead on a **different** property, the new lead is linked to the most recent one via `relatedLeadId` and `isRepeatBuyer` is `true`, so admin sees a repeat buyer rather than a new one. The link is informational — deleting the earlier lead leaves a dangling id rather than blocking.
 
-**Errors:** `404` property not in your listings · `409 DUPLICATE_LEAD` — this buyer already has an active (not closed/dropped) lead for this same property; `data.lead` carries the existing one.
+**Errors:** `400` `consent` missing or not `true` · `404` property not in your listings · `409 DUPLICATE_LEAD` — this buyer already has an active (not closed/dropped) lead for this same property; `data.lead` carries the existing one.
 
 ---
 
@@ -4004,11 +4007,14 @@ Admin logs a lead that arrived off-platform (phone call, walk-in, referral).
   "propertyInterest": "3BHK in Whitefield, not listed yet",
   "budget": "1-1.2Cr",
   "note": "Called the office, wants a callback this week.",
-  "partnerId": "64partner..."
+  "partnerId": "64partner...",
+  "consent": true
 }
 ```
 
 `source` is one of `PHONE` · `WALK_IN` · `REFERRAL` · `EMAIL` · `OTHER`. **Either `propertyId` or `propertyInterest` is required** — `propertyId` for a live listing, `propertyInterest` as free text when the property isn't on the platform (in which case `propertyId` comes back `null`, so treat `property` as nullable in responses). `buyerEmail`, `budget`, `note` and `partnerId` are optional.
+
+**`consent` is required and must be the literal boolean `true`** (docs-backend-gaps-handoff.md #4) — not merely truthy, a checkbox that was actually checked. Admin is attesting consent on behalf of a buyer who never interacted with the platform directly, the same reason the partner self-sourced path (`POST /api/leads/partner`) requires it too. Recorded as `buyerConsentAt` on the lead (a timestamp, not a bare boolean — it is the evidentiary record of *when*, same convention as `User.kycConsentAt`). Not required on a buyer's own `POST /api/leads` submission — they are the one submitting, so there is no third party attesting on their behalf.
 
 **Duplicate check, when `propertyId` is given:** refuses with `409` if this
 buyer phone already has an active (not `CLOSED`/`DROPPED`) lead on the same
@@ -4022,7 +4028,7 @@ Without `partnerId` the lead lands as `UNASSIGNED`. Repeat buyers are linked via
 
 **Response `201`:** the created lead.
 
-**Errors:** `400` neither `propertyId` nor `propertyInterest` given, or partner not found / not KYC verified · `404` property not found · `409` an active lead already exists for this buyer and property (`DUPLICATE_LEAD`).
+**Errors:** `400` `consent` missing or not `true`, neither `propertyId` nor `propertyInterest` given, or partner not found / not KYC verified · `404` property not found · `409` an active lead already exists for this buyer and property (`DUPLICATE_LEAD`).
 
 ---
 

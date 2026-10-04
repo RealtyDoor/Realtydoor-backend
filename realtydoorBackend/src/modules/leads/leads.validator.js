@@ -14,6 +14,10 @@ const partnerAddLeadSchema = z.object({
   propertyId: objectId,
   budget:     z.string().max(100).optional(),
   note:       z.string().max(1000).optional(),
+  // docs-backend-gaps-handoff.md #4 — the design already shows a consent
+  // checkbox on this form, but nothing backend-side ever validated or stored
+  // it. Must be the literal boolean true, not merely truthy.
+  consent: z.literal(true, { errorMap: () => ({ message: 'Buyer consent is required to add this lead' }) }),
 });
 
 // buyerName/buyerEmail/buyerPhone are no longer accepted from the client —

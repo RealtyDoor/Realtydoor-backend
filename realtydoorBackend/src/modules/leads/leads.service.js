@@ -173,6 +173,10 @@ async function partnerAddLead(partnerId, data) {
       source: 'PARTNER',
       status: 'AWAITING_ADMIN',
       addedByPartnerId: partnerId,
+      // The validator only accepts the literal boolean true, so by the time
+      // this runs consent was given — recorded as the timestamp the partner
+      // actually attested it, not a bare echo of the request body.
+      buyerConsentAt: new Date(),
       ...(earlier && { relatedLeadId: earlier.id }),
     },
   });

@@ -147,6 +147,10 @@ async function createLead(data, adminId, ip) {
       propertyInterest: data.propertyInterest,
       source: data.source,
       addedByAdminId: adminId,
+      // The validator only accepts the literal boolean true, so by the time
+      // this runs consent was given — recorded as the timestamp admin
+      // actually attested it, not a bare echo of the request body.
+      buyerConsentAt: new Date(),
       ...(earlier && { relatedLeadId: earlier.id }),
       ...(partner
         ? { assignedPartnerId: partner.id, status: 'ASSIGNED', assignedAt: new Date() }
