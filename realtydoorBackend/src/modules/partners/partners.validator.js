@@ -43,7 +43,6 @@ const updateBankAccountSchema = z.object({
   bankAccountNo:          z.string().min(5).max(20),
   bankIfsc:               z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'Invalid IFSC code'),
   bankHolderName:         z.string().min(2).max(100),
-  razorpayRouteAccountId: z.string().min(5).max(50).optional(),
 });
 
 const createSupportTicketSchema = z.object({

@@ -2802,7 +2802,6 @@ Partner's linked bank account for escrow payouts.
     "bankAccountNo": "XXXX XXXX 6280",
     "bankIfsc": "HDFC0000634",
     "bankHolderName": "Ravi Kumar",
-    "razorpayRouteAccountId": "acc_0qK8WnNRouteX",
     "bankLinkedAt": "2024-01-10T00:00:00.000Z"
   }
 }
@@ -2824,8 +2823,7 @@ Link or update the partner's bank account for escrow payouts.
   "bankBranch": "HSR Layout Branch, Bangalore",
   "bankAccountNo": "50100123456280",
   "bankIfsc": "HDFC0000634",
-  "bankHolderName": "Ravi Kumar",
-  "razorpayRouteAccountId": "acc_0qK8WnNRouteX"
+  "bankHolderName": "Ravi Kumar"
 }
 ```
 
@@ -2836,7 +2834,15 @@ Link or update the partner's bank account for escrow payouts.
 | `bankIfsc` | Yes | Must match pattern `XXXX0XXXXXX` |
 | `bankHolderName` | Yes | Name as on bank account |
 | `bankBranch` | No | Branch name/address |
-| `razorpayRouteAccountId` | No | Razorpay Route linked account ID |
+
+This endpoint never talks to Razorpay at all — it is plain bank-detail
+storage. The actual payout account (RazorpayX contact + fund account,
+created and validated with Razorpay) is a separate concept — see
+`GET`/`POST /api/partner/payout-account`. A `razorpayRouteAccountId` field
+existed here historically (Razorpay Route, evaluated and rejected in favour
+of RazorpayX Payouts) and has been removed from this endpoint; the schema
+column is kept so old rows aren't silently dropped, but nothing reads or
+writes it.
 
 **Response `200`:** `{ "success": true, "message": "Bank account updated", "data": { ...bank fields } }`
 

@@ -70,7 +70,6 @@ async function main() {
       bankName: 'HDFC Bank', bankBranch: 'Baner Branch, Pune',
       bankAccountNo: '50100123456280', bankIfsc: 'HDFC0001234',
       bankHolderName: 'Rajdeep Kumar',
-      razorpayRouteAccountId: 'acc_seed_partner_001',
       bankLinkedAt: new Date('2024-01-10'),
     },
     create: {
@@ -93,7 +92,6 @@ async function main() {
       bankName: 'HDFC Bank', bankBranch: 'Baner Branch, Pune',
       bankAccountNo: '50100123456280', bankIfsc: 'HDFC0001234',
       bankHolderName: 'Rajdeep Kumar',
-      razorpayRouteAccountId: 'acc_seed_partner_001',
       bankLinkedAt: new Date('2024-01-10'),
     },
   });

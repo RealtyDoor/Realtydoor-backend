@@ -218,7 +218,10 @@ async function updateSettings(partnerId, data) {
 
 // ─── BANK ACCOUNT ─────────────────────────────────────────────────────────────
 
-const BANK_FIELDS = ['bankName', 'bankBranch', 'bankAccountNo', 'bankIfsc', 'bankHolderName', 'razorpayRouteAccountId', 'bankLinkedAt'];
+// razorpayRouteAccountId removed — RazorpayX only, decided (docs-backend-gaps-handoff.md
+// #2). The real payout flow is razorpayFundAccountId, created via
+// POST /partner/payout-account; this bank-account path never fed Razorpay anything.
+const BANK_FIELDS = ['bankName', 'bankBranch', 'bankAccountNo', 'bankIfsc', 'bankHolderName', 'bankLinkedAt'];
 
 async function getBankAccount(partnerId) {
   return prisma.user.findUnique({

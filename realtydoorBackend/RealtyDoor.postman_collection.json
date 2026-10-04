@@ -3994,7 +3994,7 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"bankName\":\"HDFC Bank\",\"bankBranch\":\"HSR Layout Branch, Bangalore\",\"bankAccountNo\":\"XXXX XXXX 6280\",\"bankIfsc\":\"HDFC0000634\",\"bankHolderName\":\"Ravi Kumar\",\"razorpayRouteAccountId\":\"acc_0qK8WnNRouteX\",\"bankLinkedAt\":\"2024-01-10T00:00:00.000Z\"}}"
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"bankName\":\"HDFC Bank\",\"bankBranch\":\"HSR Layout Branch, Bangalore\",\"bankAccountNo\":\"XXXX XXXX 6280\",\"bankIfsc\":\"HDFC0000634\",\"bankHolderName\":\"Ravi Kumar\",\"bankLinkedAt\":\"2024-01-10T00:00:00.000Z\"}}"
                 }
               ]
             },
@@ -4021,7 +4021,7 @@
                 },
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"bankName\": \"HDFC Bank\",\n  \"bankBranch\": \"HSR Layout Branch, Bangalore\",\n  \"bankAccountNo\": \"50100123456280\",\n  \"bankIfsc\": \"HDFC0000634\",\n  \"bankHolderName\": \"Ravi Kumar\",\n  \"razorpayRouteAccountId\": \"acc_0qK8WnNRouteX\"\n}",
+                  "raw": "{\n  \"bankName\": \"HDFC Bank\",\n  \"bankBranch\": \"HSR Layout Branch, Bangalore\",\n  \"bankAccountNo\": \"50100123456280\",\n  \"bankIfsc\": \"HDFC0000634\",\n  \"bankHolderName\": \"Ravi Kumar\"}",
                   "options": {
                     "raw": {
                       "language": "json"
