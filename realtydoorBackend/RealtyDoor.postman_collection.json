@@ -3692,6 +3692,47 @@
           ]
         },
         {
+          "name": "My Benchmark vs Platform (B9.4-B9.6)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/partner/analytics/benchmark?period=ALL",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "partner",
+                "analytics",
+                "benchmark"
+              ],
+              "query": [
+                {
+                  "key": "period",
+                  "value": "ALL"
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Benchmark",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"period\":\"ALL\",\"partner\":{\"funnel\":{\"received\":16,\"accepted\":16,\"visitsScheduled\":4,\"otpsVerified\":5,\"decided\":2,\"closed\":1,\"otpRatePct\":125,\"closeRatePct\":6.3},\"responseDays\":{\"note\":\"No first-contact timestamp exists; leadToAssignment measures assignment, not contact.\",\"leadToAssignment\":3.14,\"leadToAssignmentSamples\":12,\"leadToAssignmentDiscardedNegative\":4,\"assignmentToVisit\":2.38,\"assignmentToVisitSamples\":4,\"visitToOtp\":null,\"visitToOtpSamples\":0,\"visitToOtpDiscardedNegative\":2,\"otpToEscrow\":5e-05,\"otpToEscrowSamples\":1,\"otpToEscrowDiscardedNegative\":1}},\"platform\":{\"funnel\":{\"received\":16,\"accepted\":16,\"visitsScheduled\":4,\"otpsVerified\":5,\"decided\":2,\"closed\":1,\"otpRatePct\":125,\"closeRatePct\":6.3},\"responseDays\":{\"note\":\"No first-contact timestamp exists; leadToAssignment measures assignment, not contact.\",\"leadToAssignment\":3.14,\"leadToAssignmentSamples\":12,\"leadToAssignmentDiscardedNegative\":4,\"assignmentToVisit\":2.38,\"assignmentToVisitSamples\":4,\"visitToOtp\":null,\"visitToOtpSamples\":0,\"visitToOtpDiscardedNegative\":2,\"otpToEscrow\":5e-05,\"otpToEscrowSamples\":1,\"otpToEscrowDiscardedNegative\":1}},\"anomalies\":[{\"key\":\"OTP_WITHOUT_SCHEDULED_VISIT\",\"detail\":\"5 OTPs verified but only 4 visits scheduled - some leads are OTP-verified with no siteVisitScheduledAt\"},{\"key\":\"NEGATIVE_DURATION\",\"detail\":\"4 lead(s) have out-of-order timestamps for leadToAssignment\"}],\"ranking\":{\"percentile\":null,\"partnersCompared\":1,\"closedDeals\":1}}}"
+            }
+          ]
+        },
+        {
           "name": "Settings",
           "item": [
             {
@@ -7216,6 +7257,287 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"totals\":{\"users\":1240,\"partners\":87,\"activeListings\":412},\"leadFunnel\":{\"UNASSIGNED\":45,\"ASSIGNED\":30,\"SITE_VISIT_SCHEDULED\":18,\"SITE_VISIT_DONE\":12,\"CLOSED\":56,\"DROPPED\":22},\"propertyFunnel\":{\"PENDING_APPROVAL\":8,\"APPROVED\":412,\"REJECTED\":14,\"ARCHIVED\":3},\"userGrowth\":[{\"month\":\"2023-10\",\"users\":85,\"partners\":6},{\"month\":\"2024-03\",\"users\":190,\"partners\":22}],\"revenueByMonth\":[{\"month\":\"2023-10\",\"revenue\":49950},{\"month\":\"2024-03\",\"revenue\":149700}]}}"
+                }
+              ]
+            },
+            {
+              "name": "Analytics Overview (13.1-13.5)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/analytics/overview?period=MTD",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "analytics",
+                    "overview"
+                  ],
+                  "query": [
+                    {
+                      "key": "period",
+                      "value": "MTD"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Overview",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"period\":\"MTD\",\"funnel\":{\"period\":\"ALL\",\"stages\":[{\"key\":\"VISITORS\",\"count\":null,\"unavailable\":\"anonymous site traffic is not tracked by the backend\",\"conversionFromPrev\":null},{\"key\":\"REGISTRATIONS\",\"count\":4,\"conversionFromPrev\":null},{\"key\":\"INQUIRIES\",\"count\":19,\"conversionFromPrev\":475},{\"key\":\"ASSIGNED\",\"count\":16,\"conversionFromPrev\":84.2},{\"key\":\"VISITS_SCHEDULED\",\"count\":4,\"conversionFromPrev\":25},{\"key\":\"OTP_VERIFIED\",\"count\":5,\"conversionFromPrev\":125},{\"key\":\"DECIDED\",\"count\":2,\"conversionFromPrev\":40},{\"key\":\"ESCROW_HELD\",\"count\":2,\"conversionFromPrev\":100},{\"key\":\"CLOSED\",\"count\":1,\"conversionFromPrev\":50}],\"inquiryToClosePct\":5.3},\"users\":{\"period\":\"MTD\",\"newUsers\":4,\"otpVerifiedUsers\":3,\"otpVerifiedPct\":75.0,\"nriUsers\":1,\"totalUsers\":15},\"nri\":{\"period\":\"MTD\",\"registrations\":1,\"videoToursBooked\":2,\"nriLeadsCaptured\":3,\"dealsClosed\":0,\"avgDealValue\":null},\"revenue\":{\"period\":\"YTD\",\"totalRevenue\":6699,\"streams\":[{\"stream\":\"Maintenance Premium\",\"volume\":1,\"revenue\":4999,\"avgTicket\":4999,\"previousRevenue\":0,\"changePct\":null},{\"stream\":\"Escrow commission\",\"volume\":1,\"revenue\":1700,\"avgTicket\":1700,\"previousRevenue\":0,\"changePct\":null}]},\"escrowFloat\":{\"heldAmount\":50000,\"heldCount\":1,\"avgHoldDays\":null,\"anomalousHoldRecords\":1,\"annualYieldPct\":0,\"floatIncomePotential\":0}}}"
+                }
+              ]
+            },
+            {
+              "name": "Conversion Funnel (13.3)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/analytics/funnel?period=ALL",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "analytics",
+                    "funnel"
+                  ],
+                  "query": [
+                    {
+                      "key": "period",
+                      "value": "ALL"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Funnel",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"period\":\"ALL\",\"stages\":[{\"key\":\"VISITORS\",\"count\":null,\"unavailable\":\"anonymous site traffic is not tracked by the backend\",\"conversionFromPrev\":null},{\"key\":\"REGISTRATIONS\",\"count\":4,\"conversionFromPrev\":null},{\"key\":\"INQUIRIES\",\"count\":19,\"conversionFromPrev\":475},{\"key\":\"ASSIGNED\",\"count\":16,\"conversionFromPrev\":84.2},{\"key\":\"VISITS_SCHEDULED\",\"count\":4,\"conversionFromPrev\":25},{\"key\":\"OTP_VERIFIED\",\"count\":5,\"conversionFromPrev\":125},{\"key\":\"DECIDED\",\"count\":2,\"conversionFromPrev\":40},{\"key\":\"ESCROW_HELD\",\"count\":2,\"conversionFromPrev\":100},{\"key\":\"CLOSED\",\"count\":1,\"conversionFromPrev\":50}],\"inquiryToClosePct\":5.3}}"
+                }
+              ]
+            },
+            {
+              "name": "User Growth (13.2)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/analytics/users?period=MTD",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "analytics",
+                    "users"
+                  ],
+                  "query": [
+                    {
+                      "key": "period",
+                      "value": "MTD"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - User Growth",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"period\":\"MTD\",\"newUsers\":4,\"otpVerifiedUsers\":3,\"otpVerifiedPct\":75.0,\"nriUsers\":1,\"totalUsers\":15}}"
+                }
+              ]
+            },
+            {
+              "name": "NRI Segment (13.1)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/analytics/nri?period=MTD",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "analytics",
+                    "nri"
+                  ],
+                  "query": [
+                    {
+                      "key": "period",
+                      "value": "MTD"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - NRI Segment",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"period\":\"MTD\",\"registrations\":1,\"videoToursBooked\":2,\"nriLeadsCaptured\":3,\"dealsClosed\":0,\"avgDealValue\":null}}"
+                }
+              ]
+            },
+            {
+              "name": "Revenue by Stream (13.4)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/analytics/revenue?period=YTD",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "analytics",
+                    "revenue"
+                  ],
+                  "query": [
+                    {
+                      "key": "period",
+                      "value": "YTD"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Revenue",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"period\":\"YTD\",\"totalRevenue\":6699,\"streams\":[{\"stream\":\"Maintenance Premium\",\"volume\":1,\"revenue\":4999,\"avgTicket\":4999,\"previousRevenue\":0,\"changePct\":null},{\"stream\":\"Escrow commission\",\"volume\":1,\"revenue\":1700,\"avgTicket\":1700,\"previousRevenue\":0,\"changePct\":null}]}}"
+                }
+              ]
+            },
+            {
+              "name": "Escrow Float (13.5)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/analytics/escrow-float",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "analytics",
+                    "escrow-float"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Escrow Float",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"heldAmount\":50000,\"heldCount\":1,\"avgHoldDays\":null,\"anomalousHoldRecords\":1,\"annualYieldPct\":0,\"floatIncomePotential\":0}}"
+                }
+              ]
+            },
+            {
+              "name": "Partner Benchmarks (B9.4-B9.6)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/analytics/benchmarks?period=ALL",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "analytics",
+                    "benchmarks"
+                  ],
+                  "query": [
+                    {
+                      "key": "period",
+                      "value": "ALL"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Benchmarks",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"period\":\"ALL\",\"sampleLeads\":16,\"funnel\":{\"received\":16,\"accepted\":16,\"visitsScheduled\":4,\"otpsVerified\":5,\"decided\":2,\"closed\":1,\"otpRatePct\":125,\"closeRatePct\":6.3},\"responseDays\":{\"note\":\"No first-contact timestamp exists; leadToAssignment measures assignment, not contact.\",\"leadToAssignment\":3.14,\"leadToAssignmentSamples\":12,\"leadToAssignmentDiscardedNegative\":4,\"assignmentToVisit\":2.38,\"assignmentToVisitSamples\":4,\"visitToOtp\":null,\"visitToOtpSamples\":0,\"visitToOtpDiscardedNegative\":2,\"otpToEscrow\":5e-05,\"otpToEscrowSamples\":1,\"otpToEscrowDiscardedNegative\":1},\"anomalies\":[{\"key\":\"OTP_WITHOUT_SCHEDULED_VISIT\",\"detail\":\"5 OTPs verified but only 4 visits scheduled - some leads are OTP-verified with no siteVisitScheduledAt\"},{\"key\":\"NEGATIVE_DURATION\",\"detail\":\"4 lead(s) have out-of-order timestamps for leadToAssignment\"}]}}"
                 }
               ]
             }

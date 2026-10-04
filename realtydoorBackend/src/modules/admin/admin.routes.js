@@ -8,6 +8,7 @@ const watiCtrl = require('../wati/wati.controller');
 const b2bCtrl = require('../b2b/b2b.controller');
 const contactCtrl = require('../contact/contact.admin.controller');
 const commissionCtrl = require('../commission/commission.controller');
+const analyticsCtrl = require('../analytics/analytics.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
@@ -134,6 +135,14 @@ router.delete('/vendors/:id',  ctrl.deleteVendor);
 
 // Platform analytics (funnel + cohorts)
 router.get('/analytics', ctrl.getAnalytics);
+// 13.1-13.5 — period-filtered funnel, growth, NRI, revenue streams, float.
+router.get('/analytics/overview',      analyticsCtrl.overview);
+router.get('/analytics/funnel',        analyticsCtrl.funnel);
+router.get('/analytics/users',         analyticsCtrl.users);
+router.get('/analytics/nri',           analyticsCtrl.nri);
+router.get('/analytics/revenue',       analyticsCtrl.revenue);
+router.get('/analytics/escrow-float',  analyticsCtrl.escrowFloat);
+router.get('/analytics/benchmarks',    analyticsCtrl.benchmarks);
 
 // Dispute management
 router.get('/disputes',       ctrl.listDisputes);

@@ -2431,6 +2431,81 @@ Analytics dashboard for the authenticated partner.
 
 ---
 
+### GET /api/partner/analytics/benchmark
+
+The partner's own funnel and response times beside the platform median, plus
+their percentile rank (B9.4-B9.6). This replaces the frontend's previous
+hard-coded "platform average" multipliers.
+
+**Auth:** PARTNER + KYC verified
+
+**Query:** `period` - `MTD`, `3M`, `6M`, `YTD` or `ALL` (default `ALL`).
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "period": "ALL",
+    "partner": {
+      "funnel": {
+        "received": 16, "accepted": 16, "visitsScheduled": 4,
+        "otpsVerified": 5, "decided": 2, "closed": 1,
+        "otpRatePct": 125, "closeRatePct": 6.3
+      },
+      "responseDays": {
+        "note": "No first-contact timestamp exists; leadToAssignment measures assignment, not contact.",
+        "leadToAssignment": 3.14,
+        "leadToAssignmentSamples": 12,
+        "leadToAssignmentDiscardedNegative": 4,
+        "assignmentToVisit": 2.38,
+        "assignmentToVisitSamples": 4,
+        "visitToOtp": null,
+        "visitToOtpSamples": 0,
+        "visitToOtpDiscardedNegative": 2,
+        "otpToEscrow": 0.00005,
+        "otpToEscrowSamples": 1,
+        "otpToEscrowDiscardedNegative": 1
+      }
+    },
+    "platform": { "funnel": { "...": "same shape" }, "responseDays": { "...": "same shape" } },
+    "anomalies": [
+      { "key": "OTP_WITHOUT_SCHEDULED_VISIT", "detail": "5 OTPs verified but only 4 visits scheduled - some leads are OTP-verified with no siteVisitScheduledAt" },
+      { "key": "NEGATIVE_DURATION", "detail": "4 lead(s) have out-of-order timestamps for leadToAssignment" }
+    ],
+    "ranking": {
+      "percentile": null,
+      "partnersCompared": 1,
+      "closedDeals": 1
+    }
+  }
+}
+```
+
+**Response notes the frontend must respect:**
+
+- Each response-time stage reports a **median**, not a mean - one stalled lead
+  sitting open for months would drag an average far enough to make the number
+  useless.
+- `<stage>` is `null` when no usable record exists. Always check
+  `<stage>Samples` before presenting a figure as confident; a median over 1
+  sample is not a benchmark.
+- `<stage>DiscardedNegative` is present only when records were dropped for
+  having out-of-order timestamps.
+- `leadToAssignment` measures time to **assignment**, not first contact. No
+  first-contact timestamp exists anywhere in the schema; the stage is named and
+  annotated for what it really measures rather than passed off as contact time.
+- `ranking.percentile` is the share of partners this partner closed *more* than,
+  and is `null` when `partnersCompared` is 1 or less, since a rank against
+  nobody is meaningless. Hide the rank entirely in that case.
+- `anomalies` being non-empty means the underlying data is inconsistent (see the
+  admin analytics notes). Surface a warning rather than rendering `otpRatePct:
+  125` as a real conversion rate.
+
+---
+
 ### GET /api/partner/settings
 
 Partner's visit availability, notification preferences, and lead preferences.
@@ -5219,6 +5294,176 @@ Platform-level funnel and cohort analytics for the last 6 months.
 ```
 
 `revenueByMonth` reflects service subscription payments (`paymentStatus: SUCCESS`) only.
+
+---
+
+## Analytics (13.1-13.5)
+
+All endpoints below accept an optional `?period=` query param: `MTD` (default),
+`3M`, `6M`, `YTD` or `ALL`. An unrecognised value falls back to `MTD`.
+
+Two honesty rules apply across this group:
+
+- A metric the backend genuinely cannot produce is returned as `null` with an
+  `unavailable` reason, never substituted with a lookalike number.
+- Records with impossible timestamps (e.g. `releasedAt` before `createdAt`) are
+  excluded from medians and reported separately under `anomalies` /
+  `discardedNegative`, so a data problem can't masquerade as performance.
+
+---
+
+### GET /api/admin/analytics/overview
+
+Every section below in a single call, for the dashboard's first paint.
+
+**Auth:** ADMIN
+
+**Response `200`:** `data` contains `period`, `funnel`, `users`, `nri`,
+`revenue` and `escrowFloat`, each with the same shape as its dedicated
+endpoint.
+
+---
+
+### GET /api/admin/analytics/funnel
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "period": "ALL",
+    "stages": [
+      { "key": "VISITORS", "count": null, "unavailable": "anonymous site traffic is not tracked by the backend", "conversionFromPrev": null },
+      { "key": "REGISTRATIONS", "count": 4, "conversionFromPrev": null },
+      { "key": "INQUIRIES", "count": 19, "conversionFromPrev": 475 },
+      { "key": "ASSIGNED", "count": 16, "conversionFromPrev": 84.2 },
+      { "key": "VISITS_SCHEDULED", "count": 4, "conversionFromPrev": 25 },
+      { "key": "OTP_VERIFIED", "count": 5, "conversionFromPrev": 125 },
+      { "key": "DECIDED", "count": 2, "conversionFromPrev": 40 },
+      { "key": "ESCROW_HELD", "count": 2, "conversionFromPrev": 100 },
+      { "key": "CLOSED", "count": 1, "conversionFromPrev": 50 }
+    ],
+    "inquiryToClosePct": 5.3
+  }
+}
+```
+
+`VISITORS` is permanently `null`: nothing in this backend records anonymous
+traffic, and `Property.viewsThisWeek` is per-listing and resets weekly, so it
+cannot be summed into a visitor count.
+
+`conversionFromPrev` is measured against the previous *available* stage, so the
+untracked visitor stage doesn't force a bogus `0%` onto registrations.
+
+**The funnel is not monotonic, and that is correct.** `INQUIRIES` can exceed
+`REGISTRATIONS` because a lead can be created without a registered buyer
+account, and `OTP_VERIFIED` can exceed `VISITS_SCHEDULED` where a lead was
+OTP-verified without `siteVisitScheduledAt` ever being set. Do not render these
+as a strictly narrowing funnel.
+
+---
+
+### GET /api/admin/analytics/users
+
+**Auth:** ADMIN
+
+**Response `200`:** `data` has `period`, `newUsers`, `otpVerifiedUsers`,
+`otpVerifiedPct`, `nriUsers`, `totalUsers`. Soft-deleted users are excluded.
+`otpVerifiedPct` is `null` when `newUsers` is 0.
+
+---
+
+### GET /api/admin/analytics/nri
+
+**Auth:** ADMIN
+
+**Response `200`:** `data` has `period`, `registrations`, `videoToursBooked`,
+`nriLeadsCaptured`, `dealsClosed`, `avgDealValue`.
+
+`nriLeadsCaptured` counts the public NRI capture form, which is a separate
+funnel from registered NRI users. `avgDealValue` uses `dealPriceAtLock` where
+terms were locked and falls back to the property's list price, and is `null`
+when no closed deal has a usable value.
+
+---
+
+### GET /api/admin/analytics/revenue
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "period": "YTD",
+    "totalRevenue": 6699,
+    "streams": [
+      { "stream": "Maintenance Premium", "volume": 1, "revenue": 4999, "avgTicket": 4999, "previousRevenue": 0, "changePct": null },
+      { "stream": "Escrow commission", "volume": 1, "revenue": 1700, "avgTicket": 1700, "previousRevenue": 0, "changePct": null }
+    ]
+  }
+}
+```
+
+Streams are service subscriptions (`paymentStatus: SUCCESS`) plus one synthetic
+`Escrow commission` row, which is the platform's own slice of the fee taken
+from `Lead.commissionAmountPaise` on closed leads - not the gross deal value.
+
+`previousRevenue` is the equivalent-length window immediately before this one.
+`changePct` is `null` when there was no prior revenue to divide by, rather than
+`Infinity`. For `period=ALL` there is no previous window, so `previousRevenue`
+is always `0` and `changePct` always `null`.
+
+---
+
+### GET /api/admin/analytics/escrow-float
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "heldAmount": 50000,
+    "heldCount": 1,
+    "avgHoldDays": null,
+    "anomalousHoldRecords": 1,
+    "annualYieldPct": 0,
+    "floatIncomePotential": 0
+  }
+}
+```
+
+`annualYieldPct` comes from the admin config key
+`escrow_float_annual_yield_pct` and **defaults to 0**, so
+`floatIncomePotential` reports 0 until the business sets a rate - the backend
+does not invent an interest rate.
+
+`avgHoldDays` counts only non-negative holds. `anomalousHoldRecords` is the
+number of released escrows whose `releasedAt` precedes `createdAt`; when it is
+greater than 0, warn rather than presenting the hold time as reliable.
+
+---
+
+### GET /api/admin/analytics/benchmarks
+
+Platform-wide partner funnel and response-time medians (B9.4-B9.6).
+
+**Auth:** ADMIN
+
+**Response `200`:** same shape as the `platform` half of
+`GET /api/partner/analytics/benchmark`, plus `sampleLeads` and `anomalies`.
+Defaults to `period=ALL`.
 
 ---
 

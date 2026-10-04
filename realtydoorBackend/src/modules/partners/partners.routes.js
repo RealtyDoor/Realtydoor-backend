@@ -2,6 +2,7 @@ const router = require('express').Router();
 const ctrl = require('./partners.controller');
 const leadsCtrl = require('../leads/leads.controller');
 const commissionCtrl = require('../commission/commission.controller');
+const analyticsCtrl = require('../analytics/analytics.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
@@ -52,6 +53,8 @@ router.get('/finance',    requireKyc, ctrl.getFinanceSummary);
 // Ratings from buyers, aggregated from Lead.buyerRating (KYC required)
 router.get('/ratings',    requireKyc, ctrl.getRatings);
 // Analytics dashboard (KYC required)
+// B9.4-B9.6 — my funnel and response times vs the platform median.
+router.get('/analytics/benchmark', requireKyc, analyticsCtrl.myBenchmark);
 router.get('/analytics',  requireKyc, ctrl.getAnalytics);
 
 // Settings (visit availability, notifications, lead preferences)
