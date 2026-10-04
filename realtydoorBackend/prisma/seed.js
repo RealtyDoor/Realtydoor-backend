@@ -349,8 +349,14 @@ async function main() {
     {
       buyerName: 'Suresh Mehta', buyerEmail: 'user@realtydoor.com', buyerPhone: '+919000000003',
       buyerId: user.id, propertyId: propBaner.id,
+      // createdAt is set explicitly: @default(now()) would stamp today while
+      // assignedAt sits 10 days back, making every derived duration negative
+      // and poisoning the analytics medians.
+      createdAt: daysAgo(12),
       status: 'CLOSED', assignedPartnerId: partner.id, assignedAt: daysAgo(10),
-      isOtpVerified: true, otpVerifiedAt: daysAgo(8),
+      // An OTP can only exist on a lead that was scheduled, so a seeded
+      // OTP-verified lead needs a slot too.
+      siteVisitScheduledAt: daysAgo(8), isOtpVerified: true, otpVerifiedAt: daysAgo(8),
       buyerFeedbackStatus: 'VERIFIED_CLOSED', feedbackReceivedAt: daysAgo(6),
       whatsappSentAt: daysAgo(7),
       visitNotes: 'Site visit completed. Buyer very interested and ready to proceed.',
@@ -360,8 +366,9 @@ async function main() {
     {
       buyerName: 'Anita Joshi', buyerEmail: 'user2@realtydoor.com', buyerPhone: '+919000000005',
       buyerId: user2.id, propertyId: propBaner.id,
+      createdAt: daysAgo(7),
       status: 'SITE_VISIT_DONE', assignedPartnerId: partner.id, assignedAt: daysAgo(5),
-      isOtpVerified: true, otpVerifiedAt: daysAgo(4),
+      siteVisitScheduledAt: daysAgo(4), isOtpVerified: true, otpVerifiedAt: daysAgo(4),
       buyerFeedbackStatus: 'STILL_DECIDING', feedbackReceivedAt: daysAgo(3),
       whatsappSentAt: daysAgo(4),
     },
@@ -369,6 +376,7 @@ async function main() {
     {
       buyerName: 'Vikram Singh', buyerEmail: 'vikram.singh@test.com', buyerPhone: '+919111222333',
       propertyId: propKothrud.id,
+      createdAt: daysAgo(3),
       status: 'ASSIGNED', assignedPartnerId: partner.id, assignedAt: daysAgo(2),
       buyerFeedbackStatus: 'PENDING',
     },
@@ -382,8 +390,9 @@ async function main() {
     {
       buyerName: 'Ravi Kapoor', buyerEmail: 'ravi.kapoor@test.com', buyerPhone: '+919333444555',
       propertyId: propKothrud.id,
+      createdAt: daysAgo(22),
       status: 'DROPPED', assignedPartnerId: partner.id, assignedAt: daysAgo(20),
-      isOtpVerified: true, otpVerifiedAt: daysAgo(18),
+      siteVisitScheduledAt: daysAgo(18), isOtpVerified: true, otpVerifiedAt: daysAgo(18),
       buyerFeedbackStatus: 'VERIFIED_DROPPED', feedbackReceivedAt: daysAgo(15),
       whatsappSentAt: daysAgo(16),
       dropRequestedByPartner: true, dropRequestNote: 'Buyer stopped responding after site visit.',
@@ -464,6 +473,9 @@ async function main() {
         razorpayTransferId: 'trf_seed_001',
         amount: 85000, currency: 'INR',
         status: 'RELEASED',
+        // Same reason as the leads: without this, releasedAt lands 6 days
+        // BEFORE createdAt and the escrow-float hold time comes out negative.
+        createdAt: daysAgo(9),
         heldAt: daysAgo(9), releasedAt: daysAgo(6),
         releasedByAdminId: admin.id,
         adminNote: 'Deal confirmed by both parties. Token released to seller.',
