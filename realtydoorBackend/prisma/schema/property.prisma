@@ -107,6 +107,7 @@ model Property {
   reviews             PropertyReview[]
   rateCards           RateCard[]
   serviceTickets      ServiceTicket[]
+  changeRequests      PropertyChangeRequest[]
 
   @@index([publishStatus, isB2BOnly])
   @@index([partnerId])

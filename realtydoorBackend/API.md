@@ -666,11 +666,56 @@ Update own listing. Fields `publishStatus`, `isVerified`, `partnerId` are stripp
 
 **Request Body:** Partial property fields (same as POST).
 
-**Response `200`:**
+**⚠️ Behaviour depends on whether the listing is live (docs 4.8).**
+
+**If `publishStatus` is not `APPROVED`** (draft, pending, rejected, archived) the
+edit applies immediately — there is nothing published to protect:
 
 ```json
-{ "success": true, "message": "Listing updated", "data": { ... } }
+{
+  "success": true,
+  "message": "Listing updated",
+  "data": { "property": { "...": "the updated listing" }, "changeRequest": null }
+}
 ```
+
+**If `publishStatus` is `APPROVED`** the listing is **not** modified. The diff is
+held as a `PropertyChangeRequest` for admin review and the live listing keeps
+serving its approved content:
+
+```json
+{
+  "success": true,
+  "message": "Changes submitted for admin review. Your listing stays live until they are reviewed.",
+  "data": {
+    "property": { "...": "UNCHANGED — still the approved version" },
+    "changeRequest": {
+      "id": "6a44b1...",
+      "status": "PENDING",
+      "fieldCount": 3,
+      "changes": { "price": { "before": "1400000", "after": "1900000" } },
+      "createdAt": "2026-10-04T10:27:25.000Z"
+    }
+  }
+}
+```
+
+`data.property` is the **current live listing, not what you just sent.** Do not
+read it back as confirmation that the edit applied — read `changeRequest`
+instead, and poll `GET /api/partner/listings/change-requests` for the outcome.
+
+If nothing in the payload actually differs from the stored listing, no request
+is created and the message is `No changes to review` with `changeRequest: null`.
+
+Submitting a second edit while one is still `PENDING` marks the earlier request
+`SUPERSEDED`, so the admin queue only ever holds the latest diff per listing.
+
+**Why it works this way:** previously the edit was written straight to the
+property and `publishStatus` was flipped back to `PENDING_APPROVAL`. That took
+the listing dark — the good approved version vanished from search along with
+the unreviewed one — and because `PropertyEditLog` was only written for admin
+edits, the admin re-reviewing the listing had no record of what the partner had
+changed.
 
 **Errors:** `403` not your listing · `404` not found.
 
@@ -2523,6 +2568,75 @@ slot - and that is normal, not a data fault. Do not compute a duration against
 
 ---
 
+### GET /api/partner/listings/change-requests
+
+The partner's own view of edits they submitted to live listings (docs 4.8).
+
+Without this a partner has no way to tell what happened to an edit: the
+listing deliberately still shows the old approved content, so the change looks
+as though it was ignored.
+
+**Auth:** PARTNER + KYC verified
+
+**Query:** `status` — `PENDING`, `APPROVED`, `REJECTED`, `SUPERSEDED` or `ALL`
+(default: all of the partner's own) · `propertyId` · `page` · `limit`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "data": [
+      {
+        "id": "6a44b1...",
+        "status": "REJECTED",
+        "fieldCount": 1,
+        "changes": [
+          { "field": "price", "before": 1400000, "after": 1900000, "impact": "HIGH" }
+        ],
+        "property": { "id": "...", "title": "...", "slug": "...", "publishStatus": "APPROVED" },
+        "reviewNote": "Price is above the mandate ceiling for this unit",
+        "reviewedAt": "2026-10-04T11:02:00.000Z",
+        "createdAt": "2026-10-04T10:27:25.000Z"
+      }
+    ],
+    "total": 1, "page": 1, "limit": 20, "totalPages": 1
+  }
+}
+```
+
+`reviewNote` carries the admin's reason verbatim — it is the only thing telling
+the partner what to change, so show it rather than a generic "rejected".
+
+A `SUPERSEDED` row means the partner submitted a newer edit to the same listing
+before this one was reviewed.
+
+---
+
+### PATCH /api/partner/listings/change-requests/:id/withdraw
+
+Take back an edit that has not been reviewed yet.
+
+**Auth:** PARTNER + KYC verified
+
+**Response `200`:** the request, now `status: "REJECTED"` with
+`reviewNote: "Withdrawn by partner"`.
+
+Recorded as a rejection rather than deleted, so the listing's edit history
+stays complete. A withdrawal is distinguishable from an admin rejection by
+`reviewedByAdminId` being null.
+
+**Errors:** `400` the request is not `PENDING` · `404` not found, or not yours
+(both return 404 — a partner is never told whether another partner's request id
+exists).
+
+---
+
+
+---
+
 ### GET /api/partner/settings
 
 Partner's visit availability, notification preferences, and lead preferences.
@@ -3964,6 +4078,224 @@ Full property detail by ID (any publishStatus).
 **Response `200`:** Full property record including partner info and edit logs.
 
 **Errors:** `404` property not found.
+
+---
+
+## Listing change requests (docs 4.8 / 4.9)
+
+A partner's edit to an **already-live** listing is held here instead of being
+written to the property. See `PATCH /api/properties/:id` for the submitting
+side. The live listing is never modified until one of these endpoints applies
+the diff.
+
+All four routes are registered **above** `/admin/properties/:id`, so
+`change-requests` is never parsed as a property id.
+
+---
+
+### GET /api/admin/properties/change-requests
+
+The review queue.
+
+**Auth:** ADMIN
+
+**Query:** `status` — `PENDING` (default), `APPROVED`, `REJECTED`,
+`SUPERSEDED`, or `ALL` · `propertyId` · `partnerId` · `page` · `limit`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "data": [
+      {
+        "id": "6a44b1...",
+        "status": "PENDING",
+        "fieldCount": 1,
+        "hasHighImpact": true,
+        "fields": ["price"],
+        "property": { "id": "...", "title": "2 BHK Flat for Rent in Kothrud", "slug": "...", "city": "Pune", "locality": "Kothrud", "publishStatus": "APPROVED" },
+        "partner": { "id": "...", "name": "Rahul Sharma", "companyName": "Sharma Realty" },
+        "reviewNote": null,
+        "reviewedAt": null,
+        "createdAt": "2026-10-04T10:27:25.000Z"
+      }
+    ],
+    "total": 1, "page": 1, "limit": 20, "totalPages": 1
+  }
+}
+```
+
+`hasHighImpact` and `fields` are on the list row so the queue can sort the
+risky ones up without fetching every diff.
+
+**Errors:** `400` unrecognised `status`.
+
+---
+
+### GET /api/admin/properties/change-requests/:id
+
+The full diff, plus conflict detection.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "id": "6a44b1...",
+    "status": "PENDING",
+    "fieldCount": 1,
+    "changes": [
+      { "field": "price", "before": null, "after": 1900000, "impact": "HIGH" }
+    ],
+    "conflicts": [
+      { "field": "price", "expectedBefore": null, "actualCurrent": 1000001 }
+    ],
+    "hasConflicts": true,
+    "highImpactFields": ["price", "monthlyRent", "carpetArea", "..."],
+    "property": { "...": "the full current listing" },
+    "partner": { "id": "...", "name": "...", "companyName": "...", "phone": "..." },
+    "reviewNote": null, "reviewedByAdminId": null, "reviewedAt": null,
+    "createdAt": "2026-10-04T10:27:25.000Z"
+  }
+}
+```
+
+**`conflicts` is the field to check before approving.** A diff is recorded
+against the listing as it stood at submission time. If an admin edit — or an
+earlier approved request — has since moved the same field, approving would
+silently overwrite that later change. Each conflict names the value the request
+expected to find (`expectedBefore`) against what is actually there now
+(`actualCurrent`).
+
+**Errors:** `404` not found.
+
+---
+
+### PATCH /api/admin/properties/change-requests/:id/approve
+
+Applies the diff to the live listing.
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{ "note": "Verified with partner over call", "force": false }
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `note` | only when `force` is true | Max 500 chars. Recorded on every resulting `PropertyEditLog` row. |
+| `force` | no | Apply despite conflicts. Requires a `note` of at least 5 characters. |
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Applied 1 change(s), overwriting later edits to price",
+  "data": {
+    "property": { "...": "the updated listing" },
+    "appliedFields": ["price"],
+    "forcedOverConflicts": ["price"]
+  }
+}
+```
+
+On success this writes one `PropertyEditLog` row per field, **attributed to the
+partner** (`editedByName: "Partner (approved by admin)"`) rather than to the
+approving admin — the edit log answers "who changed this listing", and the
+approving admin is named in `editNote` and in their own audit-log entry.
+
+Fields on the forbidden list (`publishStatus`, `isVerified`, `partnerId`,
+`slug`, `id`) are dropped at approval time, not merely at submission time, so a
+request stored before that list grew cannot slip one through.
+
+**Errors:**
+- `400` the request is already `APPROVED` / `REJECTED` / `SUPERSEDED`, or has no
+  applicable fields left after the forbidden filter
+- `400` `force: true` without a `note` of at least 5 characters
+- `409` the listing changed after submission and `force` was not set — the
+  message names the conflicting fields
+- `404` not found
+
+---
+
+### PATCH /api/admin/properties/change-requests/:id/reject
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{ "note": "Price is above the mandate ceiling for this unit" }
+```
+
+`note` is required, 5–500 characters: the partner is shown it verbatim as the
+reason, so a blank rejection is refused here rather than sent as an empty
+notification.
+
+**Response `200`:** the updated change request, `status: "REJECTED"`.
+
+**Errors:** `400` not `PENDING`, or `note` too short · `404` not found.
+
+---
+
+### GET /api/admin/properties/edit-logs
+
+Override history across **every** property (docs 4.12 / 4.13).
+`PropertyEditLog` already existed but was only readable as the last 10 rows
+nested inside a single property; this is the paginated, filterable list.
+
+**Auth:** ADMIN
+
+**Query:** `propertyId` · `editedBy` (user id) · `field` · `impact`
+(`HIGH` or `NORMAL`) · `from` / `to` (ISO dates, inclusive) · `page` · `limit`
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "data": [
+      {
+        "id": "...",
+        "property": { "id": "...", "title": "...", "slug": "...", "city": "Pune", "publishStatus": "APPROVED" },
+        "editedBy": "6a44a67...",
+        "editedByName": "Partner (approved by admin)",
+        "field": "price",
+        "impact": "HIGH",
+        "before": null,
+        "after": 1900000,
+        "note": "Change request 6a44b1... approved by Admin User",
+        "editedAt": "2026-10-04T10:27:26.000Z"
+      }
+    ],
+    "total": 1, "page": 1, "limit": 20, "totalPages": 1,
+    "highImpactFields": ["price", "monthlyRent", "carpetArea", "..."]
+  }
+}
+```
+
+**On `impact`:** docs 4.13 asks to filter by impact, but impact is not a stored
+concept anywhere in this schema. Rather than invent a column, it is derived
+from *which field changed*: the fields in `highImpactFields` are the ones that
+change what a buyer is being sold or where it is; everything else is
+presentational. That list is the whole definition, and it is returned in the
+response so a caller can see exactly what `HIGH` means instead of guessing.
+`impact=HIGH` and `impact=NORMAL` partition the unfiltered set exactly.
+
+---
+
 
 ---
 

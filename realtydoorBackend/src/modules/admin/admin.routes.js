@@ -9,6 +9,7 @@ const b2bCtrl = require('../b2b/b2b.controller');
 const contactCtrl = require('../contact/contact.admin.controller');
 const commissionCtrl = require('../commission/commission.controller');
 const analyticsCtrl = require('../analytics/analytics.controller');
+const listingCtrl = require('../listings/listings.admin.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
@@ -32,6 +33,14 @@ router.patch('/leads/:id/reject-drop',   leadsCtrl.rejectDrop);
 
 // Property approval + admin edit
 router.get('/properties',              ctrl.getPendingProperties);
+// 4.8 / 4.9 / 4.12 / 4.13 — these sit ABOVE /properties/:id deliberately.
+// Express matches in order, so registering them after the param route would
+// make :id swallow "change-requests" and "edit-logs" as property ids.
+router.get('/properties/change-requests',            listingCtrl.listChangeRequests);
+router.get('/properties/change-requests/:id',        listingCtrl.getChangeRequest);
+router.patch('/properties/change-requests/:id/approve', listingCtrl.approveChangeRequest);
+router.patch('/properties/change-requests/:id/reject',  listingCtrl.rejectChangeRequest);
+router.get('/properties/edit-logs',                  listingCtrl.listEditLogs);
 router.get('/properties/:id',          ctrl.getPropertyById);
 router.patch('/properties/:id/approve', ctrl.approveProperty);
 router.patch('/properties/:id/reject',  ctrl.rejectProperty);

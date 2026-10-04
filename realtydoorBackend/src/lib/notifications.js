@@ -21,6 +21,13 @@ const CATEGORY_BY_TYPE = {
   PROPERTY_APPROVED: 'LISTINGS',
   PROPERTY_REJECTED: 'LISTINGS',
   LISTING_UPDATE: 'LISTINGS',
+  // PROPERTY_EDITED_BY_ADMIN was already being emitted by admin.service.js
+  // but was missing here, so it fell through to the SYSTEM catch-all instead
+  // of showing under the Listings chip.
+  PROPERTY_EDITED_BY_ADMIN: 'LISTINGS',
+  // 4.8 / 4.9 — outcome of a partner's edit to a live listing.
+  PROPERTY_CHANGES_APPROVED: 'LISTINGS',
+  PROPERTY_CHANGES_REJECTED: 'LISTINGS',
   SERVICE_ACTIVATED: 'SYSTEM',
   LOAN_STATUS_UPDATE: 'SYSTEM',
   ANNOUNCEMENT: 'SYSTEM',

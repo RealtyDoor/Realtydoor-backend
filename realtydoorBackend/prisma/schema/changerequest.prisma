@@ -1,0 +1,50 @@
+// ─── PROPERTY CHANGE REQUEST ──────────────────────────────────────────────────
+// Docs 4.8 / 4.9 — a partner's edit to an ALREADY-LIVE listing is held here
+// for review instead of being written straight to the property.
+//
+// Before this model, properties.service.js applied the edit immediately and
+// flipped publishStatus back to PENDING_APPROVAL. That took the listing dark:
+// the good, approved version disappeared from search along with the unreviewed
+// one, and because only ADMIN edits wrote PropertyEditLog, the admin who then
+// re-reviewed the listing had no record of what the partner had actually
+// changed. Both problems are what this model exists to fix — the live listing
+// stays live and untouched while the diff waits for a decision.
+//
+// Edits to a listing that is NOT live (pending, rejected, archived) still
+// apply directly; there is nothing published to protect.
+
+model PropertyChangeRequest {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  propertyId String   @db.ObjectId
+  property   Property @relation(fields: [propertyId], references: [id])
+  partnerId  String   @db.ObjectId
+  partner    User     @relation(fields: [partnerId], references: [id])
+
+  // { fieldName: { before, after } }. Values are JSON-encoded so arrays
+  // (amenities, images) and nulls survive the round trip unambiguously.
+  changes    Json
+  // Denormalised so the review queue can show "7 fields" without parsing
+  // every row's JSON.
+  fieldCount Int
+
+  status            ChangeRequestStatus @default(PENDING)
+  reviewedByAdminId String?             @db.ObjectId
+  reviewNote        String?
+  reviewedAt        DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([status, createdAt])
+  @@index([propertyId, status])
+  @@index([partnerId])
+}
+
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  // A newer edit arrived before this one was reviewed. Kept rather than
+  // deleted so the partner's edit history stays auditable, but the admin
+  // queue only ever shows the latest PENDING request per property.
+  SUPERSEDED
+}

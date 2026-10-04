@@ -38,8 +38,12 @@ async function create(req, res, next) {
 async function update(req, res, next) {
   try {
     const data = createPropertySchema.partial().parse(req.body);
-    const property = await service.updateProperty(req.params.id, req.user.id, data);
-    success(res, property, 'Listing updated');
+    // 4.8 — editing a LIVE listing returns the unchanged property plus the
+    // pending changeRequest, not an updated property. The listing stays live
+    // until an admin reviews the diff, so callers must read `changeRequest`
+    // rather than assuming `property` reflects what they just sent.
+    const { property, changeRequest, message } = await service.updateProperty(req.params.id, req.user.id, data);
+    success(res, { property, changeRequest }, message);
   } catch (err) { next(err); }
 }
 

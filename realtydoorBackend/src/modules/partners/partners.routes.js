@@ -3,6 +3,7 @@ const ctrl = require('./partners.controller');
 const leadsCtrl = require('../leads/leads.controller');
 const commissionCtrl = require('../commission/commission.controller');
 const analyticsCtrl = require('../analytics/analytics.controller');
+const listingCtrl = require('../listings/listings.partner.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
@@ -46,6 +47,10 @@ router.post('/profile/photo', partnerProfilePhotoUploader.single('photo'), ctrl.
 
 // Listings (KYC required)
 router.get('/listings',    requireKyc, ctrl.getMyListings);
+// 4.8 — status of my edits to live listings. Above /listings/:id, or the
+// param route would capture "change-requests" as a listing id.
+router.get('/listings/change-requests',              requireKyc, listingCtrl.myChangeRequests);
+router.patch('/listings/change-requests/:id/withdraw', requireKyc, listingCtrl.withdrawChangeRequest);
 router.get('/listings/:id', requireKyc, ctrl.getListing);
 
 // Finance/escrow summary (KYC required)

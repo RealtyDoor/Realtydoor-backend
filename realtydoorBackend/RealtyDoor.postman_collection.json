@@ -4083,6 +4083,84 @@
               ]
             }
           ]
+        },
+        {
+          "name": "My Change Requests (4.8)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/partner/listings/change-requests?status=ALL",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "partner",
+                "listings",
+                "change-requests"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "ALL"
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - My requests",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a44b1...\",\"status\":\"REJECTED\",\"fieldCount\":1,\"changes\":[{\"field\":\"price\",\"before\":1400000,\"after\":1900000,\"impact\":\"HIGH\"}],\"property\":{\"id\":\"6a44a67d...\",\"title\":\"2 BHK Flat for Rent in Kothrud\",\"slug\":\"2-bhk-flat-kothrud\",\"publishStatus\":\"APPROVED\"},\"reviewNote\":\"Price is above the mandate ceiling for this unit\",\"reviewedAt\":\"2026-10-04T11:02:00.000Z\",\"createdAt\":\"2026-10-04T10:27:25.000Z\"}],\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1}}"
+            }
+          ]
+        },
+        {
+          "name": "Withdraw Change Request (4.8)",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/partner/listings/change-requests/{{changeRequestId}}/withdraw",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "partner",
+                "listings",
+                "change-requests",
+                "{{changeRequestId}}",
+                "withdraw"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Withdrawn",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Change request withdrawn\",\"data\":{\"id\":\"6a44b1...\",\"status\":\"REJECTED\",\"reviewNote\":\"Withdrawn by partner\"}}"
+            }
+          ]
         }
       ]
     },
@@ -4602,6 +4680,271 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":false,\"message\":\"Property not found\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Listing Change Requests",
+          "item": [
+            {
+              "name": "Review Queue (4.8)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/change-requests?status=PENDING",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "change-requests"
+                  ],
+                  "query": [
+                    {
+                      "key": "status",
+                      "value": "PENDING"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Pending queue",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a44b1...\",\"status\":\"PENDING\",\"fieldCount\":1,\"hasHighImpact\":true,\"fields\":[\"price\"],\"property\":{\"id\":\"6a44a67d...\",\"title\":\"2 BHK Flat for Rent in Kothrud\",\"slug\":\"2-bhk-flat-kothrud\",\"city\":\"Pune\",\"locality\":\"Kothrud\",\"publishStatus\":\"APPROVED\"},\"partner\":{\"id\":\"6a44a67a...\",\"name\":\"Rahul Sharma\",\"companyName\":\"Sharma Realty\"},\"reviewNote\":null,\"reviewedAt\":null,\"createdAt\":\"2026-10-04T10:27:25.000Z\"}],\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1}}"
+                }
+              ]
+            },
+            {
+              "name": "Change Request Detail + Conflicts (4.9)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/change-requests/{{changeRequestId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "change-requests",
+                    "{{changeRequestId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Detail with conflict",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"id\":\"6a44b1...\",\"status\":\"PENDING\",\"fieldCount\":1,\"changes\":[{\"field\":\"price\",\"before\":null,\"after\":1900000,\"impact\":\"HIGH\"}],\"conflicts\":[{\"field\":\"price\",\"expectedBefore\":null,\"actualCurrent\":1000001}],\"hasConflicts\":true,\"highImpactFields\":[\"price\",\"monthlyRent\",\"carpetArea\",\"address\",\"latitude\",\"longitude\"],\"property\":{\"id\":\"6a44a67d...\",\"title\":\"2 BHK Flat for Rent in Kothrud\",\"slug\":\"2-bhk-flat-kothrud\",\"city\":\"Pune\",\"locality\":\"Kothrud\",\"publishStatus\":\"APPROVED\"},\"partner\":{\"id\":\"6a44a67a...\",\"name\":\"Rahul Sharma\",\"companyName\":\"Sharma Realty\"},\"reviewNote\":null,\"reviewedByAdminId\":null,\"reviewedAt\":null,\"createdAt\":\"2026-10-04T10:27:25.000Z\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Approve (4.9)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"note\": \"Verified with partner over call\",\n  \"force\": true\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/change-requests/{{changeRequestId}}/approve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "change-requests",
+                    "{{changeRequestId}}",
+                    "approve"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Applied",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Applied 1 change(s), overwriting later edits to price\",\"data\":{\"property\":{\"id\":\"6a44a67d...\",\"title\":\"2 BHK Flat for Rent in Kothrud\",\"slug\":\"2-bhk-flat-kothrud\",\"city\":\"Pune\",\"locality\":\"Kothrud\",\"publishStatus\":\"APPROVED\"},\"appliedFields\":[\"price\"],\"forcedOverConflicts\":[\"price\"]}}"
+                }
+              ]
+            },
+            {
+              "name": "Approve - 409 conflict (no force)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/change-requests/{{changeRequestId}}/approve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "change-requests",
+                    "{{changeRequestId}}",
+                    "approve"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "409 - Listing moved underneath",
+                  "status": "Conflict",
+                  "code": 409,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"The listing changed after this request was submitted (price). Re-check the diff and resend with force=true to apply it anyway.\"}"
+                }
+              ]
+            },
+            {
+              "name": "Reject (4.9)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"note\": \"Price is above the mandate ceiling for this unit\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/change-requests/{{changeRequestId}}/reject",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "change-requests",
+                    "{{changeRequestId}}",
+                    "reject"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Rejected",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Changes rejected\",\"data\":{\"id\":\"6a44b1...\",\"status\":\"REJECTED\",\"reviewNote\":\"Price is above the mandate ceiling for this unit\",\"reviewedAt\":\"2026-10-04T11:02:00.000Z\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Override History, all properties (4.12/4.13)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/edit-logs?impact=HIGH&page=1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "edit-logs"
+                  ],
+                  "query": [
+                    {
+                      "key": "impact",
+                      "value": "HIGH"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Edit logs",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a44b2...\",\"property\":{\"id\":\"6a44a67d...\",\"title\":\"2 BHK Flat for Rent in Kothrud\",\"slug\":\"2-bhk-flat-kothrud\",\"city\":\"Pune\",\"locality\":\"Kothrud\",\"publishStatus\":\"APPROVED\"},\"editedBy\":\"6a44a67a...\",\"editedByName\":\"Partner (approved by admin)\",\"field\":\"price\",\"impact\":\"HIGH\",\"before\":null,\"after\":1900000,\"note\":\"Change request 6a44b1... approved by Admin User\",\"editedAt\":\"2026-10-04T10:27:26.000Z\"}],\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1,\"highImpactFields\":[\"price\",\"monthlyRent\",\"carpetArea\",\"address\",\"latitude\",\"longitude\"]}}"
                 }
               ]
             }

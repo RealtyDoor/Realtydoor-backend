@@ -170,6 +170,7 @@ model User {
   reviews           PropertyReview[]
   supportTickets    PartnerSupportTicket[]
   commissionOverrides PartnerCommissionOverride[]
+  changeRequests      PropertyChangeRequest[]
 
   @@index([phone])
   @@index([deletedAt])

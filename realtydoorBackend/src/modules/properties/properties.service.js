@@ -377,6 +377,32 @@ async function createProperty(data, partnerId) {
   });
 }
 
+// Compares a submitted patch against the stored row and returns only the
+// fields that actually differ, as { field: { before, after } }.
+//
+// Values are JSON-encoded because a property carries arrays (amenities,
+// images, nearbyLandmarks) and nullable scalars. Comparing those with String()
+// would report [] and [''] as equal and lose the difference between null and
+// an empty string, so the diff would silently drop real edits.
+function diffProperty(property, data) {
+  const changes = {};
+  for (const [field, after] of Object.entries(data)) {
+    const beforeJson = JSON.stringify(property[field] ?? null);
+    const afterJson = JSON.stringify(after ?? null);
+    if (beforeJson !== afterJson) changes[field] = { before: beforeJson, after: afterJson };
+  }
+  return changes;
+}
+
+// Docs 4.8 — a partner editing a LIVE listing no longer writes to the
+// property. Previously the edit applied immediately and flipped the listing
+// back to PENDING_APPROVAL, which took the approved version dark along with
+// the unreviewed one, and left no record of what changed (PropertyEditLog was
+// only written for admin edits). Now the live listing is left exactly as it
+// is and the diff waits in a PropertyChangeRequest for an admin decision.
+//
+// Edits to a listing that is not live still apply directly — there is nothing
+// published to protect.
 async function updateProperty(id, partnerId, data) {
   const property = await prisma.property.findUnique({ where: { id } });
   if (!property) throw new ApiError(404, 'Property not found');
@@ -385,23 +411,32 @@ async function updateProperty(id, partnerId, data) {
   const FORBIDDEN = ['publishStatus', 'isVerified', 'partnerId'];
   FORBIDDEN.forEach((f) => delete data[f]);
 
-  // Re-trigger admin review so edited content doesn't go live unreviewed
   if (property.publishStatus === 'APPROVED') {
-    data.publishStatus = 'PENDING_APPROVAL';
-    data.rejectionNote = null;
+    const changes = diffProperty(property, data);
+    const fieldCount = Object.keys(changes).length;
+    if (!fieldCount) {
+      return { property, changeRequest: null, message: 'No changes to review' };
+    }
+
+    // Only the newest pending edit is reviewable. Older ones are marked
+    // SUPERSEDED rather than deleted, so the partner's edit history stays
+    // auditable and the admin queue never shows two competing diffs for the
+    // same listing.
+    const [, changeRequest] = await prisma.$transaction([
+      prisma.propertyChangeRequest.updateMany({
+        where: { propertyId: id, status: 'PENDING' },
+        data: { status: 'SUPERSEDED' },
+      }),
+      prisma.propertyChangeRequest.create({
+        data: { propertyId: id, partnerId, changes, fieldCount },
+      }),
+    ]);
+
+    return { property, changeRequest, message: 'Changes submitted for admin review. Your listing stays live until they are reviewed.' };
   }
 
   const updated = await prisma.property.update({ where: { id }, data });
-
-  if (property.publishStatus === 'APPROVED') {
-    cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
-    cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
-    if (updated.city !== property.city || updated.locality !== property.locality) {
-      cacheDel(CACHE_KEYS.localityPage(updated.city, updated.locality));
-    }
-  }
-
-  return updated;
+  return { property: updated, changeRequest: null, message: 'Listing updated' };
 }
 
 async function getFeaturedProperties() {
