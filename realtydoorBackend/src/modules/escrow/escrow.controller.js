@@ -25,6 +25,15 @@ async function getEscrowById(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// 2.8 / 2.9 — read-only: per-payee entitlements from the lead's locked
+// commission lines, whether the held amount covers the fee, and which release
+// conditions are unmet. Moves no money.
+async function getReleasePlan(req, res, next) {
+  try {
+    success(res, await service.getReleasePlan(req.params.id));
+  } catch (err) { next(err); }
+}
+
 async function releaseEscrow(req, res, next) {
   try {
     const releaseData = releaseEscrowSchema.parse(req.body);
@@ -69,4 +78,4 @@ async function verifyPayment(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { createOrder, getEscrowById, verifyPayment, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats };
+module.exports = { createOrder, getEscrowById, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats };

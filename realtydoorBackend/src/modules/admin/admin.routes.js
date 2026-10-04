@@ -58,6 +58,8 @@ router.patch('/escrow/:id/release', escrowCtrl.releaseEscrow);
 router.post('/escrow/:id/refund', escrowCtrl.refundEscrow);
 router.get('/escrow', escrowCtrl.getAllEscrow);
 router.get('/escrow/stats', escrowCtrl.getEscrowStats);
+// 2.8/2.9 — split entitlements + release conditions, before releasing.
+router.get('/escrow/:id/release-plan', escrowCtrl.getReleasePlan);
 
 // CMS
 router.get('/content',        cmsCtrl.getAllForAdmin);

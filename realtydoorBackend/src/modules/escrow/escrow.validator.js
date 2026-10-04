@@ -32,7 +32,15 @@ const releaseEscrowSchema = z.object({
   partnerShare:    z.number().positive().optional(),
   platformFee:     z.number().positive().optional(),
   note:            z.string().max(500).optional(),
+  // 2.9 — release conditions are enforced in the service. A deal settled out
+  // of the normal sequence still has to be closable, so admin can override,
+  // but only with a reason, and the override is logged and audited.
+  overrideConditions: z.boolean().optional(),
+  overrideReason:     z.string().min(5).max(500).optional(),
 }).refine(
+  (data) => !data.overrideConditions || !!data.overrideReason,
+  { message: 'overrideReason is required when overriding release conditions', path: ['overrideReason'] }
+).refine(
   (data) => !!data.sellerDetails || data.manualTransferConfirmed === true,
   { message: 'Provide sellerDetails for a RazorpayX payout, or set manualTransferConfirmed to true if the payout was made outside Razorpay', path: ['sellerDetails'] }
 ).refine(

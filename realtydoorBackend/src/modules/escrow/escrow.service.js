@@ -165,6 +165,130 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
   return updated;
 }
 
+// ─── 2.8 / 2.9 — release plan and release conditions ─────────────────────────
+//
+// IMPORTANT, and unresolved by design: the commission fee is a % of the DEAL
+// PRICE, while escrow holds only the TOKEN ADVANCE. On real data the fee
+// routinely exceeds what is held (2% of 85L = 170k against a 50k token), so
+// "pay the commission out of escrow" is not generally possible and this code
+// deliberately does NOT invent an allocation rule for the shortfall.
+//
+// What it does instead: compute each payee's entitlement from the lead's
+// LOCKED lines, state plainly whether the held amount covers it, and let
+// admin see that before moving money. The actual payout amounts still come
+// from the release request, and are validated against what is held.
+const GST_PCT_KEY = 'commission_gst_pct';
+const TDS_PCT_KEY = 'commission_tds_pct';
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+async function getReleasePlan(escrowId) {
+  const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
+  if (!escrow) throw new ApiError(404, 'Escrow not found');
+
+  const lead = await prisma.lead.findUnique({
+    where: { id: escrow.leadId },
+    select: {
+      id: true, refCode: true, feePct: true, dealPriceAtLock: true,
+      commissionLockedAt: true, commissionVersion: true,
+      allocationLetterUrl: true, buyerFeedbackStatus: true, status: true,
+      assignedPartnerId: true,
+      property: { select: { price: true } },
+      assignedPartner: { select: { id: true, name: true, payoutAccountStatus: true, razorpayFundAccountId: true } },
+    },
+  });
+  if (!lead) throw new ApiError(404, 'Lead not found for this escrow');
+
+  const lines = lead.commissionLockedAt
+    ? await prisma.leadCommissionLine.findMany({
+        where: { leadId: lead.id, version: lead.commissionVersion },
+        orderBy: { payeeRole: 'asc' },
+      })
+    : [];
+
+  // GST and TDS default to 0 so nothing is ever silently withheld. Both are
+  // statutory and rate-sensitive (TDS 194H on brokerage), so they stay
+  // admin-configured rather than hardcoded. Pending business sign-off.
+  const [gstPct, tdsPct] = await Promise.all([
+    getConfigNumber(GST_PCT_KEY, 0),
+    getConfigNumber(TDS_PCT_KEY, 0),
+  ]);
+
+  const dealPrice = lead.dealPriceAtLock ?? lead.property?.price ?? null;
+  const feeEntitlement = dealPrice && lead.feePct ? round2((dealPrice * lead.feePct) / 100) : null;
+
+  const entitlements = lines.map((l) => {
+    const gross = feeEntitlement ? round2((feeEntitlement * l.pct) / 100) : null;
+    // Deductions apply to the payee's gross share, not to the whole fee.
+    const gst = gross && gstPct ? round2((gross * gstPct) / 100) : 0;
+    const tds = gross && tdsPct ? round2((gross * tdsPct) / 100) : 0;
+    return {
+      payeeRole: l.payeeRole,
+      payeeUserId: l.payeeUserId ?? null,
+      pctOfFee: l.pct,
+      gross,
+      gst,
+      tds,
+      net: gross != null ? round2(gross - tds) : null,
+    };
+  });
+
+  const heldAmount = escrow.amount;
+  const coversFee = feeEntitlement != null ? feeEntitlement <= heldAmount : null;
+
+  // 2.9 — release conditions. `blocking` ones stop an automated release;
+  // the rest are advisory so admin still sees them.
+  const conditions = [
+    {
+      key: 'ESCROW_HELD', blocking: true,
+      ok: escrow.status === 'HELD' && !!escrow.razorpayPaymentId,
+      detail: `status ${escrow.status}, payment ${escrow.razorpayPaymentId ? 'captured' : 'not captured'}`,
+    },
+    {
+      key: 'COMMISSION_LOCKED', blocking: true,
+      ok: !!lead.commissionLockedAt,
+      detail: lead.commissionLockedAt ? `locked v${lead.commissionVersion}` : 'terms not agreed/locked yet',
+    },
+    {
+      key: 'ALLOCATION_LETTER', blocking: true,
+      ok: !!lead.allocationLetterUrl,
+      detail: lead.allocationLetterUrl ? 'on file' : 'not uploaded',
+    },
+    {
+      key: 'BUYER_CONFIRMED', blocking: false,
+      ok: ['VERIFIED_CLOSED'].includes(lead.buyerFeedbackStatus),
+      detail: `buyer feedback: ${lead.buyerFeedbackStatus || 'none'}`,
+    },
+    {
+      key: 'PARTNER_PAYOUT_ACCOUNT', blocking: false,
+      ok: lead.assignedPartner?.payoutAccountStatus === 'ACTIVE' && !!lead.assignedPartner?.razorpayFundAccountId,
+      detail: `payout account: ${lead.assignedPartner?.payoutAccountStatus || 'none'}`,
+    },
+  ];
+
+  const unmetBlocking = conditions.filter((c) => c.blocking && !c.ok).map((c) => c.key);
+
+  return {
+    escrowId,
+    leadRef: lead.refCode,
+    heldAmount,
+    dealPrice,
+    feePct: lead.feePct,
+    feeEntitlement,
+    coversFee,
+    // What the escrow cannot cover. Explicitly surfaced rather than silently
+    // pro-rated, because how a shortfall is settled is a business decision.
+    shortfall: feeEntitlement != null ? round2(Math.max(0, feeEntitlement - heldAmount)) : null,
+    deductions: { gstPct, tdsPct },
+    entitlements,
+    conditions,
+    unmetBlocking,
+    readyToRelease: unmetBlocking.length === 0,
+  };
+}
+
 async function release(escrowId, adminId, releaseData, ip) {
   const { sellerDetails, partnerDetails, manualTransferConfirmed, partnerShare, platformFee, note } = releaseData ?? {};
 
@@ -172,6 +296,30 @@ async function release(escrowId, adminId, releaseData, ip) {
   if (!escrow) throw new ApiError(404, 'Escrow not found');
   if (escrow.status !== 'HELD') throw new ApiError(400, `Cannot release escrow with status ${escrow.status}`);
   if (!escrow.razorpayPaymentId) throw new ApiError(400, 'Payment not yet captured');
+
+  // 2.9 — release conditions, checked before the atomic claim so an unmet
+  // condition never leaves a half-claimed RELEASED behind.
+  //
+  // overrideConditions lets admin release anyway (a deal settled outside the
+  // normal sequence still has to be closable), but it demands a reason and is
+  // recorded in the audit log — it is not a silent bypass.
+  const plan = await getReleasePlan(escrowId);
+  if (!plan.readyToRelease) {
+    if (!releaseData?.overrideConditions) {
+      throw new ApiError(400, `Release conditions not met: ${plan.unmetBlocking.join(', ')}`, {
+        code: 'RELEASE_CONDITIONS_UNMET',
+        unmet: plan.unmetBlocking,
+      });
+    }
+    if (!releaseData?.overrideReason) {
+      throw new ApiError(400, 'overrideReason is required when overriding release conditions', {
+        code: 'OVERRIDE_REASON_REQUIRED',
+      });
+    }
+    logger.warn('[Escrow] Release conditions overridden by admin', {
+      escrowId, adminId, unmet: plan.unmetBlocking, reason: releaseData.overrideReason,
+    });
+  }
 
   // The seller is paid the token advance net of whatever's held back for the
   // partner/platform — platformFee simply stays in the RazorpayX account
@@ -310,6 +458,7 @@ async function release(escrowId, adminId, releaseData, ip) {
 
   await createAuditLog({
     adminId, action: 'ESCROW_RELEASED', targetType: 'EscrowTransaction', targetId: escrowId,
+    before: plan.readyToRelease ? undefined : { unmetConditions: plan.unmetBlocking, overrideReason: releaseData?.overrideReason },
     after: {
       status: 'RELEASED', sellerAmount, partnerShare, platformFee, note,
       sellerPayoutId, partnerPayoutId,
@@ -444,4 +593,4 @@ async function getEscrowStats() {
   };
 }
 
-module.exports = { createOrder, getById, confirmPayment, release, refund, getAllEscrow, getEscrowStats };
+module.exports = { createOrder, getById, getReleasePlan, confirmPayment, release, refund, getAllEscrow, getEscrowStats };
