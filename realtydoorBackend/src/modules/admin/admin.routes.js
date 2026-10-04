@@ -102,6 +102,8 @@ router.get('/kyc/:userId',        ctrl.getKycById);
 // why) — a SUPPORT staffRole can see KYC queues without also being able to
 // verify one.
 router.patch('/kyc/:userId/verify', requirePermission('KYC'), ctrl.verifyKyc);
+// 5.x — re-run the automated PAN/GSTIN/RERA check on demand.
+router.post('/kyc/:userId/auto-verify', requirePermission('KYC'), ctrl.autoVerifyKyc);
 // R9 — ask for specific documents instead of a flat reject.
 router.post('/kyc/:userId/request-documents', ctrl.requestKycDocuments);
 

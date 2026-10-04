@@ -18,6 +18,7 @@ const { generate, expiresAt } = require('../../lib/otp');
 const logger = require('../../lib/logger');
 const { cacheDel } = require('../../lib/cache');
 const dataAckService = require('../partners/dataAck.service');
+const partnerService = require('../partners/partners.service');
 const { buildTicketChargeReceiptPdf } = require('../../lib/pdfReceipt');
 const { s3Upload } = require('../../lib/fileUpload');
 const { getConfigNumber } = require('../config/config.service');
@@ -757,6 +758,11 @@ async function getPendingKyc(skip, limit, statusFilter) {
         id: true, name: true, email: true, companyName: true, partnerSubType: true,
         kycDocumentUrls: true, kycStatus: true, kycRejectionNote: true, kycVerifiedAt: true,
         createdAt: true,
+        // 5.x — advisory automated-check results, surfaced alongside the
+        // manual review queue, never replacing it.
+        panVerificationStatus: true, panVerifiedName: true,
+        gstinVerificationStatus: true, gstinVerifiedName: true,
+        reraVerificationStatus: true, reraVerifiedName: true,
       },
       orderBy: { createdAt: 'asc' },
     }),
@@ -1739,10 +1745,25 @@ async function getKycByUserId(userId) {
       id: true, name: true, email: true, companyName: true, partnerSubType: true,
       kycStatus: true, kycDocumentUrls: true, kycRejectionNote: true, kycVerifiedAt: true,
       createdAt: true,
+      panNumber: true, panVerificationStatus: true, panVerifiedName: true, panVerifiedAt: true,
+      gstin: true, gstinVerificationStatus: true, gstinVerifiedName: true, gstinVerifiedAt: true,
+      reraNumber: true, reraVerificationStatus: true, reraVerifiedName: true, reraVerifiedAt: true,
     },
   });
   if (!user) throw new ApiError(404, 'Partner not found');
   return user;
+}
+
+// 5.x — admin can re-trigger the automated checks on demand (e.g. it
+// wasn't configured at submission time, or the partner corrected a number
+// afterward). Reuses the exact same logic submitKyc fires automatically.
+async function reRunKycAutoVerification(userId, adminId, ip) {
+  const result = await partnerService.runAutomatedKycChecks(userId);
+  await createAuditLog({
+    adminId, action: 'KYC_AUTO_VERIFICATION_RERUN', targetType: 'User', targetId: userId,
+    after: result || { note: 'No PAN/GSTIN/RERA on file to check' }, ipAddress: ip,
+  });
+  return result;
 }
 
 async function getUserByIdAdmin(userId) {
@@ -1861,7 +1882,7 @@ module.exports = {
   getLeadById, getAllLeads, assignLead, createLead, confirmLead, rejectLead, overrideLeadOtp,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   requestPropertyChanges,
-  getPendingKyc, verifyKyc, requestKycDocuments, kycRequestEffectiveStatus,
+  getPendingKyc, verifyKyc, requestKycDocuments, kycRequestEffectiveStatus, reRunKycAutoVerification,
   autoAssignLead, autoAssignUnassignedLeads,
   getRevenueSummary,
   getAuditLogs,

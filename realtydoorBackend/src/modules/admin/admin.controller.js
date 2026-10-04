@@ -196,6 +196,14 @@ async function verifyKyc(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// 5.x — re-run the automated PAN/GSTIN/RERA check on demand.
+async function autoVerifyKyc(req, res, next) {
+  try {
+    const result = await service.reRunKycAutoVerification(req.params.userId, req.user.id, req.ip);
+    success(res, result, result ? 'Automated verification re-run' : 'No PAN/GSTIN/RERA on file to check');
+  } catch (err) { next(err); }
+}
+
 async function getRevenue(req, res, next) {
   try {
     const summary = await service.getRevenueSummary();
@@ -657,7 +665,7 @@ module.exports = {
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   requestPropertyChanges,
   requestKycDocuments,
-  getPendingKyc, verifyKyc,
+  getPendingKyc, verifyKyc, autoVerifyKyc,
   getRevenue, getAuditLogs, getPartnerMetrics,
   getTickets, getTicket, updateTicket, getTicketStats,
   dispatchTicket, resolveTicket, linkTicketToDeal,

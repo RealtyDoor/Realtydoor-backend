@@ -9026,6 +9026,57 @@
               ]
             },
             {
+              "name": "Auto-Verify KYC (5.x)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/kyc/{{userId}}/auto-verify",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "kyc",
+                    "{{userId}}",
+                    "auto-verify"
+                  ]
+                },
+                "description": "Re-runs the automated PAN/GSTIN/RERA check. NOT_CONFIGURED in any environment without KYC_VERIFICATION_API_KEY set -- which is every environment today; see lib/kycVerification.js before enabling against a real vendor account."
+              },
+              "response": [
+                {
+                  "name": "200 - Re-run (not configured)",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Automated verification re-run\",\"data\":{\"panVerificationStatus\":\"NOT_CONFIGURED\",\"panVerifiedName\":null,\"gstinVerificationStatus\":\"NOT_CONFIGURED\",\"gstinVerifiedName\":null,\"reraVerificationStatus\":\"NOT_CONFIGURED\",\"reraVerifiedName\":null}}"
+                },
+                {
+                  "name": "200 - Nothing to Check",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"No PAN/GSTIN/RERA on file to check\",\"data\":null}"
+                }
+              ]
+            },
+            {
               "name": "Reject KYC",
               "request": {
                 "method": "PATCH",

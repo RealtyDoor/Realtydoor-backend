@@ -4,6 +4,7 @@ const { createNotification } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const logger = require('../../lib/logger');
 const { createPayoutContact, createPayoutFundAccount, validateFundAccountOrWarn } = require('../../lib/razorpay');
+const kycVerification = require('../../lib/kycVerification');
 
 // Previously had no endpoint at all to record this — KYC documents could be
 // submitted with no consent ever stamped anywhere. Idempotent: re-calling
@@ -81,7 +82,57 @@ async function submitKyc(partnerId, documentUrls) {
     });
   }
 
+  // 5.x — fire-and-forget: advisory input into admin's manual review above,
+  // never blocks submission and never decides kycStatus itself. A no-op
+  // (see lib/kycVerification.js) until a real vendor key is configured.
+  runAutomatedKycChecks(partnerId).catch((err) => {
+    logger.error('[KYC] automated verification failed', { partnerId, error: err.message });
+  });
+
   return updated;
+}
+
+// 5.x — runs whichever of PAN/GSTIN/RERA this partner actually has on file.
+// Exported so admin.service.js's on-demand re-check endpoint can call the
+// exact same logic rather than duplicating it. A no-op per field when
+// lib/kycVerification.js isn't configured (every status comes back
+// NOT_CONFIGURED) — still written, so the admin KYC screen can show
+// "automated check not available" rather than stale/missing data.
+async function runAutomatedKycChecks(partnerId) {
+  const user = await prisma.user.findUnique({
+    where: { id: partnerId },
+    select: { panNumber: true, gstin: true, reraNumber: true, name: true, companyName: true },
+  });
+  if (!user) throw new ApiError(404, 'User not found');
+
+  const nameToMatch = user.companyName || user.name;
+  const updates = {};
+
+  if (user.panNumber) {
+    const r = await kycVerification.verifyPan(user.panNumber, nameToMatch);
+    updates.panVerificationStatus = r.status;
+    updates.panVerifiedName = r.verifiedName;
+    updates.panVerifiedAt = new Date();
+  }
+  if (user.gstin) {
+    const r = await kycVerification.verifyGstin(user.gstin);
+    updates.gstinVerificationStatus = r.status;
+    updates.gstinVerifiedName = r.verifiedName;
+    updates.gstinVerifiedAt = new Date();
+  }
+  if (user.reraNumber) {
+    const r = await kycVerification.verifyRera(user.reraNumber);
+    updates.reraVerificationStatus = r.status;
+    updates.reraVerifiedName = r.verifiedName;
+    updates.reraVerifiedAt = new Date();
+  }
+
+  if (Object.keys(updates).length === 0) return null;
+  return prisma.user.update({ where: { id: partnerId }, data: updates, select: {
+    panVerificationStatus: true, panVerifiedName: true, panVerifiedAt: true,
+    gstinVerificationStatus: true, gstinVerifiedName: true, gstinVerifiedAt: true,
+    reraVerificationStatus: true, reraVerifiedName: true, reraVerifiedAt: true,
+  } });
 }
 
 async function getProfile(partnerId) {
@@ -558,7 +609,7 @@ async function getPartnerAnalytics(partnerId) {
 }
 
 module.exports = {
-  acceptPartnerTerms, recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
+  acceptPartnerTerms, recordKycConsent, submitKyc, runAutomatedKycChecks, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
   getFinanceSummary, getRatings, listMyPayouts,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount, getBilling, updateBilling,

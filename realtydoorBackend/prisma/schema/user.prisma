@@ -80,6 +80,24 @@ model User {
   panNumber     String?
   coverageAreas String[]
 
+  // 5.x — KYC automation: an automated-registry-check RESULT, advisory
+  // input into the admin's manual kycStatus decision below, never a
+  // replacement for it. See lib/kycVerification.js — every check is a
+  // no-op (status stays NOT_CONFIGURED, nothing else below is touched)
+  // until KYC_VERIFICATION_API_KEY is set; this was never tested against a
+  // real vendor account (no credentials available), unlike everything else
+  // in this codebase — see that file's own comment before enabling it.
+  // Status values: NOT_CONFIGURED | NOT_FOUND | VERIFIED | NAME_MISMATCH | FAILED.
+  panVerificationStatus   String?
+  panVerifiedName         String?
+  panVerifiedAt           DateTime?
+  gstinVerificationStatus String?
+  gstinVerifiedName       String?
+  gstinVerifiedAt         DateTime?
+  reraVerificationStatus  String?
+  reraVerifiedName        String?
+  reraVerifiedAt          DateTime?
+
   // ADVISOR persona's standard per-deal fee (business decision, 2026-10-04):
   // Advisor is normally paid a flat amount, not a % of the brokerage. This is
   // their default, used automatically when they're added as the ADVISOR line

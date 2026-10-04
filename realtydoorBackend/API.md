@@ -6474,7 +6474,10 @@ Partners with `PENDING_REVIEW` KYC (paginated).
         "companyName": "RealtyPro Solutions",
         "partnerSubType": "AGENT",
         "kycDocumentUrls": ["https://cdn.realtydoor.in/kyc/pan.pdf"],
-        "createdAt": "2024-01-01T00:00:00.000Z"
+        "createdAt": "2024-01-01T00:00:00.000Z",
+        "panVerificationStatus": "NOT_CONFIGURED", "panVerifiedName": null,
+        "gstinVerificationStatus": "NOT_CONFIGURED", "gstinVerifiedName": null,
+        "reraVerificationStatus": "NOT_CONFIGURED", "reraVerifiedName": null
       }
     ],
     "pagination": { "total": 5, "page": 1, "limit": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
@@ -6482,13 +6485,25 @@ Partners with `PENDING_REVIEW` KYC (paginated).
 }
 ```
 
+**5.x — the `*VerificationStatus`/`*VerifiedName` fields are the automated
+PAN/GSTIN/RERA registry check, advisory input into the manual
+approve/reject decision below — never a replacement for it, and this
+endpoint's own behavior is completely unchanged.** `NOT_CONFIGURED` is what
+every partner shows in any environment that hasn't set
+`KYC_VERIFICATION_API_KEY` — which is every environment today; see
+`lib/kycVerification.js`'s own comment for why (no vendor credentials were
+available to build and test this live, unlike everything else in this
+API). Other values: `NOT_FOUND`, `VERIFIED`, `NAME_MISMATCH` (registry name
+doesn't loosely match what the partner's profile has on file), `FAILED`
+(the vendor call itself errored).
+
 ---
 
 ### PATCH /api/admin/kyc/:userId/verify
 
 Approve or reject partner KYC.
 
-**Auth:** ADMIN
+**Auth:** ADMIN + `KYC` permission
 
 **Request Body:**
 
@@ -6499,6 +6514,46 @@ Approve or reject partner KYC.
 `action`: `"APPROVE"` or `"REJECT"`. `note` required when rejecting.
 
 **Response `200`:** `{ "success": true, "message": "KYC approved", "data": null }`
+
+---
+
+### POST /api/admin/kyc/:userId/auto-verify
+
+5.x — re-runs the automated PAN/GSTIN/RERA check on demand (e.g. it wasn't
+configured at submission time, or the partner corrected a number
+afterward). Checks whichever of `panNumber`/`gstin`/`reraNumber` the
+partner actually has on file; skips any that are empty.
+
+Fired automatically, fire-and-forget, every time a partner calls
+`POST /api/partner/kyc` too — this endpoint is for re-triggering it, not
+the only way it runs.
+
+**Auth:** ADMIN + `KYC` permission
+
+**Response `200`:**
+
+```json
+{
+  "success": true, "message": "Automated verification re-run",
+  "data": {
+    "panVerificationStatus": "NOT_CONFIGURED", "panVerifiedName": null, "panVerifiedAt": "2026-10-04T18:39:51.549Z",
+    "gstinVerificationStatus": "NOT_CONFIGURED", "gstinVerifiedName": null, "gstinVerifiedAt": "2026-10-04T18:39:51.549Z",
+    "reraVerificationStatus": "NOT_CONFIGURED", "reraVerifiedName": null, "reraVerifiedAt": "2026-10-04T18:39:51.549Z"
+  }
+}
+```
+
+If the partner has none of `panNumber`/`gstin`/`reraNumber` on file,
+`data` is `null` and the message reads "No PAN/GSTIN/RERA on file to check" —
+there's nothing to run.
+
+**Not live-verified against a real vendor** — see the prominent comment at
+the top of `src/lib/kycVerification.js` before this is ever enabled against
+a real account. Everything else about this endpoint (the route, the
+auth/permission gate, the no-op path, writing results back to the User
+row) was verified live.
+
+---
 
 ### POST /api/admin/kyc/:userId/request-documents
 
