@@ -31,6 +31,13 @@ model EscrowTransaction {
 
   amount    Float
   currency  String       @default("INR")
+  // R30 — what the seller actually netted at release (amount minus whatever
+  // was held back for partner/platform). Only ever set by release() itself;
+  // null before that, since there is nothing to show yet. The "in-review"
+  // (pre-release) equivalent is computed on the fly by getReleasePlan, not
+  // stored here, because it's a projection that can still change before the
+  // real release happens.
+  netAmount Float?
 
   status      EscrowStatus @default(PAYMENT_PENDING)
   heldAt      DateTime?

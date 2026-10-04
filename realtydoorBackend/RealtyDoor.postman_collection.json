@@ -9546,6 +9546,42 @@
               ]
             },
             {
+              "name": "Get Release Plan (R30)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/escrow/{{escrowId}}/release-plan",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "escrow",
+                    "{{escrowId}}",
+                    "release-plan"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Release Plan",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"escrowId\":\"6a1a3213aa8de854e8acfad7\",\"leadRef\":\"RD-L-000123\",\"heldAmount\":500000,\"dealPrice\":9000000,\"feePct\":2,\"feeEntitlement\":180000,\"coversFee\":true,\"shortfall\":null,\"netAmount\":320000,\"deductions\":{\"gstPct\":0,\"tdsPct\":0},\"entitlements\":[{\"payeeRole\":\"CLOSING_AGENT\",\"payeeUserId\":\"6a1a3213aa8de854e8acfad8\",\"pctOfFee\":50,\"gross\":90000,\"gst\":0,\"tds\":0,\"net\":90000}],\"conditions\":[{\"key\":\"ESCROW_HELD\",\"blocking\":true,\"ok\":true,\"detail\":\"status HELD, payment captured\"}],\"unmetBlocking\":[],\"readyToRelease\":true}}"
+                }
+              ]
+            },
+            {
               "name": "Release Escrow to Seller",
               "request": {
                 "method": "PATCH",

@@ -281,6 +281,12 @@ async function getReleasePlan(escrowId) {
     // What the escrow cannot cover. Explicitly surfaced rather than silently
     // pro-rated, because how a shortfall is settled is a business decision.
     shortfall: feeEntitlement != null ? round2(Math.max(0, feeEntitlement - heldAmount)) : null,
+    // R30 — projected net to the seller if released right now with the fee
+    // taken in full out of the held escrow amount. A genuine projection, not
+    // the actual release()-time figures (admin's partnerShare/platformFee
+    // request can differ) — that's EscrowTransaction.netAmount, set only
+    // once release() actually happens.
+    netAmount: feeEntitlement != null ? round2(Math.max(0, heldAmount - feeEntitlement)) : null,
     deductions: { gstPct, tdsPct },
     entitlements,
     conditions,
@@ -455,6 +461,7 @@ async function release(escrowId, adminId, releaseData, ip) {
     where: { id: escrowId },
     data: {
       adminNote,
+      netAmount: sellerAmount,
       ...(sellerPayoutId && { razorpayPayoutId: sellerPayoutId, sellerPayoutStatus: sellerPayoutStatusVal }),
       ...(partnerPayoutId && { razorpayPartnerPayoutId: partnerPayoutId, partnerPayoutStatus: partnerPayoutStatusVal }),
     },

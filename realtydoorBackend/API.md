@@ -6746,11 +6746,55 @@ The release is atomic: if two requests for the same escrow race, only one succee
 {
   "success": true,
   "message": "Escrow released",
-  "data": { "id": "64esc...", "status": "RELEASED", "releasedAt": "...", "adminNote": "..." }
+  "data": { "id": "64esc...", "status": "RELEASED", "releasedAt": "...", "adminNote": "...", "netAmount": 320000 }
 }
 ```
 
+**R30 — `netAmount` is `amount - partnerShare - platformFee`**: what the
+seller actually netted, stored on the escrow itself so the "released"
+screen doesn't have to re-derive it from `adminNote`'s free text. `null`
+until release happens — see `GET .../release-plan` below for the pre-release
+projection.
+
 **Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race) · `400` neither `sellerDetails` nor `manualTransferConfirmed` provided.
+
+---
+
+### GET /api/admin/escrow/:id/release-plan
+
+What release conditions are met, the per-payee fee entitlement (gross,
+GST, TDS, net), and whether the held amount even covers the fee — computed
+fresh on every call, writes nothing.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "escrowId": "...", "leadRef": "RD-L-000123", "heldAmount": 500000,
+  "dealPrice": 9000000, "feePct": 2, "feeEntitlement": 180000, "coversFee": true,
+  "shortfall": null,
+  "netAmount": 320000,
+  "deductions": { "gstPct": 0, "tdsPct": 0 },
+  "entitlements": [{ "payeeRole": "CLOSING_AGENT", "payeeUserId": "...", "pctOfFee": 50, "gross": 90000, "gst": 0, "tds": 0, "net": 90000 }],
+  "conditions": [{ "key": "ESCROW_HELD", "blocking": true, "ok": true, "detail": "status HELD, payment captured" }],
+  "unmetBlocking": [],
+  "readyToRelease": true
+}
+```
+
+**R30 — `netAmount` here is a *projection*** (`heldAmount - feeEntitlement`,
+clamped at 0): what the seller would net if released right now with the
+fee taken in full out of the held escrow amount. It is **not** the same
+figure that ends up stored on the escrow at release — admin's actual
+`partnerShare`/`platformFee` on the release request can differ from
+`feeEntitlement`'s computed split. `shortfall` is non-null (and `coversFee`
+false) when the held amount can't cover the computed fee at all; business
+decides how that's settled, so it's surfaced rather than silently
+pro-rated.
+
+**Errors:** `404` escrow or its lead not found.
 
 ---
 
@@ -6861,6 +6905,11 @@ RazorpayX's own payout status values (`processing`/`processed`/`failed`/
 `reversed`/...), kept current by the `payout.processed`/`payout.failed`/
 `payout.reversed` webhooks. `null` until a payout for that leg is ever
 attempted.
+
+R30 — every row also carries `netAmount` (the "released" screen's figure) —
+`null` until the escrow is actually released, at which point it's
+`amount - partnerShare - platformFee`. The pre-release projection of the
+same figure is `GET .../release-plan`'s `netAmount`, not this field.
 
 ---
 
