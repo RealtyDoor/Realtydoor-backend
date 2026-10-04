@@ -67,6 +67,14 @@ model User {
   panNumber     String?
   coverageAreas String[]
 
+  // ADVISOR persona's standard per-deal fee (business decision, 2026-10-04):
+  // Advisor is normally paid a flat amount, not a % of the brokerage. This is
+  // their default, used automatically when they're added as the ADVISOR line
+  // on a lead (LeadCommissionLine.flatAmountPaise) unless admin overrides the
+  // amount for that specific deal. Null means "no standard rate set yet" —
+  // required at the point an advisor line is actually added with no override.
+  advisorStandardFeePaise Int?
+
   // KYC (Partners only)
   kycStatus        KycStatus @default(NOT_SUBMITTED)
   kycDocumentUrls  String[]

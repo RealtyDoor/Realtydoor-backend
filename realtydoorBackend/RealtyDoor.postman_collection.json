@@ -4409,6 +4409,40 @@
               "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"type\":\"LEAD_DATA_HANDLING\",\"accepted\":true,\"version\":\"2026-10-v1\",\"acceptedAt\":\"2026-10-04T12:00:00.000Z\",\"requiredVersion\":null,\"isCurrent\":null}}"
             }
           ]
+        },
+        {
+          "name": "My Rate Cards & Lead Terms",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/partner/rate-cards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "partner",
+                "rate-cards"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Own lines only, no platform/advisor cuts shown",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"override\":null,\"leads\":[{\"leadId\":\"6a...\",\"refCode\":\"L-2231\",\"property\":{\"title\":\"3BHK in Kothrud\",\"city\":\"Pune\"},\"feePct\":2,\"partnerSharePct\":50,\"partnerAmount\":75000,\"locked\":false,\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":50}]}]}}"
+            }
+          ]
         }
       ]
     },
@@ -6682,6 +6716,560 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":true,\"message\":\"Owner confirmation recorded as DENIED\",\"data\":{\"id\":\"{{confirmationId}}\",\"status\":\"DENIED\",\"responseNote\":\"Owner says they never authorized this agent to list the property\"}}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Commission",
+          "item": [
+            {
+              "name": "List Rate Cards",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/rate-cards",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "rate-cards"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Cards",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a44...\",\"city\":\"Pune\",\"sellerType\":\"AGENT\",\"feePct\":2,\"payer\":\"SELLER\",\"isActive\":true,\"version\":1,\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":45},{\"payeeRole\":\"PLATFORM\",\"pct\":55}]}],\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1}}"
+                }
+              ]
+            },
+            {
+              "name": "Create Rate Card",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"city\": \"Pune\",\n  \"sellerType\": \"AGENT\",\n  \"feePct\": 2,\n  \"payer\": \"SELLER\",\n  \"lines\": [\n    {\n      \"payeeRole\": \"CLOSING_AGENT\",\n      \"pct\": 45\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/rate-cards",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "rate-cards"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "201 - Created, platform computed",
+                  "status": "Created",
+                  "code": 201,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Rate card created\",\"data\":{\"id\":\"6a44...\",\"city\":\"Pune\",\"sellerType\":\"AGENT\",\"feePct\":2,\"payer\":\"SELLER\",\"isActive\":true,\"version\":1,\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":45},{\"payeeRole\":\"PLATFORM\",\"pct\":55}]}}"
+                }
+              ]
+            },
+            {
+              "name": "Create Rate Card - 400 ADVISOR not allowed",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"city\": \"Pune\",\n  \"sellerType\": \"AGENT\",\n  \"feePct\": 2,\n  \"lines\": [\n    {\n      \"payeeRole\": \"ADVISOR\",\n      \"pct\": 10\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/rate-cards",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "rate-cards"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "400 - Advisor refused",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"Rate card templates only support LISTING_AGENT/CLOSING_AGENT lines (got \\\"ADVISOR\\\"). ADVISOR is set per deal, not in a template, since the specific advisor is not known in advance.\"}"
+                }
+              ]
+            },
+            {
+              "name": "Update Rate Card",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"lines\": [\n    {\n      \"payeeRole\": \"CLOSING_AGENT\",\n      \"pct\": 50\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/rate-cards/{{rateCardId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "rate-cards",
+                    "{{rateCardId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Updated, version bumped",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Rate card updated\",\"data\":{\"id\":\"6a44...\",\"city\":\"Pune\",\"sellerType\":\"AGENT\",\"feePct\":2,\"payer\":\"SELLER\",\"isActive\":true,\"version\":2,\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":50},{\"payeeRole\":\"PLATFORM\",\"pct\":50}]}}"
+                }
+              ]
+            },
+            {
+              "name": "Deactivate Rate Card",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/rate-cards/{{rateCardId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "rate-cards",
+                    "{{rateCardId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Deactivated",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Rate card deactivated\",\"data\":{\"id\":\"6a44...\",\"city\":\"Pune\",\"sellerType\":\"AGENT\",\"feePct\":2,\"payer\":\"SELLER\",\"isActive\":false,\"version\":1,\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":45},{\"payeeRole\":\"PLATFORM\",\"pct\":55}]}}"
+                }
+              ]
+            },
+            {
+              "name": "List Commission Overrides",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/commission-overrides",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "commission-overrides"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Overrides",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[],\"total\":0,\"page\":1,\"limit\":20,\"totalPages\":0}}"
+                }
+              ]
+            },
+            {
+              "name": "Create Commission Override",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"partnerId\": \"6a...\",\n  \"scope\": \"ALL\",\n  \"partnerSharePct\": 60,\n  \"reason\": \"Top performer retention incentive\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/commission-overrides",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "commission-overrides"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "201 - Created",
+                  "status": "Created",
+                  "code": 201,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Override created\",\"data\":{\"id\":\"6a...\",\"partnerId\":\"6a...\",\"scope\":\"ALL\",\"partnerSharePct\":60,\"isActive\":true}}"
+                }
+              ]
+            },
+            {
+              "name": "Revoke Commission Override",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/commission-overrides/{{overrideId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "commission-overrides",
+                    "{{overrideId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Revoked",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Override revoked\",\"data\":{\"id\":\"{{overrideId}}\",\"isActive\":false}}"
+                }
+              ]
+            },
+            {
+              "name": "Preview Lead Commission Terms",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/{{leadId}}/commission/preview",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "{{leadId}}",
+                    "commission",
+                    "preview"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Preview, nothing saved",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"leadId\":\"{{leadId}}\",\"sellerType\":\"AGENT\",\"feePct\":2,\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":45},{\"payeeRole\":\"PLATFORM\",\"pct\":55}],\"dealPrice\":7500000,\"resolvedFrom\":\"CITY\",\"rateCardId\":\"6a...\",\"rateCardVersion\":2}}"
+                }
+              ]
+            },
+            {
+              "name": "Pre-fill Lead Commission Terms",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/{{leadId}}/commission/prefill",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "{{leadId}}",
+                    "commission",
+                    "prefill"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Saved",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Terms pre-filled from the rate card\",\"data\":{\"id\":\"6a44...\",\"feePct\":2,\"dealPriceAtLock\":7500000,\"commissionVersion\":1,\"locked\":false,\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":50,\"payeeUserId\":\"6a...\",\"flatAmountPaise\":null},{\"payeeRole\":\"ADVISOR\",\"pct\":6.67,\"payeeUserId\":\"6a...\",\"flatAmountPaise\":5000000},{\"payeeRole\":\"PLATFORM\",\"pct\":43.33,\"payeeUserId\":null,\"flatAmountPaise\":null}],\"amounts\":{\"dealPrice\":7500000,\"feeAmount\":150000,\"sellerNet\":7350000,\"byPayee\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":50,\"amount\":75000,\"flatAmountPaise\":null},{\"payeeRole\":\"ADVISOR\",\"pct\":6.67,\"amount\":50000,\"flatAmountPaise\":5000000},{\"payeeRole\":\"PLATFORM\",\"pct\":43.33,\"amount\":65000,\"flatAmountPaise\":null}]}}}"
+                }
+              ]
+            },
+            {
+              "name": "Set Lead Commission Terms",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"feePct\": 2,\n  \"dealPrice\": 7500000,\n  \"lines\": [\n    {\n      \"payeeRole\": \"CLOSING_AGENT\",\n      \"pct\": 50\n    },\n    {\n      \"payeeRole\": \"ADVISOR\",\n      \"payeeUserId\": \"6a...\",\n      \"flatAmountPaise\": 5000000\n    }\n  ],\n  \"note\": \"Urgent sale, seller agreed a higher partner share\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/{{leadId}}/commission",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "{{leadId}}",
+                    "commission"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Saved, platform computed",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Terms saved\",\"data\":{\"id\":\"6a44...\",\"feePct\":2,\"dealPriceAtLock\":7500000,\"commissionVersion\":1,\"locked\":false,\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":50,\"payeeUserId\":\"6a...\",\"flatAmountPaise\":null},{\"payeeRole\":\"ADVISOR\",\"pct\":6.67,\"payeeUserId\":\"6a...\",\"flatAmountPaise\":5000000},{\"payeeRole\":\"PLATFORM\",\"pct\":43.33,\"payeeUserId\":null,\"flatAmountPaise\":null}],\"amounts\":{\"dealPrice\":7500000,\"feeAmount\":150000,\"sellerNet\":7350000,\"byPayee\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":50,\"amount\":75000,\"flatAmountPaise\":null},{\"payeeRole\":\"ADVISOR\",\"pct\":6.67,\"amount\":50000,\"flatAmountPaise\":5000000},{\"payeeRole\":\"PLATFORM\",\"pct\":43.33,\"amount\":65000,\"flatAmountPaise\":null}]}}}"
+                }
+              ]
+            },
+            {
+              "name": "Set Lead Terms - 400 advisor needs a rate",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"feePct\": 2,\n  \"lines\": [\n    {\n      \"payeeRole\": \"CLOSING_AGENT\",\n      \"pct\": 50\n    },\n    {\n      \"payeeRole\": \"ADVISOR\",\n      \"payeeUserId\": \"6a...\"\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/{{leadId}}/commission",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "{{leadId}}",
+                    "commission"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "400 - No rate anywhere",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"This advisor has no standard rate set and none was given for this deal. Set advisorStandardFeePaise on their profile, or pass flatAmountPaise/pct explicitly.\"}"
+                }
+              ]
+            },
+            {
+              "name": "Lock Lead Commission Terms",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/{{leadId}}/commission/lock",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "{{leadId}}",
+                    "commission",
+                    "lock"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Locked",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Terms locked\",\"data\":{\"id\":\"6a44...\",\"feePct\":2,\"dealPriceAtLock\":7500000,\"commissionVersion\":1,\"locked\":true,\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":50,\"payeeUserId\":\"6a...\",\"flatAmountPaise\":null},{\"payeeRole\":\"ADVISOR\",\"pct\":6.67,\"payeeUserId\":\"6a...\",\"flatAmountPaise\":5000000},{\"payeeRole\":\"PLATFORM\",\"pct\":43.33,\"payeeUserId\":null,\"flatAmountPaise\":null}],\"amounts\":{\"dealPrice\":7500000,\"feeAmount\":150000,\"sellerNet\":7350000,\"byPayee\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":50,\"amount\":75000,\"flatAmountPaise\":null},{\"payeeRole\":\"ADVISOR\",\"pct\":6.67,\"amount\":50000,\"flatAmountPaise\":5000000},{\"payeeRole\":\"PLATFORM\",\"pct\":43.33,\"amount\":65000,\"flatAmountPaise\":null}]}}}"
+                }
+              ]
+            },
+            {
+              "name": "Lead Commission Terms History",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/{{leadId}}/commission/history",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "{{leadId}}",
+                    "commission",
+                    "history"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - History",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":[{\"version\":1,\"setAt\":\"2026-10-04T12:00:00.000Z\",\"lines\":[{\"payeeRole\":\"CLOSING_AGENT\",\"pct\":50,\"payeeUserId\":\"6a...\",\"flatAmountPaise\":null},{\"payeeRole\":\"ADVISOR\",\"pct\":6.67,\"payeeUserId\":\"6a...\",\"flatAmountPaise\":5000000},{\"payeeRole\":\"PLATFORM\",\"pct\":43.33,\"payeeUserId\":null,\"flatAmountPaise\":null}]}]}"
                 }
               ]
             }

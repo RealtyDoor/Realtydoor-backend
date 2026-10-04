@@ -5328,6 +5328,247 @@ immediately, because there is nothing published to protect.
 
 ---
 
+
+## Commission (docs 3.12-3.17, B12.2)
+
+The money record is a **lead's negotiated commission lines**, not a rate
+card. Terms are agreed per deal and legitimately differ from any default —
+urgency, how hard the property is to move, what the seller wants. A rate
+card is only a **template** used to pre-fill those lines; editing or
+deleting a card never touches an already-locked lead.
+
+**Core rule (business decision, 2026-10-04): admin never enters the
+platform's cut.** Admin sets `LISTING_AGENT` / `CLOSING_AGENT` lines (as a
+`pct` of the fee) and, optionally, an `ADVISOR` line. The backend computes
+`PLATFORM`'s line itself, as **whatever's left over** — `100% − the lines
+admin actually set`. Any leftover above what it costs to run the deal is
+platform margin; it is never returned to the seller, and there is
+deliberately **no automatic check** that it covers Razorpay's real
+processing cost — admin is trusted to enter sensible percentages. Submitting
+a `PLATFORM` line yourself has no effect; it is silently dropped and
+recomputed.
+
+**`ADVISOR` is paid a flat amount, not a percentage** (business decision,
+2026-10-04) — reflecting that an advisor's compensation is for services
+rendered, unrelated to the deal's size. Each advisor has a standard rate
+(`User.advisorStandardFeePaise`), used automatically when they're added to a
+lead with no amount specified; admin can override the amount for a specific
+deal. The flat amount is converted to its equivalent % of *that lead's* fee
+for storage, so the line still participates in the normal 100%-of-fee
+bookkeeping — but the API always shows you the real flat figure, never a
+rounded-back-out approximation of it.
+
+Arithmetic:
+
+```
+fee        = dealPrice × feePct
+each line  = fee × line.pct        (ADVISOR's pct is derived FROM its flat amount, not the reverse)
+seller gets  dealPrice − fee       (derived — never stored as a pct, never affected by how the fee is split)
+```
+
+---
+
+### GET /api/admin/rate-cards
+
+Templates, filterable by `sellerType`, `city`, `propertyId`, `isActive`.
+
+**Auth:** ADMIN
+
+---
+
+### POST /api/admin/rate-cards
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "city": "Pune",
+  "sellerType": "AGENT",
+  "feePct": 2,
+  "payer": "SELLER",
+  "lines": [
+    { "payeeRole": "CLOSING_AGENT", "pct": 45 }
+  ]
+}
+```
+
+Provide a `propertyId` or a `city` (property-level cards take precedence
+over city-level ones for the same `sellerType`). **`lines` accepts only
+`LISTING_AGENT` / `CLOSING_AGENT`** — `ADVISOR` is deal-specific and not
+knowable at template-design time, and `PLATFORM` is computed, never
+submitted (same rule as lead terms, below).
+
+**Response `201`:** the card, including the computed `PLATFORM` line —
+`CLOSING_AGENT: 45` above comes back with `PLATFORM: 55` alongside it.
+
+**Errors:**
+- `400` a `payeeRole` other than `LISTING_AGENT`/`CLOSING_AGENT`
+- `400` lines sum to over 100% ("leaves nothing for the platform")
+- `400` neither `propertyId` nor `city` given
+
+---
+
+### PATCH /api/admin/rate-cards/:id · DELETE /api/admin/rate-cards/:id
+
+Update bumps `version` (so a lead that pre-filled from an older version keeps
+a record of which one). Delete deactivates (`isActive: false`) rather than
+removing the row — leads that pre-filled from it reference that history.
+
+**Auth:** ADMIN
+
+---
+
+### GET /api/admin/commission-overrides · POST ... · DELETE .../:id
+
+A **partner override** changes only the named partner's *total* share of
+the fee (`partnerSharePct`) — never the platform's cut as an input, never
+the seller's price. Scoped `ALL` (every property) or `SELECTED`
+(`propertyIds`). `validUntil` is optional (never expires if omitted).
+
+**Auth:** ADMIN
+
+Rescaling preserves the relative split between that partner's own
+`LISTING_AGENT`/`CLOSING_AGENT` lines. **An existing `ADVISOR` line on the
+lead is left untouched by an override** — the override is about the
+assigned partner's share, never a separate advisor's flat, deal-specific
+fee. Platform's line is recomputed as the residual afterward.
+
+---
+
+### GET /api/admin/leads/:id/commission/preview
+
+What the lead's terms **would be** if pre-filled right now — resolved
+through property card → city card → platform default, with any active
+partner override applied. Writes nothing.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "leadId": "...", "sellerType": "AGENT", "feePct": 2,
+  "lines": [{ "payeeRole": "CLOSING_AGENT", "pct": 45 }, { "payeeRole": "PLATFORM", "pct": 55 }],
+  "dealPrice": 7500000, "resolvedFrom": "CITY", "rateCardId": "...", "rateCardVersion": 3
+}
+```
+
+`resolvedFrom` is `PROPERTY`, `CITY`, `PLATFORM_DEFAULT`, or
+`PARTNER_OVERRIDE` when an override applied on top.
+
+---
+
+### POST /api/admin/leads/:id/commission/prefill
+
+Resolves the same preview and **saves** it as the lead's current (unlocked)
+terms in one call.
+
+**Auth:** ADMIN
+
+**Errors:** `400` already locked — revise with `PUT .../commission` instead.
+
+---
+
+### PUT /api/admin/leads/:id/commission
+
+Sets (or revises) a lead's negotiated lines directly.
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "feePct": 2,
+  "dealPrice": 7500000,
+  "lines": [
+    { "payeeRole": "CLOSING_AGENT", "pct": 50 },
+    { "payeeRole": "ADVISOR", "payeeUserId": "6a...", "flatAmountPaise": 5000000 }
+  ],
+  "note": "Urgent sale, seller agreed a higher partner share"
+}
+```
+
+| Field | Rule |
+| --- | --- |
+| `LISTING_AGENT` / `CLOSING_AGENT` | `pct` only. Defaults `payeeUserId` to the lead's assigned partner if omitted. |
+| `ADVISOR` | Requires `payeeUserId` (always a different person — never defaults). At most one of `pct` / `flatAmountPaise`. **Give neither to use that advisor's standard rate** (`User.advisorStandardFeePaise`); explicit `flatAmountPaise` always overrides it for this deal only. |
+| `PLATFORM` | **Never submit this.** It is computed and silently dropped if present. |
+
+**Before lock**, calling this again replaces the current version in place.
+**After lock**, it writes a new version (`commissionVersion + 1`); the old
+version's rows are kept as history, not edited.
+
+**Response `200`:** the lead's full terms —
+
+```json
+{
+  "id": "...", "feePct": 2, "dealPriceAtLock": 7500000, "commissionVersion": 1,
+  "locked": false,
+  "lines": [
+    { "payeeRole": "CLOSING_AGENT", "pct": 50, "payeeUserId": "6a...", "flatAmountPaise": null },
+    { "payeeRole": "ADVISOR", "pct": 6.67, "payeeUserId": "6a...", "flatAmountPaise": 5000000 },
+    { "payeeRole": "PLATFORM", "pct": 43.33, "payeeUserId": null, "flatAmountPaise": null }
+  ],
+  "amounts": {
+    "dealPrice": 7500000, "feeAmount": 150000, "sellerNet": 7350000,
+    "byPayee": [
+      { "payeeRole": "CLOSING_AGENT", "pct": 50, "amount": 75000, "flatAmountPaise": null },
+      { "payeeRole": "ADVISOR", "pct": 6.67, "amount": 50000, "flatAmountPaise": 5000000 },
+      { "payeeRole": "PLATFORM", "pct": 43.33, "amount": 65000, "flatAmountPaise": null }
+    ]
+  }
+}
+```
+
+`byPayee[].amount` for `ADVISOR` is always the exact flat figure
+(`flatAmountPaise / 100`), never a rounded recomputation from `pct` — read
+`flatAmountPaise` directly if you need the paise-exact value without a
+division.
+
+**Errors:**
+- `400` a role other than `LISTING_AGENT`/`CLOSING_AGENT`/`ADVISOR`, or a duplicate role
+- `400` `LISTING_AGENT`/`CLOSING_AGENT` missing `pct`, or given a `flatAmountPaise`
+- `400` `ADVISOR` missing `payeeUserId`, or given both `pct` and `flatAmountPaise`
+- `400` lines sum to over 100% of the fee
+- `400` an `ADVISOR` flat amount with no fee amount known yet (set `feePct` and a deal price first), or exceeding the fee itself
+- `400` the named advisor has no standard rate on file and none was given for this deal (`ADVISOR_RATE_REQUIRED`)
+- `400` a partner would be paid commission on a property they themselves own (3.17)
+
+---
+
+### POST /api/admin/leads/:id/commission/lock
+
+Freezes the current version. A locked lead's terms never change silently —
+`PUT .../commission` after lock writes a new version instead of editing.
+
+**Auth:** ADMIN
+
+**Errors:** `400` already locked · `400` no lines set yet.
+
+---
+
+### GET /api/admin/leads/:id/commission/history
+
+Every version ever written for this lead, newest first.
+
+**Auth:** ADMIN
+
+---
+
+### GET /api/partner/rate-cards
+
+The partner's own view: their active override (if any) and, per assigned
+lead, **only their own lines** — `partnerSharePct` is their total share,
+computed from rows whose `payeeUserId` is literally them. A separate
+`ADVISOR` line for someone else on the same lead is never folded into this
+figure. The platform's cut is not their business and is not returned.
+
+**Auth:** PARTNER
+
+---
 ### GET /api/admin/kyc
 
 Partners with `PENDING_REVIEW` KYC (paginated).

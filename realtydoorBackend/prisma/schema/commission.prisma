@@ -12,6 +12,17 @@
 //   seller gets  dealPrice - fee             (derived, never stored as a pct)
 // The partner's take is the sum of their lines, so the partner is paid FROM the
 // fee and is never an extra deduction on top of it.
+//
+// PLATFORM is never admin-entered (2026-10-04 decision). Admin sets
+// LISTING_AGENT / CLOSING_AGENT (and optionally ADVISOR), and the service
+// computes PLATFORM as whatever's left — any leftover between the partner
+// cuts and 100% of the fee is the platform's margin, not something that
+// reverts to the seller. There is deliberately no automatic check that this
+// covers Razorpay's actual processing cost (business decision, 2026-10-04):
+// admin is trusted to enter sensible numbers.
+//
+// ADVISOR is the one role usually paid a flat amount, not a %, per deal
+// (2026-10-04 decision) — see LeadCommissionLine.flatAmountPaise.
 
 enum CommissionPayeeRole {
   PLATFORM
@@ -126,10 +137,25 @@ model LeadCommissionLine {
   leadId    String              @db.ObjectId
   lead      Lead                @relation(fields: [leadId], references: [id], onDelete: Cascade)
   payeeRole CommissionPayeeRole
-  // Which partner this line pays, when known. Null for PLATFORM.
+  // Which partner this line pays. Null only for PLATFORM — every other role
+  // always has one (ADVISOR never defaults to the assigned partner; see
+  // commission.service.js::setLeadTerms).
   payeeUserId String?           @db.ObjectId
-  // % of the lead's fee. All lines of a version sum to exactly 100.
+  // % of the lead's fee. All lines of a version, INCLUDING the PLATFORM line,
+  // sum to exactly 100 — but PLATFORM's pct is computed by the service as
+  // whatever's left over, never admin-entered (business decision, 2026-10-04):
+  // the platform's cut is the residual after every other line is paid, not a
+  // percentage someone types in.
   pct       Float
+  // ADVISOR is normally paid a flat admin-set amount per deal, not a % of the
+  // fee (business decision, 2026-10-04) — reflects their standard rate
+  // (User.advisorStandardFeePaise) unless overridden for this deal. Stored
+  // alongside the equivalent `pct` (computed at the fee amount agreed for
+  // THIS lead) so the line still participates in the normal 100%-of-fee
+  // bookkeeping without rounding drift creeping into the displayed amount —
+  // reading `flatAmountPaise` back, where set, is always exact; `pct` is the
+  // derived figure. Null for every other role.
+  flatAmountPaise Int?
   // Why this differs from the template (urgency, hard-to-sell, seller ask).
   reason    String?
   version   Int                 @default(1)

@@ -12,34 +12,121 @@ const DEFAULT_PARTNER_SHARE_PCT = 50;
 
 const PAYEE_ROLES = ['PLATFORM', 'LISTING_AGENT', 'CLOSING_AGENT', 'ADVISOR'];
 const PARTNER_ROLES = ['LISTING_AGENT', 'CLOSING_AGENT', 'ADVISOR'];
+// LISTING_AGENT/CLOSING_AGENT default their payeeUserId to the lead's
+// assigned partner when not given explicitly. ADVISOR never does — an
+// advisor is always a different person, so it must always be named.
+const ASSIGNED_PARTNER_ROLES = ['LISTING_AGENT', 'CLOSING_AGENT'];
 
 // Float arithmetic can't hit 100 exactly (33.33 * 3), so compare on a cent of
 // a percent. Tighter than any real negotiation needs, loose enough that
 // thirds work.
 const PCT_EPSILON = 0.01;
 
-function assertLinesSumTo100(lines) {
-  if (!lines?.length) {
+// 2026-10-04 decision: PLATFORM's cut is never admin-entered. Admin sets the
+// other lines (LISTING_AGENT/CLOSING_AGENT by %, ADVISOR by a flat amount or
+// %), and this appends PLATFORM as whatever's left — including any leftover
+// above what the business's earlier written cost-recovery formula called the
+// "floor". That leftover is platform margin, not something that reverts to
+// the seller, and there is deliberately no automatic check that it covers
+// any real payment-gateway cost (admin is trusted to enter sensible numbers;
+// a prior version of this plan would have required Razorpay's exact fee
+// schedule to build that check — explicitly dropped).
+//
+// feeAmount (rupees) is required to convert an ADVISOR flat amount into its
+// equivalent % of the fee — pass null when it isn't known yet (e.g. a rate
+// card template, which never carries an ADVISOR line at all, or a lead whose
+// price isn't set yet) and a flat-amount ADVISOR line will be refused with a
+// clear reason instead of silently producing a wrong percentage.
+function resolveLinesWithPlatformResidual(inputLines, feeAmount) {
+  const submitted = (inputLines || []).filter((l) => l.payeeRole !== 'PLATFORM');
+  if (!submitted.length) {
     throw new ApiError(400, 'At least one commission line is required', { code: 'NO_COMMISSION_LINES' });
   }
-  for (const l of lines) {
-    if (!PAYEE_ROLES.includes(l.payeeRole)) {
+
+  const seen = new Set();
+  const resolved = [];
+  for (const l of submitted) {
+    if (!PARTNER_ROLES.includes(l.payeeRole)) {
       throw new ApiError(400, `Unknown payeeRole "${l.payeeRole}"`, { code: 'BAD_PAYEE_ROLE' });
     }
-    if (!(l.pct > 0)) {
-      throw new ApiError(400, `${l.payeeRole} must have a positive pct`, { code: 'BAD_PCT' });
-    }
-  }
-  const seen = new Set();
-  for (const l of lines) {
     if (seen.has(l.payeeRole)) {
       throw new ApiError(400, `Duplicate line for ${l.payeeRole}`, { code: 'DUPLICATE_PAYEE_ROLE' });
     }
     seen.add(l.payeeRole);
+
+    if (l.payeeRole === 'ADVISOR' && l.flatAmountPaise != null) {
+      if (!(l.flatAmountPaise > 0)) {
+        throw new ApiError(400, 'ADVISOR flatAmountPaise must be positive', { code: 'BAD_FLAT_AMOUNT' });
+      }
+      if (!feeAmount) {
+        throw new ApiError(400, 'A flat ADVISOR amount needs a known fee amount — set feePct and a deal price first', { code: 'FLAT_AMOUNT_NEEDS_FEE' });
+      }
+      if (l.flatAmountPaise > Math.round(feeAmount * 100)) {
+        throw new ApiError(400, "ADVISOR's flat amount cannot exceed the fee itself", { code: 'FLAT_AMOUNT_EXCEEDS_FEE' });
+      }
+      resolved.push({ ...l, pct: round2((l.flatAmountPaise / 100 / feeAmount) * 100), flatAmountPaise: l.flatAmountPaise });
+    } else {
+      if (!(l.pct > 0)) {
+        throw new ApiError(400, `${l.payeeRole} must have a positive pct`, { code: 'BAD_PCT' });
+      }
+      resolved.push({ ...l, flatAmountPaise: null });
+    }
   }
+
+  const nonPlatformSum = resolved.reduce((s, l) => s + l.pct, 0);
+  if (nonPlatformSum > 100 + PCT_EPSILON) {
+    throw new ApiError(400,
+      `These lines sum to ${nonPlatformSum.toFixed(2)}% of the fee, which leaves nothing for the platform. `
+      + 'Reduce one or more shares so the total is under 100%.',
+      { code: 'LINES_EXCEED_FEE', sum: nonPlatformSum });
+  }
+
+  resolved.push({
+    payeeRole: 'PLATFORM', pct: round2(Math.max(0, 100 - nonPlatformSum)),
+    flatAmountPaise: null, payeeUserId: null,
+  });
+  return resolved;
+}
+
+// Rate card templates are simpler: no ADVISOR (deal-specific, not knowable at
+// template-design time — see the schema comment), no flat amounts, nothing to
+// convert. Still appends a computed PLATFORM line for the same reason.
+function resolveRateCardLines(inputLines) {
+  const submitted = (inputLines || []).filter((l) => l.payeeRole !== 'PLATFORM');
+  if (!submitted.length) {
+    throw new ApiError(400, 'At least one commission line is required', { code: 'NO_COMMISSION_LINES' });
+  }
+  const seen = new Set();
+  for (const l of submitted) {
+    if (!ASSIGNED_PARTNER_ROLES.includes(l.payeeRole)) {
+      throw new ApiError(400,
+        `Rate card templates only support LISTING_AGENT/CLOSING_AGENT lines (got "${l.payeeRole}"). `
+        + 'ADVISOR is set per deal, not in a template, since the specific advisor is not known in advance.',
+        { code: 'BAD_PAYEE_ROLE' });
+    }
+    if (seen.has(l.payeeRole)) {
+      throw new ApiError(400, `Duplicate line for ${l.payeeRole}`, { code: 'DUPLICATE_PAYEE_ROLE' });
+    }
+    seen.add(l.payeeRole);
+    if (!(l.pct > 0)) throw new ApiError(400, `${l.payeeRole} must have a positive pct`, { code: 'BAD_PCT' });
+  }
+  const sum = submitted.reduce((s, l) => s + l.pct, 0);
+  if (sum > 100 + PCT_EPSILON) {
+    throw new ApiError(400,
+      `These lines sum to ${sum.toFixed(2)}% of the fee, which leaves nothing for the platform.`,
+      { code: 'LINES_EXCEED_FEE', sum });
+  }
+  return [...submitted, { payeeRole: 'PLATFORM', pct: round2(Math.max(0, 100 - sum)) }];
+}
+
+// Safety net at lock time only — the lines being locked were already
+// resolved by setLeadTerms (which always appends a correct PLATFORM residual),
+// so this should never actually fail. It exists to catch a future bug in that
+// resolution rather than to validate fresh admin input.
+function assertStoredLinesSumTo100(lines) {
   const sum = lines.reduce((s, l) => s + l.pct, 0);
   if (Math.abs(sum - 100) > PCT_EPSILON) {
-    throw new ApiError(400, `Commission lines must sum to 100% of the fee (got ${sum.toFixed(2)}%)`, {
+    throw new ApiError(400, `Stored commission lines sum to ${sum.toFixed(2)}%, not 100% — this is a bug, not an input error`, {
       code: 'LINES_MUST_SUM_TO_100', sum,
     });
   }
@@ -151,13 +238,20 @@ async function previewTermsForLead(leadId) {
   };
 }
 
-// Rescale the partner's slices to a new total share, leaving the platform's
-// cut proportionally adjusted so the whole thing still sums to 100.
+// Rescale the ASSIGNED PARTNER's slices to a new total share, leaving the
+// platform's cut adjusted so the whole thing still sums to 100.
+//
+// ADVISOR is deliberately excluded from the rescaling pool: a partner-share
+// override changes what the assigned listing/closing partner is paid, never
+// a separate advisor's flat, deal-specific fee. If an ADVISOR line is already
+// present it passes through unchanged, and the override's partnerSharePct
+// still applies only to LISTING_AGENT/CLOSING_AGENT.
 function applyPartnerShareOverride(lines, partnerSharePct) {
   if (!(partnerSharePct >= 0 && partnerSharePct <= 100)) {
     throw new ApiError(400, 'partnerSharePct must be between 0 and 100');
   }
-  const partnerLines = lines.filter((l) => PARTNER_ROLES.includes(l.payeeRole));
+  const advisorLine = lines.find((l) => l.payeeRole === 'ADVISOR');
+  const partnerLines = lines.filter((l) => ASSIGNED_PARTNER_ROLES.includes(l.payeeRole));
   const partnerTotal = partnerLines.reduce((s, l) => s + l.pct, 0);
 
   const out = [];
@@ -169,6 +263,7 @@ function applyPartnerShareOverride(lines, partnerSharePct) {
   } else if (partnerSharePct > 0) {
     out.push({ payeeRole: 'CLOSING_AGENT', pct: round2(partnerSharePct) });
   }
+  if (advisorLine) out.push(advisorLine);
 
   const platformPct = round2(100 - out.reduce((s, l) => s + l.pct, 0));
   if (platformPct > 0) out.unshift({ payeeRole: 'PLATFORM', pct: platformPct });
@@ -213,7 +308,11 @@ function computeAmounts(lead, lines) {
       payeeRole: l.payeeRole,
       payeeUserId: l.payeeUserId ?? null,
       pct: l.pct,
-      amount: round2((feeAmount * l.pct) / 100),
+      // ADVISOR's stored flatAmountPaise is the figure that was actually
+      // agreed — shown exactly, rather than recomputed from pct and risking
+      // a paise of rounding drift on display.
+      amount: l.flatAmountPaise != null ? round2(l.flatAmountPaise / 100) : round2((feeAmount * l.pct) / 100),
+      flatAmountPaise: l.flatAmountPaise ?? null,
     })),
   };
 }
@@ -221,6 +320,10 @@ function computeAmounts(lead, lines) {
 // Write (or rewrite) a lead's negotiated lines. Before lock this edits the
 // current version in place; after lock it writes a NEW version, since the old
 // one is the record of what was already agreed.
+//
+// `lines` never includes PLATFORM — resolveLinesWithPlatformResidual appends
+// it, computed, below. An ADVISOR line may omit both pct and flatAmountPaise;
+// when it does, their standard rate (User.advisorStandardFeePaise) is used.
 async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId, ip) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
@@ -231,30 +334,52 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
 
-  assertLinesSumTo100(lines);
   const effectiveFeePct = feePct ?? lead.feePct;
   if (!(effectiveFeePct > 0)) {
     throw new ApiError(400, 'feePct is required (no default could be resolved)', { code: 'FEE_PCT_REQUIRED' });
   }
   const effectivePrice = dealPrice ?? lead.dealPriceAtLock ?? lead.property?.price ?? null;
+  const feeAmount = effectivePrice != null ? round2((effectivePrice * effectiveFeePct) / 100) : null;
+
+  // A line that names neither pct nor flatAmountPaise is only legal for
+  // ADVISOR, and only when that advisor has a standard rate on file — filled
+  // in here, before the lines are resolved, so resolveLinesWithPlatformResidual
+  // never has to know about user profiles.
+  const linesWithAdvisorDefault = await Promise.all((lines || []).map(async (l) => {
+    if (l.payeeRole !== 'ADVISOR' || l.pct != null || l.flatAmountPaise != null) return l;
+    const advisor = await prisma.user.findUnique({ where: { id: l.payeeUserId }, select: { advisorStandardFeePaise: true, name: true } });
+    if (!advisor?.advisorStandardFeePaise) {
+      throw new ApiError(400,
+        `This advisor has no standard rate set and none was given for this deal. `
+        + 'Set advisorStandardFeePaise on their profile, or pass flatAmountPaise/pct explicitly.',
+        { code: 'ADVISOR_RATE_REQUIRED' });
+    }
+    return { ...l, flatAmountPaise: advisor.advisorStandardFeePaise };
+  }));
+
+  const resolvedLines = resolveLinesWithPlatformResidual(linesWithAdvisorDefault, feeAmount);
 
   const wasLocked = !!lead.commissionLockedAt;
   const version = wasLocked ? lead.commissionVersion + 1 : lead.commissionVersion;
 
   // Agent-never-earns-on-own-property (3.17): a partner must not be paid for
   // selling a listing they themselves own.
-  await assertPartnerNotOwnProperty(leadId, lines);
+  await assertPartnerNotOwnProperty(leadId, resolvedLines);
 
   await prisma.$transaction([
     // Only the current unlocked version is replaced; superseded versions are
     // left in place as history.
     ...(wasLocked ? [] : [prisma.leadCommissionLine.deleteMany({ where: { leadId, version } })]),
     prisma.leadCommissionLine.createMany({
-      data: lines.map((l) => ({
+      data: resolvedLines.map((l) => ({
         leadId,
         payeeRole: l.payeeRole,
-        payeeUserId: l.payeeUserId ?? (PARTNER_ROLES.includes(l.payeeRole) ? lead.assignedPartnerId : null),
+        // ASSIGNED_PARTNER_ROLES default to the lead's assigned partner.
+        // ADVISOR never defaults — it is always a different, explicitly
+        // named person, enforced by the validator requiring payeeUserId.
+        payeeUserId: l.payeeUserId ?? (ASSIGNED_PARTNER_ROLES.includes(l.payeeRole) ? lead.assignedPartnerId : null),
         pct: l.pct,
+        flatAmountPaise: l.flatAmountPaise ?? null,
         reason: l.reason ?? null,
         version,
       })),
@@ -265,7 +390,7 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
         feePct: effectiveFeePct,
         ...(effectivePrice != null && { dealPriceAtLock: effectivePrice }),
         commissionVersion: version,
-        ...derivedFields(effectiveFeePct, lines, effectivePrice),
+        ...derivedFields(effectiveFeePct, resolvedLines, effectivePrice),
       },
     }),
   ]);
@@ -274,7 +399,7 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
     adminId, action: wasLocked ? 'COMMISSION_REVISED' : 'COMMISSION_TERMS_SET',
     targetType: 'Lead', targetId: leadId,
     before: { version: lead.commissionVersion, feePct: lead.feePct },
-    after: { version, feePct: effectiveFeePct, lines, note: note ?? null },
+    after: { version, feePct: effectiveFeePct, lines: resolvedLines, note: note ?? null },
     ipAddress: ip,
   });
 
@@ -350,7 +475,7 @@ async function lockLeadTerms(leadId, adminId, ip) {
   if (!terms.lines.length) {
     throw new ApiError(400, 'Set the commission terms before locking', { code: 'NO_COMMISSION_LINES' });
   }
-  assertLinesSumTo100(terms.lines);
+  assertStoredLinesSumTo100(terms.lines);
 
   const locked = await prisma.lead.update({
     where: { id: leadId },
@@ -400,7 +525,7 @@ async function listRateCards(filters, skip, limit) {
 
 async function createRateCard(data, adminId, ip) {
   const { lines, ...card } = data;
-  assertLinesSumTo100(lines);
+  const resolvedLines = resolveRateCardLines(lines);
   if (!card.propertyId && !card.city) {
     throw new ApiError(400, 'A rate card needs either a propertyId or a city', { code: 'RATE_CARD_NEEDS_SCOPE' });
   }
@@ -409,14 +534,14 @@ async function createRateCard(data, adminId, ip) {
     data: {
       ...card,
       lastChangedByAdminId: adminId,
-      lines: { create: lines.map((l) => ({ payeeRole: l.payeeRole, pct: l.pct })) },
+      lines: { create: resolvedLines.map((l) => ({ payeeRole: l.payeeRole, pct: l.pct })) },
     },
     include: { lines: true },
   });
 
   await createAuditLog({
     adminId, action: 'RATE_CARD_CREATED', targetType: 'RateCard', targetId: created.id,
-    after: { sellerType: created.sellerType, feePct: created.feePct, lines }, ipAddress: ip,
+    after: { sellerType: created.sellerType, feePct: created.feePct, lines: resolvedLines }, ipAddress: ip,
   });
   return created;
 }
@@ -426,7 +551,7 @@ async function updateRateCard(id, data, adminId, ip) {
   if (!card) throw new ApiError(404, 'Rate card not found');
 
   const { lines, ...rest } = data;
-  if (lines) assertLinesSumTo100(lines);
+  const resolvedLines = lines ? resolveRateCardLines(lines) : null;
 
   // Version bumps on every content edit, so a lead can record which version
   // it was pre-filled from. Already-locked leads are unaffected — they read
@@ -437,7 +562,7 @@ async function updateRateCard(id, data, adminId, ip) {
       ...rest,
       version: card.version + 1,
       lastChangedByAdminId: adminId,
-      ...(lines ? { lines: { deleteMany: {}, create: lines.map((l) => ({ payeeRole: l.payeeRole, pct: l.pct })) } } : {}),
+      ...(resolvedLines ? { lines: { deleteMany: {}, create: resolvedLines.map((l) => ({ payeeRole: l.payeeRole, pct: l.pct })) } } : {}),
     },
     include: { lines: true },
   });
@@ -539,13 +664,16 @@ async function getPartnerRateCards(partnerId) {
   const lineRows = leads.length
     ? await prisma.leadCommissionLine.findMany({
         where: { leadId: { in: leads.map((l) => l.id) } },
-        select: { leadId: true, payeeRole: true, pct: true, version: true },
+        select: { leadId: true, payeeRole: true, payeeUserId: true, pct: true, version: true },
       })
     : [];
 
   const perLead = leads.map((l) => {
+    // Filtered by payeeUserId, not just "any partner-role line on this lead"
+    // — a lead can also carry a separate ADVISOR line for a different
+    // person, which must never be counted as this partner's own share.
     const mine = lineRows.filter((r) =>
-      r.leadId === l.id && r.version === l.commissionVersion && PARTNER_ROLES.includes(r.payeeRole)
+      r.leadId === l.id && r.version === l.commissionVersion && r.payeeUserId === partnerId
     );
     const partnerSharePct = mine.reduce((s, r) => s + r.pct, 0) || null;
     const feeAmount = l.dealPriceAtLock && l.feePct ? round2((l.dealPriceAtLock * l.feePct) / 100) : null;
@@ -567,6 +695,7 @@ module.exports = {
   listOverrides, createOverride, revokeOverride, getPartnerRateCards,
   resolveRateCard, resolveOverride, previewTermsForLead,
   getLeadTerms, setLeadTerms, prefillLeadTerms, lockLeadTerms, getLeadTermsHistory,
-  assertLinesSumTo100, applyPartnerShareOverride, computeAmounts, derivedFields,
-  PAYEE_ROLES, PARTNER_ROLES,
+  resolveLinesWithPlatformResidual, resolveRateCardLines, assertStoredLinesSumTo100,
+  applyPartnerShareOverride, computeAmounts, derivedFields,
+  PAYEE_ROLES, PARTNER_ROLES, ASSIGNED_PARTNER_ROLES,
 };
