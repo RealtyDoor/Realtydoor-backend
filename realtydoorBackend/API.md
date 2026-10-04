@@ -4010,11 +4010,19 @@ Admin logs a lead that arrived off-platform (phone call, walk-in, referral).
 
 `source` is one of `PHONE` · `WALK_IN` · `REFERRAL` · `EMAIL` · `OTHER`. **Either `propertyId` or `propertyInterest` is required** — `propertyId` for a live listing, `propertyInterest` as free text when the property isn't on the platform (in which case `propertyId` comes back `null`, so treat `property` as nullable in responses). `buyerEmail`, `budget`, `note` and `partnerId` are optional.
 
-Passing `partnerId` assigns the lead immediately (`status: ASSIGNED`) and notifies that partner; the partner must be KYC-verified, same gate as `/assign`. Without it the lead lands as `UNASSIGNED`. Repeat buyers are linked via `relatedLeadId` exactly as in `POST /api/leads/partner`. `buyerId` stays `null` — nobody authenticated. Writes an audit log.
+**Duplicate check, when `propertyId` is given:** refuses with `409` if this
+buyer phone already has an active (not `CLOSED`/`DROPPED`) lead on the same
+property — the same rule `POST /api/leads/partner` already enforced, now
+applied here too. Only runs when a real listing is named; a
+`propertyInterest`-only lead has nothing to deduplicate against.
+
+Passing `partnerId` assigns the lead immediately (`status: ASSIGNED`) and notifies that partner; the partner must be KYC-verified, same gate as `/assign`. **It also pre-fills the lead's commission terms** from the rate-card chain (`property → city → platform default`), the same pre-fill `POST .../commission/prefill` performs — terms are populated but stay unlocked and editable; admin still locks separately and deliberately. A pre-fill failure (most commonly 3.17 — the partner owns this listing) is logged and swallowed, never undoing the assignment that already succeeded; check `GET .../commission` afterward if you need to confirm it took.
+
+Without `partnerId` the lead lands as `UNASSIGNED`. Repeat buyers are linked via `relatedLeadId` exactly as in `POST /api/leads/partner`. `buyerId` stays `null` — nobody authenticated. Writes an audit log.
 
 **Response `201`:** the created lead.
 
-**Errors:** `400` neither `propertyId` nor `propertyInterest` given, or partner not found / not KYC verified · `404` property not found.
+**Errors:** `400` neither `propertyId` nor `propertyInterest` given, or partner not found / not KYC verified · `404` property not found · `409` an active lead already exists for this buyer and property (`DUPLICATE_LEAD`).
 
 ---
 
@@ -4063,6 +4071,12 @@ Assign lead to a KYC-verified partner.
 ```
 
 Also sends the buyer an in-app `LEAD_ASSIGNED` notification (`linkUrl: /user/inquiries/:leadId`) naming the partner by `companyName`/`name` only — the partner's phone is never included, in the message or anywhere else the buyer can see. The buyer's own lead detail (`GET /api/user/leads/:id`) likewise never exposes `assignedPartner.phone`; the frontend's "Contact agent" action should dial the shared number from `GET /api/config/public`'s `telecaller_phone` instead.
+
+**Also pre-fills commission terms**, same as `POST /api/admin/leads` with a
+`partnerId` above — populated and editable, not locked; a pre-fill failure
+is logged and swallowed rather than undoing the assignment. `POST
+/api/admin/leads/:id/auto-assign` and the batch form both call this function
+internally, so they get the same pre-fill for free.
 
 **Errors:** `404` lead not found · `400` partner not found or not KYC verified.
 

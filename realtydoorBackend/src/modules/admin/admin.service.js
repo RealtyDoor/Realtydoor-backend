@@ -109,6 +109,24 @@ async function createLead(data, adminId, ip) {
     if (!partner) throw new ApiError(400, 'Partner not found or not KYC verified');
   }
 
+  // docs-backend-gaps-handoff.md #4 — the partner self-sourced path (B3.2)
+  // already refuses a duplicate (same buyer phone, same property, still
+  // active); the admin path never had the same check. Only meaningful when
+  // a real listing is named — an admin-logged lead can legitimately be
+  // free-text-only (propertyInterest, no propertyId), and there is nothing
+  // to deduplicate a free-text interest against.
+  if (data.propertyId) {
+    const duplicate = await prisma.lead.findFirst({
+      where: { propertyId: data.propertyId, buyerPhone: data.buyerPhone, status: { notIn: ['CLOSED', 'DROPPED'] } },
+      select: { id: true, refCode: true, status: true },
+    });
+    if (duplicate) {
+      throw new ApiError(409, 'There is already an active lead for this buyer and property', {
+        code: 'DUPLICATE_LEAD', lead: duplicate,
+      });
+    }
+  }
+
   // Repeat buyer: link to this phone's most recent lead, same as the partner path.
   const earlier = await prisma.lead.findFirst({
     where: { buyerPhone: data.buyerPhone },
@@ -152,7 +170,27 @@ async function createLead(data, adminId, ip) {
     ipAddress: ip,
   });
 
+  // docs-backend-gaps-handoff.md #4 — "the lock fires on assignment, not on
+  // creation". Taken as: pre-fill (not lock) happens the moment a lead
+  // becomes ASSIGNED, here or in assignLead below, so terms are populated and
+  // ready by the time anyone looks — admin still locks deliberately,
+  // separately, since pre-filled terms are meant to stay editable until then.
+  // Only possible with a real property to resolve a rate card against; an
+  // admin-logged lead can be propertyInterest-only. A pre-fill failure must
+  // never undo an assignment that already succeeded.
+  if (partner && lead.propertyId) {
+    await prefillCommissionTermsSafely(lead.id, adminId, ip);
+  }
+
   return lead;
+}
+
+async function prefillCommissionTermsSafely(leadId, adminId, ip) {
+  try {
+    await require('../commission/commission.service').prefillLeadTerms(leadId, adminId, ip);
+  } catch (err) {
+    logger.error('[prefillCommissionTermsSafely] pre-fill failed', { leadId, error: err.message });
+  }
 }
 
 // 6.3 — admin vets a partner-added lead. Confirming moves it out of
@@ -357,6 +395,12 @@ async function assignLead(leadId, partnerId, adminId, ip) {
     });
   }
   sendLeadInquiryConfirmed(lead.buyerEmail, lead.property.title).catch(() => {});
+
+  // docs-backend-gaps-handoff.md #4 — pre-fill commission terms the moment a
+  // lead becomes ASSIGNED here, same as createLead's own assign-at-creation
+  // path above. Still only a pre-fill; admin locks separately and
+  // deliberately.
+  await prefillCommissionTermsSafely(leadId, adminId, ip);
 
   return updated;
 }
