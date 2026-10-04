@@ -2456,18 +2456,17 @@ hard-coded "platform average" multipliers.
         "otpRatePct": 125, "closeRatePct": 6.3
       },
       "responseDays": {
-        "note": "No first-contact timestamp exists; leadToAssignment measures assignment, not contact.",
+        "note": "No first-contact timestamp exists, so leadToAssignment measures assignment, not contact. visitBookingLeadDays is a booking horizon, not a response time. Time-to-schedule is not measurable: siteVisitScheduledAt is the booked slot, not when scheduling happened.",
         "leadToAssignment": 3.14,
         "leadToAssignmentSamples": 12,
         "leadToAssignmentDiscardedNegative": 4,
-        "assignmentToVisit": 2.38,
-        "assignmentToVisitSamples": 4,
-        "visitToOtp": null,
-        "visitToOtpSamples": 0,
-        "visitToOtpDiscardedNegative": 2,
-        "otpToEscrow": 0.00005,
+        "assignmentToOtp": 1,
+        "assignmentToOtpSamples": 5,
+        "otpToEscrow": 0,
         "otpToEscrowSamples": 1,
-        "otpToEscrowDiscardedNegative": 1
+        "otpToEscrowDiscardedNegative": 1,
+        "visitBookingLeadDays": 2.38,
+        "visitBookingLeadDaysSamples": 4
       }
     },
     "platform": { "funnel": { "...": "same shape" }, "responseDays": { "...": "same shape" } },
@@ -2497,6 +2496,24 @@ hard-coded "platform average" multipliers.
 - `leadToAssignment` measures time to **assignment**, not first contact. No
   first-contact timestamp exists anywhere in the schema; the stage is named and
   annotated for what it really measures rather than passed off as contact time.
+
+**The four stages and what they actually mean:**
+
+| Stage | Measures | Notes |
+| --- | --- | --- |
+| `leadToAssignment` | `assignedAt - createdAt` | How fast a lead reaches a partner. |
+| `assignmentToOtp` | `otpVerifiedAt - assignedAt` | Assignment through to a completed, OTP-verified site visit. The real throughput number. |
+| `otpToEscrow` | first `heldAt - otpVerifiedAt` | Verified visit to money in escrow. |
+| `visitBookingLeadDays` | `siteVisitScheduledAt - assignedAt` | **Not a response time** - how far ahead the appointment slot was booked. |
+
+**There is deliberately no "time to schedule" stage.** `siteVisitScheduledAt`
+stores the *booked appointment slot* and `POST /partner/leads/:id/schedule-visit`
+requires it to be in the future, so nothing records *when* scheduling happened.
+For the same reason, `otpVerifiedAt` is routinely earlier than
+`siteVisitScheduledAt` - the buyer's OTP can be verified any time before the
+slot - and that is normal, not a data fault. Do not compute a duration against
+`siteVisitScheduledAt` and treat a negative result as an error.
+
 - `ranking.percentile` is the share of partners this partner closed *more* than,
   and is `null` when `partnersCompared` is 1 or less, since a rank against
   nobody is meaningless. Hide the rank entirely in that case.

@@ -38,7 +38,9 @@ function median(values) {
   const v = values.filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
   if (!v.length) return null;
   const mid = Math.floor(v.length / 2);
-  return v.length % 2 ? v[mid] : round2((v[mid - 1] + v[mid]) / 2);
+  // Rounded on both branches — the odd-count path used to return the raw
+  // value and leak float noise like 1.0000000115740741 into the response.
+  return round2(v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2);
 }
 
 // A negative elapsed time is not a fast partner, it is out-of-order
@@ -270,8 +272,19 @@ async function getEscrowFloat() {
 // "lead to first contact", but no first-contact timestamp exists anywhere, so
 // assignment is used and labelled as such rather than passed off as contact.
 
+// siteVisitScheduledAt is the *booked appointment slot*, not the moment
+// scheduling happened — scheduleVisit's validator requires it to be in the
+// future. So otpVerifiedAt is routinely EARLIER than it (the buyer's OTP can
+// be verified any time before the slot), and an earlier version of this file
+// wrongly treated that as corrupt data and threw the records away. There is no
+// timestamp for when scheduling occurred, so "time to schedule" is not
+// measurable; the stages below only measure differences that are genuinely
+// expected to be non-negative.
+const DURATION_STAGES = ['leadToAssignment', 'assignmentToOtp', 'otpToEscrow', 'visitBookingLeadDays'];
+
 function leadDurations(leads) {
-  const out = { leadToAssignment: [], assignmentToVisit: [], visitToOtp: [], otpToEscrow: [] };
+  const out = {};
+  for (const k of DURATION_STAGES) out[k] = [];
   for (const l of leads) {
     const created = new Date(l.createdAt).getTime();
     const assigned = l.assignedAt ? new Date(l.assignedAt).getTime() : null;
@@ -281,9 +294,12 @@ function leadDurations(leads) {
     const heldAt = held ? new Date(held).getTime() : null;
 
     if (assigned) out.leadToAssignment.push((assigned - created) / DAY_MS);
-    if (assigned && scheduled) out.assignmentToVisit.push((scheduled - assigned) / DAY_MS);
-    if (scheduled && verified) out.visitToOtp.push((verified - scheduled) / DAY_MS);
+    // Assignment through to a completed, OTP-verified visit. This is the real
+    // partner throughput number, and it replaces the slot-relative stage.
+    if (assigned && verified) out.assignmentToOtp.push((verified - assigned) / DAY_MS);
     if (verified && heldAt) out.otpToEscrow.push((heldAt - verified) / DAY_MS);
+    // Not a response time: how far ahead the appointment slot was booked.
+    if (assigned && scheduled) out.visitBookingLeadDays.push((scheduled - assigned) / DAY_MS);
   }
   return out;
 }
@@ -334,9 +350,9 @@ async function getPlatformBenchmarks(period = 'ALL') {
 // thin or dirty sample can't masquerade as a confident number.
 function buildResponseDays(d) {
   const out = {
-    note: 'No first-contact timestamp exists; leadToAssignment measures assignment, not contact.',
+    note: 'No first-contact timestamp exists, so leadToAssignment measures assignment, not contact. visitBookingLeadDays is a booking horizon, not a response time. Time-to-schedule is not measurable: siteVisitScheduledAt is the booked slot, not when scheduling happened.',
   };
-  for (const key of ['leadToAssignment', 'assignmentToVisit', 'visitToOtp', 'otpToEscrow']) {
+  for (const key of DURATION_STAGES) {
     const r = medianOfPositive(d[key]);
     out[key] = r.median;
     out[key + 'Samples'] = r.samples;
@@ -355,7 +371,7 @@ function detectAnomalies(fn, d) {
       detail: `${fn.otpsVerified} OTPs verified but only ${fn.visitsScheduled} visits scheduled — some leads are OTP-verified with no siteVisitScheduledAt`,
     });
   }
-  const negatives = ['leadToAssignment', 'assignmentToVisit', 'visitToOtp', 'otpToEscrow']
+  const negatives = DURATION_STAGES
     .map((k) => [k, d[k].filter((n) => n < 0).length]).filter(([, c]) => c > 0);
   for (const [stage, count] of negatives) {
     out.push({ key: 'NEGATIVE_DURATION', detail: `${count} lead(s) have out-of-order timestamps for ${stage}` });
