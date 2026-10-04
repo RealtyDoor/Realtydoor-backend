@@ -4568,6 +4568,179 @@ queryable (`{ isMortgaged: { isSet: false } }`) and avoids a backfill.
 
 Treat `null` as "unknown, ask" rather than as "no" in the owner-listing review.
 
+## Listing location (docs 4.6 / 4.7)
+
+A listing carries **three** separate coordinate pairs, deliberately not merged:
+
+| Field pair | What it is |
+| --- | --- |
+| `latitude` / `longitude` | **Canonical.** What gets displayed and searched on. |
+| `mapLinkLatitude` / `mapLinkLongitude` | Coordinates read out of the partner's pasted `mapLink`. |
+| `partnerPinLatitude` / `partnerPinLongitude` | The pin the partner dropped themselves. |
+
+They are kept apart so the location check can show *where they disagree*
+rather than one silently overwriting another. The partner supplies `mapLink`
+and `partnerPin*` on create/update; only an admin sets the canonical pair.
+
+**No geocoding provider is involved.** Coordinates are extracted from a map URL
+by string parsing ([src/lib/mapLink.js](src/lib/mapLink.js)) — no network call,
+no API key, nothing that can fail at request time. Recognised forms, most
+specific first:
+
+| Form | Example |
+| --- | --- |
+| `!3d…!4d…` (resolved place) | `.../place/X/@18.51,73.84,17z/data=!3m1!4b1!4m5!3d18.5204!4d73.8567` |
+| `?q=` / `?query=` / `?ll=` / `?destination=` / `?center=` | `https://maps.google.com/?q=18.5204,73.8567` |
+| `/@lat,lng,zoom` (view centre) | `https://www.google.com/maps/@18.5204,73.8567,17z` |
+| a bare pair | `18.5204, 73.8567` |
+
+The `!3d!4d` pair beats the `/@` centre when both are present: the first is the
+actual place, the second is only where the camera was pointing.
+
+**Shortened links cannot be parsed.** `maps.app.goo.gl`, `goo.gl`, `bit.ly` and
+similar hold no coordinates until the redirect is followed, which would mean a
+network call. They are detected by host and rejected with an actionable
+message rather than a vague parse failure. `(0, 0)` and out-of-range values are
+also rejected — in practice `(0, 0)` means "nothing was set", not a point in
+the Gulf of Guinea.
+
+**Deriving coordinates from the street address is a different problem** and does
+need a third-party provider, which has not been chosen. Every location-check
+response says so explicitly under `addressGeocoding` rather than leaving it a
+silent gap. The `LocationSource` enum reserves `GEOCODE_PROVIDER` for that day;
+nothing writes it today.
+
+---
+
+### GET /api/admin/properties/:id/location-check
+
+Every coordinate source for one listing, how far apart they are, and what is
+wrong. Read-only, moves nothing.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "propertyId": "6a44a67d...",
+    "title": "3BHK in Palm Grove",
+    "publishStatus": "APPROVED",
+    "address": { "address": "Tower B, Palm Grove", "locality": "Kothrud", "city": "Pune", "state": "Maharashtra", "pincode": "411038" },
+    "canonical": { "latitude": 18.5204, "longitude": 73.8567, "source": "MAP_LINK", "verifiedAt": "2026-10-04T12:30:00.000Z", "verifiedByAdminId": "6a44a679..." },
+    "mapLink": { "url": "https://www.google.com/maps/@18.5204,73.8567,17z", "latitude": 18.5204, "longitude": 73.8567, "parseReason": null, "parsePattern": "at-centre" },
+    "partnerPin": { "latitude": 18.5304, "longitude": 73.8567 },
+    "distances": { "partnerPinToMapLink": 1112, "canonicalToPartnerPin": 1112, "canonicalToMapLink": 0 },
+    "toleranceMetres": 300,
+    "withinTolerance": false,
+    "issues": [
+      { "key": "PIN_MAP_MISMATCH", "detail": "The partner's pin is 1112 m from the map link, over the 300 m tolerance." }
+    ],
+    "addressGeocoding": { "available": false, "reason": "Address-to-coordinates geocoding needs a third-party provider, which has not been selected. ..." }
+  }
+}
+```
+
+`distances` are great-circle metres, rounded. A distance is `null` when either
+endpoint is missing, so "they are far apart" stays distinguishable from "there
+is nothing to compare".
+
+**`withinTolerance` is `null`, not `true`, when no comparison is possible** —
+no map link, an unparseable one, or no partner pin. "No disagreement found" and
+"could not check" are different answers and the UI should not render them the
+same way.
+
+`toleranceMetres` comes from the admin config key
+`listing_pin_tolerance_metres` and defaults to **300**. It is returned on every
+response so nobody has to guess which threshold produced a flag. The default is
+a starting point, not a rule from the business.
+
+`mapLink.parseReason` is non-null only when a link exists but yielded no
+coordinates, and it carries the actionable text ("Open the link and paste the
+full URL from the address bar").
+
+**`issues` keys:**
+
+| Key | Means |
+| --- | --- |
+| `NO_COORDINATES` | No canonical pair; the listing cannot be placed on a map. |
+| `NO_MAP_LINK` | No map link was provided. |
+| `UNPARSEABLE_MAP_LINK` | A link exists but no coordinates could be read from it; `detail` says why. |
+| `NO_PARTNER_PIN` | Nothing to cross-check the link against. |
+| `PIN_MAP_MISMATCH` | Pin and link are further apart than the tolerance. |
+| `UNVERIFIED` | No admin has confirmed this location yet. |
+
+**Errors:** `404` property not found.
+
+---
+
+### PATCH /api/admin/properties/:id/location
+
+Set the canonical location. Audited.
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "reason": "Map link pointed at the wrong tower; corrected by hand",
+  "mapLink": "https://www.google.com/maps/@18.5204,73.8567,17z",
+  "latitude": 18.5250,
+  "longitude": 73.8600
+}
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `reason` | **yes** | 5–500 chars. Written into every resulting `PropertyEditLog` row and sent to the partner verbatim. |
+| `mapLink` | one of these | Re-parsed on write, so the stored coordinates always match the stored link. Pass `null` to clear it. |
+| `latitude` + `longitude` | one of these | Must be given **together** — a lone latitude would be paired with the old longitude. |
+
+**Which pair wins:**
+
+1. Explicit `latitude`/`longitude` → canonical, `locationSource: ADMIN_OVERRIDE`.
+2. Otherwise, if `mapLink` parsed → canonical, `locationSource: MAP_LINK`.
+3. Otherwise the canonical pair is left alone.
+
+**An unparseable or cleared `mapLink` never clobbers good canonical
+coordinates.** Pasting a shortened link stores the link, records the parse
+failure, and leaves the existing location intact.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Location updated (3 field(s))",
+  "data": {
+    "location": { "...": "the full location-check payload, freshly computed" },
+    "changedFields": ["latitude", "longitude", "locationSource"],
+    "confirmedOnly": false
+  }
+}
+```
+
+Every call stamps `locationVerifiedAt` / `locationVerifiedByAdminId`, which
+clears the `UNVERIFIED` issue.
+
+**Confirming a correct location is not an edit.** When nothing actually moves,
+`confirmedOnly` is `true`, `changedFields` is empty, the message is "Location
+confirmed; nothing changed", **no `PropertyEditLog` rows are written** and the
+partner is not notified. The verification stamp is excluded from the diff
+because it changes on every call by definition.
+
+**Errors:**
+- `400` `reason` shorter than 5 chars
+- `400` only one of `latitude`/`longitude` given
+- `400` neither `mapLink` nor a coordinate pair given
+- `404` property not found
+
+---
+
 ---
 
 ---

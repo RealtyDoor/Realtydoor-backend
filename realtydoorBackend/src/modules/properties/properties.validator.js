@@ -31,6 +31,14 @@ const createPropertySchema = z.object({
   latitude: z.number().optional(),
   longitude: z.number().optional(),
   nearbyLandmarks: z.array(z.string()).optional(),
+
+  // 4.6 — the partner's own location evidence. mapLink is parsed into
+  // mapLinkLatitude/Longitude on write (lib/mapLink.js, no geocoding service
+  // involved); partnerPin* is the pin they dropped, kept separate so admin
+  // can cross-check the two rather than one overwriting the other.
+  mapLink: z.string().max(2000).optional(),
+  partnerPinLatitude: z.number().min(-90).max(90).optional(),
+  partnerPinLongitude: z.number().min(-180).max(180).optional(),
   reraNumber: z.string().optional(),
   bankApprovals: z.array(z.string()).optional(),
 

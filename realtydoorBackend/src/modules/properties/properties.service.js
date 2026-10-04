@@ -373,8 +373,12 @@ async function createProperty(data, partnerId) {
   if (!data.facing) data.facing = 'East';
   if (!data.furnishing) data.furnishing = 'Unfurnished';
 
+  // 4.6 — a stored mapLink without its parsed coordinates would describe
+  // nothing, so they are derived wherever mapLink is written.
+  const { withMapLinkCoords } = require('../listings/location.service');
+
   const property = await prisma.property.create({
-    data: { ...data, slug, partnerId, publishStatus: 'PENDING_APPROVAL' },
+    data: { ...withMapLinkCoords(data), slug, partnerId, publishStatus: 'PENDING_APPROVAL' },
   });
 
   // 4.4 — submission is the moment a duplicate becomes detectable, so the

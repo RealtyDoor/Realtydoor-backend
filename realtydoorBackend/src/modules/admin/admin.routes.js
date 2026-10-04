@@ -11,6 +11,7 @@ const commissionCtrl = require('../commission/commission.controller');
 const analyticsCtrl = require('../analytics/analytics.controller');
 const listingCtrl = require('../listings/listings.admin.controller');
 const integrityCtrl = require('../listings/integrity.controller');
+const locationCtrl = require('../listings/location.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
@@ -51,6 +52,9 @@ router.get('/properties/conflicts',                  integrityCtrl.listConflicts
 router.patch('/properties/conflicts/:id/resolve',    integrityCtrl.resolveConflict);
 router.post('/properties/:id/mandates',              integrityCtrl.createMandate);
 router.post('/properties/:id/detect-conflicts',      integrityCtrl.detectConflicts);
+// 4.6 / 4.7 — location check and admin location edit.
+router.get('/properties/:id/location-check',          locationCtrl.locationCheck);
+router.patch('/properties/:id/location',              locationCtrl.updateLocation);
 router.get('/properties/:id',          ctrl.getPropertyById);
 router.patch('/properties/:id/approve', ctrl.approveProperty);
 router.patch('/properties/:id/reject',  ctrl.rejectProperty);

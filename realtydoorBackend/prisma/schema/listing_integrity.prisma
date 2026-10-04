@@ -111,3 +111,19 @@ enum LoanNocStatus {
   RECEIVED
   REJECTED
 }
+
+// 4.7 — where a listing's canonical latitude/longitude came from. Recorded so
+// the location-check screen can say whether a human has actually looked at it,
+// rather than treating an unreviewed partner pin as confirmed.
+enum LocationSource {
+  // Read out of the partner's pasted map link.
+  MAP_LINK
+  // The pin the partner dropped themselves.
+  PARTNER_PIN
+  // An admin typed the coordinates, overriding both of the above.
+  ADMIN_OVERRIDE
+  // Reserved for a real address-to-coordinates geocoding provider. Nothing
+  // writes this yet: no provider has been chosen, and the backend does not
+  // invent one. See API.md under the location check.
+  GEOCODE_PROVIDER
+}

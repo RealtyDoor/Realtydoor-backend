@@ -56,9 +56,34 @@ model Property {
   city            String
   state           String
   pincode         String
+  // latitude/longitude are the CANONICAL coordinates — what gets displayed and
+  // searched on. The two pairs below are the evidence they were decided from,
+  // kept separately so 4.6's location check can show where they disagree
+  // instead of silently overwriting one with the other.
   latitude        Float?
   longitude       Float?
   nearbyLandmarks String[]
+
+  // 4.6 — a pasted map URL plus whatever coordinates could be read out of it.
+  // Extraction is pure string parsing (see lib/mapLink.js), so it needs no
+  // third-party geocoding service. A shortened maps.app.goo.gl link cannot be
+  // parsed without following the redirect, so those store the link with null
+  // coordinates rather than a guess.
+  mapLink          String?
+  mapLinkLatitude  Float?
+  mapLinkLongitude Float?
+
+  // 4.6 — where the partner actually dropped their pin, which is a different
+  // claim from the map link and is the thing worth cross-checking.
+  partnerPinLatitude  Float?
+  partnerPinLongitude Float?
+
+  // 4.7 — who last decided the canonical coordinates, and on what basis.
+  // The reason text itself lives in PropertyEditLog, where every other
+  // field-level override is already recorded.
+  locationSource            LocationSource?
+  locationVerifiedAt        DateTime?
+  locationVerifiedByAdminId String?         @db.ObjectId
 
   // Trust & verification
   isVerified    Boolean   @default(false)

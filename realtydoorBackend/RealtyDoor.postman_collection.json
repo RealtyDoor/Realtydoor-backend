@@ -5292,6 +5292,344 @@
           ]
         },
         {
+          "name": "Location Check",
+          "item": [
+            {
+              "name": "Location Check (4.6)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/location-check",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "location-check"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Pin/map mismatch flagged",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"propertyId\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"publishStatus\":\"APPROVED\",\"address\":{\"address\":\"Tower B, Palm Grove\",\"locality\":\"Kothrud\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"pincode\":\"411038\"},\"canonical\":{\"latitude\":18.5204,\"longitude\":73.8567,\"source\":\"MAP_LINK\",\"verifiedAt\":\"2026-10-04T12:30:00.000Z\",\"verifiedByAdminId\":\"6a44a679...\"},\"mapLink\":{\"url\":\"https://www.google.com/maps/@18.5204,73.8567,17z\",\"latitude\":18.5204,\"longitude\":73.8567,\"parseReason\":null,\"parsePattern\":\"at-centre\"},\"partnerPin\":{\"latitude\":18.5304,\"longitude\":73.8567},\"distances\":{\"partnerPinToMapLink\":1112,\"canonicalToPartnerPin\":1112,\"canonicalToMapLink\":0},\"toleranceMetres\":300,\"withinTolerance\":false,\"issues\":[{\"key\":\"PIN_MAP_MISMATCH\",\"detail\":\"The partner's pin is 1112 m from the map link, over the 300 m tolerance.\"}],\"addressGeocoding\":{\"available\":false,\"reason\":\"Address-to-coordinates geocoding needs a third-party provider, which has not been selected. Coordinates here come from the pasted map link and the partner pin only.\"}}}"
+                }
+              ]
+            },
+            {
+              "name": "Location Check - nothing to compare",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/location-check",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "location-check"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - withinTolerance null",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"propertyId\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"publishStatus\":\"APPROVED\",\"address\":{\"address\":\"Tower B, Palm Grove\",\"locality\":\"Kothrud\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"pincode\":\"411038\"},\"canonical\":{\"latitude\":null,\"longitude\":null,\"source\":null,\"verifiedAt\":null,\"verifiedByAdminId\":null},\"mapLink\":{\"url\":null,\"latitude\":null,\"longitude\":null,\"parseReason\":null,\"parsePattern\":null},\"partnerPin\":{\"latitude\":null,\"longitude\":null},\"distances\":{\"partnerPinToMapLink\":null,\"canonicalToPartnerPin\":null,\"canonicalToMapLink\":null},\"toleranceMetres\":300,\"withinTolerance\":null,\"issues\":[{\"key\":\"NO_COORDINATES\",\"detail\":\"This listing has no latitude/longitude at all, so it cannot be placed on a map.\"},{\"key\":\"NO_MAP_LINK\",\"detail\":\"No map link was provided for this listing.\"},{\"key\":\"NO_PARTNER_PIN\",\"detail\":\"The partner did not drop a pin, so there is nothing to cross-check the map link against.\"},{\"key\":\"UNVERIFIED\",\"detail\":\"No admin has confirmed this location yet.\"}],\"addressGeocoding\":{\"available\":false,\"reason\":\"Address-to-coordinates geocoding needs a third-party provider, which has not been selected. Coordinates here come from the pasted map link and the partner pin only.\"}}}"
+                }
+              ]
+            },
+            {
+              "name": "Location Check - shortened link",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/location-check",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "location-check"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Unparseable link, canonical intact",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"propertyId\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"publishStatus\":\"APPROVED\",\"address\":{\"address\":\"Tower B, Palm Grove\",\"locality\":\"Kothrud\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"pincode\":\"411038\"},\"canonical\":{\"latitude\":18.5204,\"longitude\":73.8567,\"source\":\"MAP_LINK\",\"verifiedAt\":\"2026-10-04T12:30:00.000Z\",\"verifiedByAdminId\":\"6a44a679...\"},\"mapLink\":{\"url\":\"https://maps.app.goo.gl/AbCdEf123\",\"latitude\":null,\"longitude\":null,\"parseReason\":\"Shortened map links do not contain coordinates. Open the link and paste the full URL from the address bar.\",\"parsePattern\":null},\"partnerPin\":{\"latitude\":18.5304,\"longitude\":73.8567},\"distances\":{\"partnerPinToMapLink\":null,\"canonicalToPartnerPin\":1112,\"canonicalToMapLink\":null},\"toleranceMetres\":300,\"withinTolerance\":null,\"issues\":[{\"key\":\"UNPARSEABLE_MAP_LINK\",\"detail\":\"Shortened map links do not contain coordinates. Open the link and paste the full URL from the address bar.\"}],\"addressGeocoding\":{\"available\":false,\"reason\":\"Address-to-coordinates geocoding needs a third-party provider, which has not been selected. Coordinates here come from the pasted map link and the partner pin only.\"}}}"
+                }
+              ]
+            },
+            {
+              "name": "Set Location from Map Link (4.7)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Verified against the society gate on street view\",\n  \"mapLink\": \"https://www.google.com/maps/@18.5204,73.8567,17z\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/location",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "location"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Set from link",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Location updated (3 field(s))\",\"data\":{\"location\":{\"propertyId\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"publishStatus\":\"APPROVED\",\"address\":{\"address\":\"Tower B, Palm Grove\",\"locality\":\"Kothrud\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"pincode\":\"411038\"},\"canonical\":{\"latitude\":18.5204,\"longitude\":73.8567,\"source\":\"MAP_LINK\",\"verifiedAt\":\"2026-10-04T12:30:00.000Z\",\"verifiedByAdminId\":\"6a44a679...\"},\"mapLink\":{\"url\":\"https://www.google.com/maps/@18.5204,73.8567,17z\",\"latitude\":18.5204,\"longitude\":73.8567,\"parseReason\":null,\"parsePattern\":\"at-centre\"},\"partnerPin\":{\"latitude\":18.5304,\"longitude\":73.8567},\"distances\":{\"partnerPinToMapLink\":1112,\"canonicalToPartnerPin\":1112,\"canonicalToMapLink\":0},\"toleranceMetres\":300,\"withinTolerance\":false,\"issues\":[{\"key\":\"PIN_MAP_MISMATCH\",\"detail\":\"The partner's pin is 1112 m from the map link, over the 300 m tolerance.\"}],\"addressGeocoding\":{\"available\":false,\"reason\":\"Address-to-coordinates geocoding needs a third-party provider, which has not been selected. Coordinates here come from the pasted map link and the partner pin only.\"}},\"changedFields\":[\"latitude\",\"longitude\",\"locationSource\"],\"confirmedOnly\":false}}"
+                }
+              ]
+            },
+            {
+              "name": "Override Coordinates by Hand (4.7)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Map link pointed at the wrong tower; corrected by hand\",\n  \"latitude\": 18.525,\n  \"longitude\": 73.86\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/location",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "location"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Admin override",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Location updated (3 field(s))\",\"data\":{\"location\":{\"propertyId\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"publishStatus\":\"APPROVED\",\"address\":{\"address\":\"Tower B, Palm Grove\",\"locality\":\"Kothrud\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"pincode\":\"411038\"},\"canonical\":{\"latitude\":18.5204,\"longitude\":73.8567,\"source\":\"MAP_LINK\",\"verifiedAt\":\"2026-10-04T12:30:00.000Z\",\"verifiedByAdminId\":\"6a44a679...\"},\"mapLink\":{\"url\":\"https://www.google.com/maps/@18.5204,73.8567,17z\",\"latitude\":18.5204,\"longitude\":73.8567,\"parseReason\":null,\"parsePattern\":\"at-centre\"},\"partnerPin\":{\"latitude\":18.5304,\"longitude\":73.8567},\"distances\":{\"partnerPinToMapLink\":1112,\"canonicalToPartnerPin\":1112,\"canonicalToMapLink\":0},\"toleranceMetres\":300,\"withinTolerance\":false,\"issues\":[{\"key\":\"PIN_MAP_MISMATCH\",\"detail\":\"The partner's pin is 1112 m from the map link, over the 300 m tolerance.\"}],\"addressGeocoding\":{\"available\":false,\"reason\":\"Address-to-coordinates geocoding needs a third-party provider, which has not been selected. Coordinates here come from the pasted map link and the partner pin only.\"}},\"changedFields\":[\"latitude\",\"longitude\",\"locationSource\"],\"confirmedOnly\":false}}"
+                }
+              ]
+            },
+            {
+              "name": "Confirm Location, no change (4.7)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Second look, still correct\",\n  \"mapLink\": \"https://www.google.com/maps/@18.5204,73.8567,17z\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/location",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "location"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Confirmed only, no edit-log rows",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Location confirmed; nothing changed\",\"data\":{\"location\":{\"propertyId\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"publishStatus\":\"APPROVED\",\"address\":{\"address\":\"Tower B, Palm Grove\",\"locality\":\"Kothrud\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"pincode\":\"411038\"},\"canonical\":{\"latitude\":18.5204,\"longitude\":73.8567,\"source\":\"MAP_LINK\",\"verifiedAt\":\"2026-10-04T12:30:00.000Z\",\"verifiedByAdminId\":\"6a44a679...\"},\"mapLink\":{\"url\":\"https://www.google.com/maps/@18.5204,73.8567,17z\",\"latitude\":18.5204,\"longitude\":73.8567,\"parseReason\":null,\"parsePattern\":\"at-centre\"},\"partnerPin\":{\"latitude\":18.5304,\"longitude\":73.8567},\"distances\":{\"partnerPinToMapLink\":1112,\"canonicalToPartnerPin\":1112,\"canonicalToMapLink\":0},\"toleranceMetres\":300,\"withinTolerance\":false,\"issues\":[{\"key\":\"PIN_MAP_MISMATCH\",\"detail\":\"The partner's pin is 1112 m from the map link, over the 300 m tolerance.\"}],\"addressGeocoding\":{\"available\":false,\"reason\":\"Address-to-coordinates geocoding needs a third-party provider, which has not been selected. Coordinates here come from the pasted map link and the partner pin only.\"}},\"changedFields\":[],\"confirmedOnly\":true}}"
+                }
+              ]
+            },
+            {
+              "name": "Clear Map Link (4.7)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Removing the unusable link\",\n  \"mapLink\": null\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/location",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "location"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Link cleared",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Location updated (1 field(s))\",\"data\":{\"location\":{\"propertyId\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"publishStatus\":\"APPROVED\",\"address\":{\"address\":\"Tower B, Palm Grove\",\"locality\":\"Kothrud\",\"city\":\"Pune\",\"state\":\"Maharashtra\",\"pincode\":\"411038\"},\"canonical\":{\"latitude\":null,\"longitude\":null,\"source\":null,\"verifiedAt\":null,\"verifiedByAdminId\":null},\"mapLink\":{\"url\":null,\"latitude\":null,\"longitude\":null,\"parseReason\":null,\"parsePattern\":null},\"partnerPin\":{\"latitude\":null,\"longitude\":null},\"distances\":{\"partnerPinToMapLink\":null,\"canonicalToPartnerPin\":null,\"canonicalToMapLink\":null},\"toleranceMetres\":300,\"withinTolerance\":null,\"issues\":[{\"key\":\"NO_COORDINATES\",\"detail\":\"This listing has no latitude/longitude at all, so it cannot be placed on a map.\"},{\"key\":\"NO_MAP_LINK\",\"detail\":\"No map link was provided for this listing.\"},{\"key\":\"NO_PARTNER_PIN\",\"detail\":\"The partner did not drop a pin, so there is nothing to cross-check the map link against.\"},{\"key\":\"UNVERIFIED\",\"detail\":\"No admin has confirmed this location yet.\"}],\"addressGeocoding\":{\"available\":false,\"reason\":\"Address-to-coordinates geocoding needs a third-party provider, which has not been selected. Coordinates here come from the pasted map link and the partner pin only.\"}},\"changedFields\":[\"mapLink\"],\"confirmedOnly\":false}}"
+                }
+              ]
+            },
+            {
+              "name": "Set Location - 400 lone coordinate",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Trying to move it\",\n  \"latitude\": 18.525\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/location",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "location"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "400 - Validation",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"latitude and longitude must be provided together\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "KYC",
           "item": [
             {

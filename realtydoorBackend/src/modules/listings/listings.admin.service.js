@@ -4,6 +4,7 @@ const { createNotification } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const { cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
+const { withMapLinkCoords } = require('./location.service');
 
 // Fields a partner must never set through a change request, mirroring the
 // FORBIDDEN list in properties.service.js. Re-applied here at approval time
@@ -161,8 +162,13 @@ async function approveChangeRequest(id, { adminId, adminName, note, force }, ip)
       + 'Re-check the diff and resend with force=true to apply it anyway.');
   }
 
-  const data = {};
+  let data = {};
   for (const [field, pair] of entries) data[field] = decode(pair.after);
+  // 4.6 — if the approved diff changes mapLink, its parsed coordinates have to
+  // move with it. These two derived fields are applied but deliberately not
+  // written to the edit log: the log records what a human changed, and these
+  // follow mechanically from mapLink.
+  data = withMapLinkCoords(data);
 
   // Attributed to the partner who made the edit, not the admin who approved
   // it: the edit log answers "who changed this listing", and the approving
