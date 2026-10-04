@@ -72,6 +72,8 @@ router.delete('/projects/:id/units/:unitId',         requireKyc, projectCtrl.del
 
 // Finance/escrow summary (KYC required)
 router.get('/finance',    requireKyc, ctrl.getFinanceSummary);
+// R31 — per-deal payout status/UTR (Released screen, B12.6).
+router.get('/payouts',    requireKyc, ctrl.listMyPayouts);
 // Ratings from buyers, aggregated from Lead.buyerRating (KYC required)
 router.get('/ratings',    requireKyc, ctrl.getRatings);
 // Analytics dashboard (KYC required)

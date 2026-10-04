@@ -84,6 +84,15 @@ async function getFinanceSummary(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// R31 / B12.6 — per-deal payout status + UTR for the Released screen.
+async function listMyPayouts(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const { data, total } = await service.listMyPayouts(req.user.id, skip, limit);
+    success(res, paginate(data, total, page, limit));
+  } catch (err) { next(err); }
+}
+
 async function getRatings(req, res, next) {
   try {
     const ratings = await service.getRatings(req.user.id);
@@ -182,7 +191,7 @@ async function createSupportTicket(req, res, next) {
 
 module.exports = {
   acceptTerms, recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
-  getFinanceSummary, getAnalytics, getRatings,
+  getFinanceSummary, getAnalytics, getRatings, listMyPayouts,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount, getBilling, updateBilling,
   getPayoutAccount, createPayoutAccount,

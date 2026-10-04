@@ -16,6 +16,8 @@ const CATEGORY_BY_TYPE = {
   PAYMENT_FAILED: 'ESCROW',
   PAYMENT_REFUNDED: 'ESCROW',
   PAYOUT_FAILED: 'ESCROW',
+  // R31 — RazorpayX confirmed the payout and the UTR is now known.
+  PAYOUT_PROCESSED: 'ESCROW',
   KYC_PENDING: 'KYC',
   KYC_UPDATE: 'KYC',
   PROPERTY_APPROVED: 'LISTINGS',

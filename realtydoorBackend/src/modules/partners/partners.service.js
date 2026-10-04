@@ -167,6 +167,28 @@ async function getFinanceSummary(partnerId) {
   };
 }
 
+// R31 / B12.6 — the "Released" screen needs per-deal payout status and UTR,
+// not just the aggregate totals above. Scoped to escrows that ever had a
+// partner-leg payout attempted (a missing field, not a null one — same
+// isSet trap as elsewhere in this schema) rather than every escrow on the
+// partner's leads, since a HELD or buyer-refunded escrow has no payout to
+// show here at all.
+async function listMyPayouts(partnerId, skip, limit) {
+  const where = { lead: { assignedPartnerId: partnerId }, razorpayPartnerPayoutId: { isSet: true } };
+  const [rows, total] = await Promise.all([
+    prisma.escrowTransaction.findMany({
+      where, skip, take: limit, orderBy: { releasedAt: 'desc' },
+      select: {
+        id: true, amount: true, status: true, releasedAt: true,
+        razorpayPartnerPayoutId: true, partnerPayoutStatus: true, partnerPayoutUtr: true,
+        lead: { select: { id: true, buyerName: true, property: { select: { title: true } } } },
+      },
+    }),
+    prisma.escrowTransaction.count({ where }),
+  ]);
+  return { data: rows, total };
+}
+
 // ─── RATINGS ─────────────────────────────────────────────────────────────────
 // Backed by Lead.buyerRating/buyerRatingComment (set via POST /user/leads/:leadId/rating)
 // — no separate PartnerRating model needed, each Lead already scopes one buyer's
@@ -537,7 +559,7 @@ async function getPartnerAnalytics(partnerId) {
 
 module.exports = {
   acceptPartnerTerms, recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
-  getFinanceSummary, getRatings,
+  getFinanceSummary, getRatings, listMyPayouts,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount, getBilling, updateBilling,
   getPayoutAccount, createPayoutAccount, setPayoutAccountStatus, listPayoutAccounts,

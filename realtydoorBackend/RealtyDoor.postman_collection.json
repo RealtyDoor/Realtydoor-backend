@@ -4141,6 +4141,49 @@
           ]
         },
         {
+          "name": "Payouts",
+          "item": [
+            {
+              "name": "List My Payouts",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/payouts?page=1&limit=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "payouts"
+                  ],
+                  "query": [
+                    { "key": "page", "value": "1" },
+                    { "key": "limit", "value": "20" }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - My Payouts",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a1a3213aa8de854e8acfad7\",\"amount\":250000,\"status\":\"RELEASED\",\"releasedAt\":\"2026-09-20T10:00:00.000Z\",\"razorpayPartnerPayoutId\":\"payout_xxx\",\"partnerPayoutStatus\":\"processed\",\"partnerPayoutUtr\":\"UTR123456789\",\"lead\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"buyerName\":\"Ravi Kumar\",\"property\":{\"title\":\"3BHK in HSR Layout\"}}}],\"pagination\":{\"total\":4,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "Billing",
           "item": [
             {

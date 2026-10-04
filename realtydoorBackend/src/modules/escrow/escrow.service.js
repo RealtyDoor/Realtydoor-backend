@@ -382,7 +382,9 @@ async function release(escrowId, adminId, releaseData, ip) {
   if (claim.count === 0) throw new ApiError(400, 'This escrow was already released or refunded');
 
   let sellerPayoutId = null;
+  let sellerPayoutStatusVal = null;
   let partnerPayoutId = null;
+  let partnerPayoutStatusVal = null;
   try {
     // Seller and partner legs are independent recipients, so they run
     // concurrently rather than back-to-back — each leg's fund-account
@@ -401,6 +403,7 @@ async function release(escrowId, adminId, releaseData, ip) {
         // deduped by RazorpayX itself, on top of the atomic DB claim above.
         const payout = await createPayout(fundAccount.id, Math.round(sellerAmount * 100), `escrow_seller_${escrowId}`);
         sellerPayoutId = payout.id;
+        sellerPayoutStatusVal = payout.status;
       })());
     }
     if (partnerShare > 0 && (partnerDetails || storedPartnerFundAccountId)) {
@@ -418,6 +421,7 @@ async function release(escrowId, adminId, releaseData, ip) {
         }
         const payout = await createPayout(fundAccountId, Math.round(partnerShare * 100), `escrow_partner_${escrowId}`);
         partnerPayoutId = payout.id;
+        partnerPayoutStatusVal = payout.status;
       })());
     }
     await Promise.all(legs);
@@ -451,8 +455,8 @@ async function release(escrowId, adminId, releaseData, ip) {
     where: { id: escrowId },
     data: {
       adminNote,
-      ...(sellerPayoutId && { razorpayPayoutId: sellerPayoutId }),
-      ...(partnerPayoutId && { razorpayPartnerPayoutId: partnerPayoutId }),
+      ...(sellerPayoutId && { razorpayPayoutId: sellerPayoutId, sellerPayoutStatus: sellerPayoutStatusVal }),
+      ...(partnerPayoutId && { razorpayPartnerPayoutId: partnerPayoutId, partnerPayoutStatus: partnerPayoutStatusVal }),
     },
   });
 

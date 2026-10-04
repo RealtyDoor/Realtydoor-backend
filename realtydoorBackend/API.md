@@ -2488,6 +2488,46 @@ Partner finance / escrow summary.
 
 ---
 
+### GET /api/partner/payouts
+
+R31 — the "Released" screen (B12.6): per-deal RazorpayX payout status and
+UTR, not just the aggregate totals above. Only escrows that ever had a
+payout attempted for this partner are listed — a `HELD` or buyer-refunded
+escrow has nothing to show here.
+
+A payout is created `processing` synchronously when admin releases the
+escrow, then settles asynchronously. `partnerPayoutStatus` is corrected in
+place by the RazorpayX webhook once it does — `processed` (with
+`partnerPayoutUtr` now set) on success, `failed`/`reversed` if the money
+didn't land after all (which also flags the escrow for admin review).
+
+**Auth:** PARTNER + KYC verified
+
+**Query Parameters:** `page`, `limit`
+
+**Response `200`:**
+
+```json
+{
+  "success": true, "message": "Success",
+  "data": {
+    "data": [
+      {
+        "id": "...", "amount": 250000, "status": "RELEASED",
+        "releasedAt": "2026-09-20T10:00:00.000Z",
+        "razorpayPartnerPayoutId": "payout_xxx",
+        "partnerPayoutStatus": "processed",
+        "partnerPayoutUtr": "UTR123456789",
+        "lead": { "id": "...", "buyerName": "Ravi Kumar", "property": { "title": "3BHK in HSR Layout" } }
+      }
+    ],
+    "pagination": { "page": 1, "limit": 20, "total": 4, "pages": 1 }
+  }
+}
+```
+
+---
+
 ### GET /api/partner/ratings
 
 Ratings buyers have left for this partner. Backed by `Lead.buyerRating`/`buyerRatingComment` (set via `POST /api/user/leads/:leadId/rating`) — there's no separate rating model, each `Lead` already scopes one buyer's rating to one partner.
@@ -6401,6 +6441,13 @@ All escrow transactions (paginated).
 ```
 
 Each row's `lead` object carries buyer/property/partner context — previously absent, so the admin UI showed those three columns blank.
+
+R31 — every row also carries `sellerPayoutStatus`/`sellerPayoutUtr` and
+`partnerPayoutStatus`/`partnerPayoutUtr` (omitted above for brevity), mirroring
+RazorpayX's own payout status values (`processing`/`processed`/`failed`/
+`reversed`/...), kept current by the `payout.processed`/`payout.failed`/
+`payout.reversed` webhooks. `null` until a payout for that leg is ever
+attempted.
 
 ---
 

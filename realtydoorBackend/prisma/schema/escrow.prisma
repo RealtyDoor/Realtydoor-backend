@@ -17,6 +17,18 @@ model EscrowTransaction {
   razorpayPartnerPayoutId String? // optional second payout, when partnerDetails is given at release
   razorpayRefundId   String?
 
+  // R31 — a RazorpayX payout settles asynchronously after creation, so its
+  // id alone (above) doesn't say whether the money actually landed. Status
+  // mirrors RazorpayX's own payout.status values (queued/pending/processing/
+  // processed/reversed/cancelled/rejected/failed): set from the synchronous
+  // create response at release time, then corrected by the payout.processed
+  // / payout.failed / payout.reversed webhooks as RazorpayX settles each leg.
+  // UTR is only ever present once a payout reaches "processed".
+  sellerPayoutStatus  String?
+  sellerPayoutUtr     String?
+  partnerPayoutStatus String?
+  partnerPayoutUtr    String?
+
   amount    Float
   currency  String       @default("INR")
 

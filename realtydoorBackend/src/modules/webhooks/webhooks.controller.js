@@ -214,6 +214,52 @@ async function razorpay(req, res) {
       }
     }
 
+    // R31 — the payout only actually lands once RazorpayX confirms it, with
+    // the UTR appearing for the first time on this event. Safe to apply
+    // unconditionally on every delivery (same leg, same status/utr each
+    // time) — unlike the failure path below, there's no notification to
+    // dedup against adminNote text here except the one fired on this update.
+    if (event === 'payout.processed') {
+      const { id: payoutId, utr } = payload.payout.entity;
+      const escrow = await prisma.escrowTransaction.findFirst({
+        where: { OR: [{ razorpayPayoutId: payoutId }, { razorpayPartnerPayoutId: payoutId }] },
+      });
+
+      if (escrow) {
+        const leg = escrow.razorpayPayoutId === payoutId ? 'seller' : 'partner';
+        const alreadyProcessed = leg === 'seller'
+          ? escrow.sellerPayoutStatus === 'processed'
+          : escrow.partnerPayoutStatus === 'processed';
+
+        await prisma.escrowTransaction.update({
+          where: { id: escrow.id },
+          data: leg === 'seller'
+            ? { sellerPayoutStatus: 'processed', sellerPayoutUtr: utr || null }
+            : { partnerPayoutStatus: 'processed', partnerPayoutUtr: utr || null },
+        });
+
+        // Only the partner leg maps to a known platform user — sellerDetails
+        // is typed ad-hoc into the release request and doesn't necessarily
+        // belong to a User account, so there's no one reliable to notify for
+        // that leg. Guarded by alreadyProcessed so a redelivered webhook
+        // doesn't re-notify the partner for the same payout.
+        if (leg === 'partner' && !alreadyProcessed) {
+          const lead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { assignedPartnerId: true } });
+          if (lead?.assignedPartnerId) {
+            await createNotification({
+              userId: lead.assignedPartnerId,
+              title: 'Payout received',
+              message: `Your commission payout has been processed${utr ? ` (UTR ${utr})` : ''}.`,
+              type: 'PAYOUT_PROCESSED',
+              linkUrl: '/partner/finance',
+            });
+          }
+        }
+
+        logger.info('[RazorpayWebhook] Escrow payout processed', { payoutId, escrowId: escrow.id, leg, utr });
+      }
+    }
+
     // A RazorpayX payout created during release() returned success
     // synchronously (so the escrow was already marked RELEASED) but then
     // failed or was reversed afterward — the money didn't actually reach the
@@ -243,6 +289,10 @@ async function razorpay(req, res) {
           data: {
             status: 'HELD_PAYOUT_FAILED',
             adminNote: `${escrow.adminNote ? `${escrow.adminNote} | ` : ''}${leg} payout ${status} (${payoutId}): ${reason} — needs manual review`,
+            // R31 — per-leg status, independent of the dedup-guarded
+            // adminNote text above, so the released screen can show exactly
+            // which leg is in trouble without parsing the note.
+            ...(leg === 'seller' ? { sellerPayoutStatus: status } : { partnerPayoutStatus: status }),
           },
         });
 
