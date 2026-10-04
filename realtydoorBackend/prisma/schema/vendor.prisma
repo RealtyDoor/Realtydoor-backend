@@ -15,6 +15,8 @@ model Vendor {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  tickets ServiceTicket[]
+
   @@index([category, isActive])
   @@index([isActive])
 }

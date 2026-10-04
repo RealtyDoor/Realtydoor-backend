@@ -1862,13 +1862,16 @@ Raise a service ticket under an active subscription.
   "category": "PLUMBING",
   "priority": "HIGH",
   "propertyId": "64prop...",
+  "leadId": "64lead...",
   "photos": ["https://cdn.realtydoor.in/tickets/leak1.jpg"]
 }
 ```
 
 `category`: `PLUMBING` · `ELECTRICAL` · `PAINTING` · `GENERAL`  
 `priority`: `NORMAL` (default) · `HIGH` · `URGENT`  
-`propertyId` and `photos` are both optional.
+`propertyId`, `leadId`, and `photos` are all optional. `leadId` (7.8) is the
+deal this post-purchase ticket traces back to, when the user knows it —
+admin can also set/correct it afterward via `PATCH /admin/tickets/:id/link-deal`.
 
 **Response `201`:**
 
@@ -1895,6 +1898,11 @@ Raise a service ticket under an active subscription.
 ### PATCH /api/user/tickets/:id/reopen
 
 Reopen a ticket the user believes wasn't actually fixed. Only valid when `status === 'RESOLVED'`.
+
+**7.6 — also sets `wasReopened: true`, permanently.** This is what
+`GET /admin/tickets/stats`'s `firstTimeVerifyRatePct` checks — whether the
+ticket was ever reopened, not just whether the *current* resolve attempt
+was clean.
 
 **Auth:** USER
 
@@ -7036,6 +7044,7 @@ All support tickets (paginated).
 | `userId` | string | Filter by user ID |
 | `category` | string | `PLUMBING` · `ELECTRICAL` · `PAINTING` · `GENERAL` |
 | `search` | string | Free-text, matches `subject`, `description`, or `vendorName` (case-insensitive) |
+| `vendorId` | string | Filter by dispatched vendor (7.1/7.2) |
 | `page` | number | Default: `1` |
 | `limit` | number | Default: `20` |
 
@@ -7056,7 +7065,9 @@ All support tickets (paginated).
         "priority": "HIGH",
         "createdAt": "2024-02-01T00:00:00.000Z",
         "user": { "name": "Suresh Mehta", "email": "suresh@example.com" },
-        "subscription": { "id": "64sub...", "amountPaid": 4999 }
+        "subscription": { "id": "64sub...", "amountPaid": 4999, "service": { "name": "Maintenance Premium", "price": 5000 } },
+        "vendor": { "id": "64vnd...", "name": "Quick Fix Plumbers", "category": "PLUMBING" },
+        "slaDeadline": "2024-02-02T00:00:00.000Z", "slaBreached": false, "over12h": false
       }
     ],
     "pagination": { "total": 15, "page": 1, "limit": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
@@ -7064,11 +7075,21 @@ All support tickets (paginated).
 }
 ```
 
+**7.3 — `slaDeadline`/`slaBreached`/`over12h` are computed on every read, never
+stored** (the same reasoning as `ExclusiveMandate.effectiveStatus` elsewhere
+in this codebase — a stored flag would need a scheduled job and would be
+wrong in the window before it next ran). `slaDeadline` is `createdAt` plus a
+priority-tiered duration (`ticket_sla_hours_urgent`/`_high`/`_normal` config
+keys, defaulting to 12/24/72 hours); `slaBreached` is `false` for any
+terminal ticket (`RESOLVED`/`VERIFIED_BY_USER`) regardless of deadline.
+`over12h` is a flat, priority-independent "has this been open 12+ hours"
+signal, distinct from the tiered SLA.
+
 ---
 
 ### GET /api/admin/tickets/stats
 
-The four stat cards on the admin tickets page — computed over the full table, not the currently-loaded page.
+The stat cards on the admin tickets page — computed over the full table, not the currently-loaded page.
 
 **Auth:** ADMIN
 
@@ -7078,11 +7099,27 @@ The four stat cards on the admin tickets page — computed over the full table, 
 {
   "success": true,
   "message": "Success",
-  "data": { "unassigned": 3, "inProgress": 5, "resolvedThisWeek": 2, "avgResolutionDays": 1.8 }
+  "data": {
+    "unassigned": 3, "inProgress": 5, "resolvedThisWeek": 2, "avgResolutionDays": 1.8,
+    "unassignedSlaBreached": 1, "over12hCount": 2,
+    "avgVendorRating": 4.3, "firstTimeVerifyRatePct": 82.5
+  }
 }
 ```
 
-`unassigned` counts tickets with no `vendorName` set. `resolvedThisWeek` counts by `resolvedAt` falling in the current week (Sunday–Saturday), regardless of current status.
+`unassigned` counts tickets with no `vendorName` set. `resolvedThisWeek`
+counts by `resolvedAt` falling in the current week (Sunday–Saturday),
+regardless of current status.
+
+**7.3 — `unassignedSlaBreached`** is the "needs eyes on it right now" count:
+unassigned, non-terminal tickets whose SLA deadline has already passed.
+**`over12hCount`** is the same but using the flat 12-hour threshold instead
+of the priority-tiered SLA, and isn't limited to unassigned tickets.
+
+**7.6 — `avgVendorRating`** averages `vendorRating` across every rated
+ticket (most are never rated, so this is over however many are).
+**`firstTimeVerifyRatePct`** is the % of `VERIFIED_BY_USER` tickets that
+were never reopened first — `null` if none have been verified yet.
 
 ---
 
@@ -7105,16 +7142,31 @@ Full detail for a single service ticket.
     "category": "PLUMBING",
     "status": "RESOLVED",
     "priority": "HIGH",
-    "adminNotes": "Vendor dispatched on 2024-01-15.",
-    "vendorName": "Quick Fix Plumbers",
-    "vendorPhone": "+919800100200",
+    "adminNotes": "Replaced washer, fixed leak",
+    "vendorId": "64vnd...", "vendorName": "Quick Fix Plumbers", "vendorPhone": "+919800100200",
+    "scheduledSlot": "2024-01-15T10:00:00.000Z",
+    "tenantContactName": "Site Caretaker", "tenantContactPhone": "+919800100299",
+    "quotedChargeAmount": 1500,
+    "resolutionUrls": ["https://.../after-photo-1.jpg"],
+    "visitCharge": 500, "partsCharge": 1000, "totalCharge": 1500,
+    "invoiceUrl": "https://realtydoor-production.s3.ap-south-2.amazonaws.com/receipts/....pdf",
+    "leadId": null,
     "resolvedAt": "2024-01-15T00:00:00.000Z",
     "createdAt": "2024-01-13T00:00:00.000Z",
+    "slaDeadline": "2024-01-14T00:00:00.000Z", "slaBreached": false, "over12h": false,
     "user": { "id": "64user...", "name": "Suresh Mehta", "email": "suresh@example.com", "phone": "+919000000003" },
-    "subscription": { "service": { "name": "Maintenance Premium", "category": "MAINTENANCE" } }
+    "subscription": { "service": { "name": "Maintenance Premium", "category": "MAINTENANCE", "price": 5000, "features": ["24/7 support"] } },
+    "vendor": { "id": "64vnd...", "name": "Quick Fix Plumbers", "phone": "+919800100200", "category": "PLUMBING" },
+    "lead": null
   }
 }
 ```
+
+**7.7 — `subscription.service.price`/`features` were on the `Service` model
+all along; nothing selected them before this.** **7.8 — `subscription.amountPaid`
+is "revenue amount" for this ticket's purchase** (already present via the
+existing `subscription` include, not a new field); `leadId`/`lead` link the
+ticket to the deal it traces back to, when set (see `.../link-deal` below).
 
 **Errors:** `404` ticket not found.
 
@@ -7122,15 +7174,107 @@ Full detail for a single service ticket.
 
 ### PATCH /api/admin/tickets/:id
 
-Update ticket status. Enforces transition machine: `OPEN → IN_PROGRESS → RESOLVED`.
+Quick manual edit: status and/or free-text vendor name/phone, with no real
+vendor link. Enforces the same transition machine as everywhere else:
+`OPEN → IN_PROGRESS → RESOLVED → (reopen) → IN_PROGRESS`.
 
 **Auth:** ADMIN
 
-**Request Body:** `{ "status": "IN_PROGRESS" | "RESOLVED" }`
+**Request Body:** `{ "status": "IN_PROGRESS" | "RESOLVED" }` and/or `{ "vendorName": "...", "vendorPhone": "..." }`
 
-**Response `200`:** `{ "success": true, "message": "Ticket in progress", "data": { ... } }`
+**Response `200`:** `{ "success": true, "message": "Ticket updated", "data": { ... } }`
+
+**For a real vendor dispatch** (vendor FK, scheduling, tenant contact,
+quoted charge) **or to resolve with a charge breakdown and receipt, use the
+dedicated endpoints below instead** — this one is left as a lightweight
+fallback for a bare status flip or a quick name/phone correction.
 
 **Errors:** `400` invalid transition · `404` ticket not found.
+
+---
+
+### PATCH /api/admin/tickets/:id/dispatch
+
+7.2 — dispatches a real `Vendor` (not free text) with a scheduled slot,
+an on-site contact override, and a quoted charge. Auto-transitions a still-
+`OPEN` ticket to `IN_PROGRESS` (dispatching a vendor is when work actually
+starts); leaves status untouched if the ticket is already `IN_PROGRESS` or
+bounced back from `RESOLVED`.
+
+**7.9 — also the reassign action.** Calling this again on the same ticket
+with a different `vendorId` reassigns it — distinguished in the audit log
+and in which notification fires, not by a separate endpoint.
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "vendorId": "64vnd...",
+  "scheduledSlot": "2026-10-10T10:00:00.000Z",
+  "tenantContactName": "Site Caretaker",
+  "tenantContactPhone": "9876543210",
+  "quotedChargeAmount": 1500
+}
+```
+
+Only `vendorId` is required. `tenantContactName`/`Phone` are for when
+whoever the vendor needs to meet on site isn't the ticket-raiser themselves.
+
+**Response `200`:** the ticket, `vendorId`/`vendorName`/`vendorPhone` set
+from the chosen vendor (the free-text fields are a denormalized display
+cache, same pattern as `Lead.buyerName` alongside `buyerId`).
+
+**Errors:** `400` ticket is `RESOLVED`/`VERIFIED_BY_USER` · `400` vendor not active · `404` ticket or vendor not found.
+
+---
+
+### PATCH /api/admin/tickets/:id/resolve
+
+7.4 / 7.5 — resolves with an itemised charge breakdown and the vendor/
+admin's "after" evidence, instead of the bare status flip above. A
+non-zero total generates a simple payment receipt (visit charge + parts,
+no GST breakup — same scope decision as the commission/builder-invoice
+receipts) uploaded to S3; a zero-charge resolution (most tickets, covered
+by the subscription) has nothing to issue a receipt for, so `invoiceUrl`
+stays `null`.
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{
+  "resolutionUrls": ["https://.../after-photo-1.jpg"],
+  "visitCharge": 500,
+  "partsCharge": 1000,
+  "note": "Replaced washer, fixed leak"
+}
+```
+
+All fields optional — omit `visitCharge`/`partsCharge` (or pass `0`) for a
+no-charge resolution. `resolutionUrls` is the "after" half of 7.4's
+before/after split; `photos` (set when the ticket was raised) is "before".
+
+**Response `200`:** the ticket, `status: "RESOLVED"`, `totalCharge` =
+`visitCharge + partsCharge`, `invoiceUrl` set only when `totalCharge > 0`.
+
+**Errors:** `400` ticket's current status can't transition to `RESOLVED` (same transition machine as above) · `404` ticket not found.
+
+---
+
+### PATCH /api/admin/tickets/:id/link-deal
+
+7.8 — links a post-purchase ticket back to the `Lead` (deal) it traces to.
+A user can also set this at raise time (`POST /api/user/tickets`'s optional
+`leadId`); this is for admin to set or correct it afterward.
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "leadId": "64lead..." }`
+
+**Errors:** `404` ticket or lead not found.
 
 ---
 
@@ -7814,13 +7958,35 @@ Admin-managed vendor catalog (paginated). Vendors are dispatched on service tick
         "city": "Pune",
         "notes": "Available 7 days, handles burst pipes.",
         "isActive": true,
-        "createdAt": "2024-01-01T00:00:00.000Z"
+        "createdAt": "2024-01-01T00:00:00.000Z",
+        "jobsCount": 12,
+        "rating": 4.3
       }
     ],
     "pagination": { "total": 8, "page": 1, "limit": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
   }
 }
 ```
+
+**7.1 — `jobsCount`/`rating` are aggregated from `ServiceTicket` now that
+`.../dispatch` links a real `vendorId`** (previously `vendorName` was free
+text, so there was nothing to aggregate against). `jobsCount` is every
+ticket ever dispatched to this vendor; `rating` averages `vendorRating`
+across whichever of those were actually rated (`null` if none have been).
+**`availableSlots` and `distance` from the same doc item are not built** —
+slots needs a scheduling-model decision (recurring weekly availability vs.
+ad hoc) and distance needs vendor coordinates, which don't exist on this
+model; both are product/design decisions, not something to guess at.
+
+---
+
+### GET /api/admin/vendors/:id
+
+Single vendor with the same `jobsCount`/`rating` as the list above.
+
+**Auth:** ADMIN
+
+**Errors:** `404` vendor not found.
 
 ---
 

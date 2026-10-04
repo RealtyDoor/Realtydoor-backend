@@ -35,6 +35,10 @@ const raiseTicketSchema = z.object({
   category: z.enum(['PLUMBING', 'ELECTRICAL', 'PAINTING', 'GENERAL']).optional(),
   priority: z.enum(['NORMAL', 'HIGH', 'URGENT']).optional(),
   propertyId: objectId.optional(),
+  // 7.8 — the deal this post-purchase ticket traces back to, when the user
+  // knows it (e.g. raised right after a specific closed deal). Admin can
+  // also set/correct this later via PATCH .../tickets/:id/link-deal.
+  leadId: objectId.optional(),
   photos: z.array(z.string().url()).max(10).optional(),
 });
 

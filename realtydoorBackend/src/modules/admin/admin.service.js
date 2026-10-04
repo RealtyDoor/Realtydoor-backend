@@ -18,6 +18,9 @@ const { generate, expiresAt } = require('../../lib/otp');
 const logger = require('../../lib/logger');
 const { cacheDel } = require('../../lib/cache');
 const dataAckService = require('../partners/dataAck.service');
+const { buildTicketChargeReceiptPdf } = require('../../lib/pdfReceipt');
+const { s3Upload } = require('../../lib/fileUpload');
+const { getConfigNumber } = require('../config/config.service');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 
 // ─── LEAD MANAGEMENT ─────────────────────────────────────────────────────────
@@ -1113,17 +1116,55 @@ async function suspendUser(targetUserId, suspend, reason, adminId, ip) {
 
 // ─── TICKET MANAGEMENT ───────────────────────────────────────────────────────
 
+// 7.3 — SLA by priority, admin-configurable per tier (mirrors
+// commission.service.js's getConfigNumber pattern), with sensible defaults.
+// Computed at read time, never stored: the same reasoning as every other
+// derived-status field in this codebase (ExclusiveMandate.effectiveStatus,
+// OwnerConfirmation's TIMED_OUT) — a stored "breached" flag would need a
+// scheduled job and would be wrong in the window before it next ran.
+const TICKET_SLA_HOURS_KEYS = {
+  URGENT: 'ticket_sla_hours_urgent',
+  HIGH:   'ticket_sla_hours_high',
+  NORMAL: 'ticket_sla_hours_normal',
+};
+const TICKET_SLA_HOURS_DEFAULT = { URGENT: 12, HIGH: 24, NORMAL: 72 };
+const TICKET_TERMINAL_STATUSES = ['RESOLVED', 'VERIFIED_BY_USER'];
+
+async function slaHoursFor(priority) {
+  const key = TICKET_SLA_HOURS_KEYS[priority] || TICKET_SLA_HOURS_KEYS.NORMAL;
+  return getConfigNumber(key, TICKET_SLA_HOURS_DEFAULT[priority] ?? TICKET_SLA_HOURS_DEFAULT.NORMAL);
+}
+
+// over12h is deliberately a flat, priority-independent threshold distinct
+// from slaBreached (which is priority-tiered) — it's the "needs eyes on it
+// regardless of how it's classified" signal for the admin unassigned list.
+async function presentTicket(ticket) {
+  const hours = await slaHoursFor(ticket.priority);
+  const deadline = new Date(ticket.createdAt.getTime() + hours * 3_600_000);
+  const terminal = TICKET_TERMINAL_STATUSES.includes(ticket.status);
+  const ageMs = Date.now() - ticket.createdAt.getTime();
+  return {
+    ...ticket,
+    slaDeadline: deadline,
+    slaBreached: !terminal && Date.now() > deadline,
+    over12h: !terminal && ageMs > 12 * 3_600_000,
+  };
+}
+
 async function getTicketById(ticketId) {
   const ticket = await prisma.serviceTicket.findUnique({
     where: { id: ticketId },
     include: {
       user:         { select: { id: true, name: true, email: true, phone: true } },
-      subscription: { include: { service: { select: { name: true, category: true } } } },
+      // 7.7 — price/features were on Service all along; nothing selected them.
+      subscription: { include: { service: { select: { name: true, category: true, price: true, features: true } } } },
       comments:     { orderBy: { createdAt: 'asc' } },
+      vendor:       { select: { id: true, name: true, phone: true, category: true } },
+      lead:         { select: { id: true, refCode: true } },
     },
   });
   if (!ticket) throw new ApiError(404, 'Ticket not found');
-  return ticket;
+  return presentTicket(ticket);
 }
 
 async function getAllTickets(filters, skip, limit) {
@@ -1131,23 +1172,26 @@ async function getAllTickets(filters, skip, limit) {
   if (filters.status)   where.status   = filters.status;
   if (filters.userId)   where.userId   = filters.userId;
   if (filters.category) where.category = filters.category;
+  if (filters.vendorId) where.vendorId = filters.vendorId;
   if (filters.search) where.OR = [
     { subject:     { contains: filters.search, mode: 'insensitive' } },
     { description: { contains: filters.search, mode: 'insensitive' } },
     { vendorName:  { contains: filters.search, mode: 'insensitive' } },
   ];
 
-  const [data, total] = await Promise.all([
+  const [rows, total] = await Promise.all([
     prisma.serviceTicket.findMany({
       where, skip, take: limit,
       orderBy: { createdAt: 'desc' },
       include: {
         user:         { select: { name: true, email: true, phone: true } },
-        subscription: { include: { service: { select: { name: true } } } },
+        subscription: { include: { service: { select: { name: true, price: true } } } },
+        vendor:       { select: { id: true, name: true, category: true } },
       },
     }),
     prisma.serviceTicket.count({ where }),
   ]);
+  const data = await Promise.all(rows.map(presentTicket));
   return { data, total };
 }
 
@@ -1161,9 +1205,15 @@ async function getTicketStats() {
   startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
   startOfWeek.setHours(0, 0, 0, 0);
 
-  const tickets = await prisma.serviceTicket.findMany({
-    select: { status: true, vendorName: true, createdAt: true, resolvedAt: true },
-  });
+  const [tickets, slaHours] = await Promise.all([
+    prisma.serviceTicket.findMany({
+      select: {
+        status: true, vendorName: true, priority: true, createdAt: true, resolvedAt: true,
+        vendorRating: true, wasReopened: true,
+      },
+    }),
+    Promise.all(['URGENT', 'HIGH', 'NORMAL'].map(async (p) => [p, await slaHoursFor(p)])).then(Object.fromEntries),
+  ]);
 
   const unassigned = tickets.filter((t) => !t.vendorName).length;
   const inProgress = tickets.filter((t) => t.status === 'IN_PROGRESS').length;
@@ -1173,11 +1223,33 @@ async function getTicketStats() {
     ? resolved.reduce((sum, t) => sum + (t.resolvedAt - t.createdAt) / 86_400_000, 0) / resolved.length
     : 0;
 
+  // 7.3 — unassigned tickets whose SLA is already blown, the admin screen's
+  // "needs attention right now" count.
+  const now = Date.now();
+  const nonTerminal = tickets.filter((t) => !TICKET_TERMINAL_STATUSES.includes(t.status));
+  const unassignedSlaBreached = nonTerminal.filter((t) =>
+    !t.vendorName && now > t.createdAt.getTime() + (slaHours[t.priority] ?? slaHours.NORMAL) * 3_600_000
+  ).length;
+  const over12hCount = nonTerminal.filter((t) => now - t.createdAt.getTime() > 12 * 3_600_000).length;
+
+  // 7.6 — rated tickets only (most tickets are never rated); "first-time"
+  // means verified without ever having been reopened first.
+  const rated = tickets.filter((t) => t.vendorRating != null);
+  const avgVendorRating = rated.length ? rated.reduce((s, t) => s + t.vendorRating, 0) / rated.length : null;
+  const verified = tickets.filter((t) => t.status === 'VERIFIED_BY_USER');
+  const firstTimeVerifyRate = verified.length
+    ? Math.round((verified.filter((t) => !t.wasReopened).length / verified.length) * 1000) / 10
+    : null;
+
   return {
     unassigned,
     inProgress,
     resolvedThisWeek,
     avgResolutionDays: Math.round(avgResolutionDays * 10) / 10,
+    unassignedSlaBreached,
+    over12hCount,
+    avgVendorRating: avgVendorRating != null ? Math.round(avgVendorRating * 10) / 10 : null,
+    firstTimeVerifyRatePct: firstTimeVerifyRate,
   };
 }
 
@@ -1206,6 +1278,148 @@ async function updateTicketStatus(ticketId, status, vendorName, vendorPhone) {
   if (vendorPhone !== undefined) data.vendorPhone = vendorPhone;
 
   return prisma.serviceTicket.update({ where: { id: ticketId }, data });
+}
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+// 7.2 — a real Vendor link (vendorId) plus the scheduling/contact/quote
+// details dispatch actually needs, instead of the free-text vendorName/
+// vendorPhone updateTicketStatus above still supports for a quick manual
+// edit. vendorName/vendorPhone are still written here too (denormalized
+// display cache from the chosen Vendor, same pattern as Lead.buyerName
+// alongside buyerId) so existing list views keep working unchanged.
+//
+// 7.9 — also doubles as the reassign action: calling this again with a
+// different vendorId on the same ticket reassigns it. Distinguished in the
+// audit log and the user-facing notification, not by a separate endpoint.
+async function dispatchTicket(ticketId, data, adminId, ip) {
+  const ticket = await prisma.serviceTicket.findUnique({ where: { id: ticketId } });
+  if (!ticket) throw new ApiError(404, 'Ticket not found');
+  if (TICKET_TERMINAL_STATUSES.includes(ticket.status)) {
+    throw new ApiError(400, `Cannot dispatch a vendor on a ${ticket.status} ticket`);
+  }
+
+  const vendor = await prisma.vendor.findUnique({ where: { id: data.vendorId } });
+  if (!vendor) throw new ApiError(404, 'Vendor not found');
+  if (!vendor.isActive) throw new ApiError(400, 'This vendor is not active');
+
+  const isReassign = !!ticket.vendorId && ticket.vendorId !== vendor.id;
+
+  const updated = await prisma.serviceTicket.update({
+    where: { id: ticketId },
+    data: {
+      vendorId: vendor.id, vendorName: vendor.name, vendorPhone: vendor.phone,
+      // Dispatching is when work actually starts; a still-OPEN ticket moves
+      // to IN_PROGRESS as a side effect. A reassignment (already IN_PROGRESS
+      // or RESOLVED-bounced-back) leaves status untouched.
+      ...(ticket.status === 'OPEN' && { status: 'IN_PROGRESS' }),
+      ...(data.scheduledSlot !== undefined && { scheduledSlot: new Date(data.scheduledSlot) }),
+      ...(data.tenantContactName !== undefined && { tenantContactName: data.tenantContactName }),
+      ...(data.tenantContactPhone !== undefined && { tenantContactPhone: data.tenantContactPhone }),
+      ...(data.quotedChargeAmount !== undefined && { quotedChargeAmount: data.quotedChargeAmount }),
+    },
+  });
+
+  await createNotification({
+    userId: ticket.userId,
+    title: isReassign ? 'Vendor reassigned' : 'Vendor dispatched',
+    message: `${vendor.name} has been ${isReassign ? 're-' : ''}assigned to your ticket "${ticket.subject}"`
+      + `${data.scheduledSlot ? ` for ${new Date(data.scheduledSlot).toLocaleString('en-IN')}` : ''}.`,
+    type: isReassign ? 'TICKET_VENDOR_REASSIGNED' : 'TICKET_VENDOR_DISPATCHED',
+    linkUrl: `/user/tickets/${ticketId}`,
+  });
+
+  await createAuditLog({
+    adminId, action: isReassign ? 'TICKET_VENDOR_REASSIGNED' : 'TICKET_VENDOR_DISPATCHED',
+    targetType: 'ServiceTicket', targetId: ticketId,
+    before: { vendorId: ticket.vendorId }, after: { vendorId: vendor.id }, ipAddress: ip,
+  });
+
+  return updated;
+}
+
+// 7.5 — resolving with an itemised charge breakdown and a receipt, instead
+// of the bare status flip updateTicketStatus does. 7.4's before/after split:
+// resolutionUrls (the vendor/admin's "after" evidence) is written here for
+// the first time anywhere in the codebase — it existed on the schema but
+// nothing ever set it.
+async function resolveTicket(ticketId, data, adminId, ip) {
+  const ticket = await prisma.serviceTicket.findUnique({
+    where: { id: ticketId },
+    include: { user: { select: { name: true } } },
+  });
+  if (!ticket) throw new ApiError(404, 'Ticket not found');
+  const allowed = TICKET_TRANSITIONS[ticket.status] ?? [];
+  if (!allowed.includes('RESOLVED')) {
+    throw new ApiError(400, `Cannot resolve a ticket from status ${ticket.status}`);
+  }
+
+  const visitCharge = data.visitCharge ?? 0;
+  const partsCharge = data.partsCharge ?? 0;
+  const totalCharge = round2(visitCharge + partsCharge);
+
+  // A zero-charge resolution (most tickets, covered by the subscription) has
+  // nothing to issue a receipt for.
+  let invoiceUrl = null;
+  if (totalCharge > 0) {
+    const resolvedAt = new Date();
+    const pdfBuffer = await buildTicketChargeReceiptPdf({
+      ticketSubject: ticket.subject, userName: ticket.user?.name,
+      visitCharge, partsCharge, totalCharge, resolvedAt,
+    });
+    const { url } = await s3Upload(pdfBuffer, 'receipts', `ticket-charge-${ticketId}.pdf`, 'application/pdf');
+    invoiceUrl = url;
+  }
+
+  const updated = await prisma.serviceTicket.update({
+    where: { id: ticketId },
+    data: {
+      status: 'RESOLVED', resolvedAt: new Date(),
+      ...(data.resolutionUrls !== undefined && { resolutionUrls: data.resolutionUrls }),
+      visitCharge, partsCharge, totalCharge,
+      ...(invoiceUrl && { invoiceUrl }),
+      ...(data.note !== undefined && {
+        adminNotes: `${ticket.adminNotes ? `${ticket.adminNotes} | ` : ''}${data.note}`,
+      }),
+    },
+  });
+
+  await createNotification({
+    userId: ticket.userId,
+    title: 'Service ticket resolved',
+    message: `Your ticket "${ticket.subject}" has been resolved`
+      + `${totalCharge > 0 ? ` — total charge ₹${totalCharge.toLocaleString('en-IN')}` : ''}. Please verify.`,
+    type: 'TICKET_RESOLVED',
+    linkUrl: `/user/tickets/${ticketId}`,
+  });
+
+  await createAuditLog({
+    adminId, action: 'TICKET_RESOLVED', targetType: 'ServiceTicket', targetId: ticketId,
+    after: { visitCharge, partsCharge, totalCharge, invoiceUrl }, ipAddress: ip,
+  });
+
+  return updated;
+}
+
+// 7.8 — links a post-purchase ticket back to the deal (Lead) it traces to.
+// Separate from the generic update above since it's a distinct, narrow
+// correction admin makes once, not a field that changes with ticket status.
+async function linkTicketToDeal(ticketId, leadId, adminId, ip) {
+  const ticket = await prisma.serviceTicket.findUnique({ where: { id: ticketId } });
+  if (!ticket) throw new ApiError(404, 'Ticket not found');
+  const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { id: true, refCode: true } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+
+  const updated = await prisma.serviceTicket.update({ where: { id: ticketId }, data: { leadId } });
+
+  await createAuditLog({
+    adminId, action: 'TICKET_LINKED_TO_DEAL', targetType: 'ServiceTicket', targetId: ticketId,
+    before: { leadId: ticket.leadId }, after: { leadId, leadRef: lead.refCode }, ipAddress: ip,
+  });
+
+  return updated;
 }
 
 // ─── AUDIT LOGS ──────────────────────────────────────────────────────────────
@@ -1538,6 +1752,7 @@ module.exports = {
   getRevenueSummary,
   getAuditLogs,
   getAllTickets, getTicketById, updateTicketStatus, getTicketStats,
+  dispatchTicket, resolveTicket, linkTicketToDeal,
   getAllLoans, updateLoanStatus, getLoanBankStats,
   getAllUsers, changeUserRole, suspendUser,
   getPartnerMetrics, getPartnerById,
@@ -1548,11 +1763,38 @@ module.exports = {
   adminListTeam, adminCreateTeamMember, adminUpdateTeamMember, adminDeleteTeamMember,
   adminListDocuments, adminVerifyDocument,
   listVideoTours, updateVideoTour, uploadVideoTourFile,
-  adminListVendors, adminCreateVendor, adminUpdateVendor, adminDeleteVendor,
+  adminListVendors, getVendorById, adminCreateVendor, adminUpdateVendor, adminDeleteVendor,
   getAdminAnalytics,
 };
 
 // ─── VENDOR CATALOG ───────────────────────────────────────────────────────────
+
+// 7.1 — rating and jobs count, aggregated from ServiceTicket now that
+// dispatchTicket actually links a real vendorId (previously vendorName was
+// free text, so there was nothing to aggregate against). "Availability
+// slots" and "distance" from the same doc item are not built: slots needs a
+// scheduling-model decision (recurring weekly availability vs ad hoc) and
+// distance needs vendor coordinates, which don't exist on this model —
+// both are product/design decisions, not something to guess at here.
+async function withVendorStats(vendors) {
+  if (!vendors.length) return vendors;
+  const vendorIds = vendors.map((v) => v.id);
+  const stats = await prisma.serviceTicket.groupBy({
+    by: ['vendorId'],
+    where: { vendorId: { in: vendorIds } },
+    _count: { _all: true },
+    _avg: { vendorRating: true },
+  });
+  const byVendorId = new Map(stats.map((s) => [s.vendorId, s]));
+  return vendors.map((v) => {
+    const s = byVendorId.get(v.id);
+    return {
+      ...v,
+      jobsCount: s?._count._all ?? 0,
+      rating: s?._avg.vendorRating != null ? Math.round(s._avg.vendorRating * 10) / 10 : null,
+    };
+  });
+}
 
 async function adminListVendors(filters, skip, limit) {
   const where = {};
@@ -1560,11 +1802,18 @@ async function adminListVendors(filters, skip, limit) {
   if (filters.city)     where.city     = filters.city;
   if (filters.isActive !== undefined) where.isActive = filters.isActive !== 'false';
 
-  const [data, total] = await Promise.all([
+  const [rows, total] = await Promise.all([
     prisma.vendor.findMany({ where, skip, take: limit, orderBy: { name: 'asc' } }),
     prisma.vendor.count({ where }),
   ]);
-  return { data, total };
+  return { data: await withVendorStats(rows), total };
+}
+
+async function getVendorById(id) {
+  const vendor = await prisma.vendor.findUnique({ where: { id } });
+  if (!vendor) throw new ApiError(404, 'Vendor not found');
+  const [withStats] = await withVendorStats([vendor]);
+  return withStats;
 }
 
 async function adminCreateVendor(data) {

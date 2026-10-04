@@ -140,6 +140,12 @@ router.get('/tickets',            ctrl.getTickets);
 router.get('/tickets/stats',      ctrl.getTicketStats);
 router.get('/tickets/:id',        ctrl.getTicket);
 router.patch('/tickets/:id',      ctrl.updateTicket);
+// 7.2 / 7.9 — real vendor dispatch; calling again with a different vendorId reassigns.
+router.patch('/tickets/:id/dispatch',   ctrl.dispatchTicket);
+// 7.4 / 7.5 — resolve with charge breakdown + before/after evidence.
+router.patch('/tickets/:id/resolve',    ctrl.resolveTicket);
+// 7.8
+router.patch('/tickets/:id/link-deal',  ctrl.linkTicketToDeal);
 
 // Loan management
 router.get('/loan',               ctrl.getLoans);
@@ -193,6 +199,7 @@ router.post('/video-tours/:id/upload', videoTourUploader.single('video'),   ctrl
 // Vendor catalog
 router.get('/vendors',         ctrl.listVendors);
 router.post('/vendors',        ctrl.createVendor);
+router.get('/vendors/:id',     ctrl.getVendor);
 router.patch('/vendors/:id',   ctrl.updateVendor);
 router.delete('/vendors/:id',  ctrl.deleteVendor);
 

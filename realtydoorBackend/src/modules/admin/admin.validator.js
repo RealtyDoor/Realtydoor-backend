@@ -122,6 +122,29 @@ const updateTicketSchema = z.object({
   { message: 'At least one of status, vendorName, or vendorPhone must be provided' },
 );
 
+// 7.2 — a real vendor dispatch, distinct from updateTicketSchema's free-text
+// quick edit above.
+const dispatchTicketSchema = z.object({
+  vendorId: z.string().min(1),
+  scheduledSlot: z.string().datetime().optional(),
+  tenantContactName: z.string().min(2).max(100).optional(),
+  tenantContactPhone: z.string().min(5).max(20).optional(),
+  quotedChargeAmount: z.number().min(0).optional(),
+});
+
+// 7.5
+const resolveTicketSchema = z.object({
+  resolutionUrls: z.array(z.string().url()).max(10).optional(),
+  visitCharge: z.number().min(0).optional(),
+  partsCharge: z.number().min(0).optional(),
+  note: z.string().max(1000).optional(),
+});
+
+// 7.8
+const linkTicketToDealSchema = z.object({
+  leadId: z.string().min(1),
+});
+
 const SERVICE_CATEGORIES = ['MAINTENANCE', 'CONSTRUCTION', 'LEGAL', 'LOAN', 'VALUATION'];
 
 const createServiceSchema = z.object({
@@ -245,6 +268,9 @@ module.exports = {
   requestPropertyChangesSchema,
   requestKycDocumentsSchema,
   updateTicketSchema,
+  dispatchTicketSchema,
+  resolveTicketSchema,
+  linkTicketToDealSchema,
   createServiceSchema,
   updateServiceSchema,
   createTeamMemberSchema,

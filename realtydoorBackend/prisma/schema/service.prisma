@@ -85,11 +85,44 @@ model ServiceTicket {
   priority       String           @default("NORMAL")
   adminNotes     String?
   reopenReason   String?
+  // 7.4 — "before" evidence from the user (photos, above) vs "after"
+  // evidence from the vendor/admin at resolution (resolutionUrls). The
+  // field existed but nothing ever wrote to it; resolveTicket now does.
   resolutionUrls String[]
+  // 7.2 — vendorName/vendorPhone stay as a denormalized display cache (set
+  // from the chosen Vendor at dispatch time, same pattern as Lead.buyerName
+  // alongside buyerId) so existing list views keep working unchanged.
+  // vendorId is the real link: what rating/job-count aggregation and
+  // reassignment actually key off.
   vendorName     String?
   vendorPhone    String?
+  vendorId       String?  @db.ObjectId
+  vendor         Vendor?  @relation(fields: [vendorId], references: [id])
+  // 7.2 — set at dispatch, not resolution: the vendor needs to know when to
+  // show up and who/what to expect before they ever arrive.
+  scheduledSlot       DateTime?
+  tenantContactName   String?
+  tenantContactPhone  String?
+  quotedChargeAmount  Float?
+  // 7.5 — set at resolution. totalCharge is stored (not derived) because
+  // it's what the receipt below actually states and what the user was
+  // actually charged, even if visit/parts are later corrected individually.
+  visitCharge    Float?
+  partsCharge    Float?
+  totalCharge    Float?
+  invoiceUrl     String?
+  // 7.6 — "first-time verify rate" needs to know whether THIS ticket was
+  // ever reopened before being verified, not just whatever reopenReason
+  // happens to say — reopenTicket sets this once and it never resets.
+  wasReopened    Boolean  @default(false)
   vendorRating        Int?
   vendorRatingComment String?
+  // 7.8 — the deal (Lead) this post-purchase ticket traces back to, when
+  // the service was bought as part of/after closing a property deal.
+  // Nullable: most tickets are raised against a standalone subscription
+  // with no specific deal behind it.
+  leadId         String?  @db.ObjectId
+  lead           Lead?    @relation(fields: [leadId], references: [id])
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   resolvedAt     DateTime?
@@ -103,6 +136,8 @@ model ServiceTicket {
   @@index([status, createdAt])
   @@index([userId, status])
   @@index([subscriptionId, status])
+  @@index([vendorId])
+  @@index([leadId])
 }
 
 // ─── TICKET COMMENT ───────────────────────────────────────────────────────────

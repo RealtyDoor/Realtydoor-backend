@@ -41,6 +41,11 @@ const CATEGORY_BY_TYPE = {
   // R27 — an owner self-reported a listing as unauthorized.
   LISTING_OWNER_REPORTED: 'LISTINGS',
   SERVICE_ACTIVATED: 'SYSTEM',
+  // 7.x — post-purchase service ticket lifecycle, distinct from every
+  // existing chip (not a lead, not escrow money movement, not a listing).
+  TICKET_VENDOR_DISPATCHED: 'SERVICES',
+  TICKET_VENDOR_REASSIGNED: 'SERVICES',
+  TICKET_RESOLVED: 'SERVICES',
   LOAN_STATUS_UPDATE: 'SYSTEM',
   ANNOUNCEMENT: 'SYSTEM',
   // R32 — a partner's own earnings on a deal, distinct from ESCROW (whether
@@ -56,7 +61,7 @@ const CATEGORY_BY_TYPE = {
   BUILDER_INVOICE_COLLECTED: 'FEES',
 };
 
-const NOTIFICATION_CATEGORIES = ['LEADS', 'ESCROW', 'KYC', 'LISTINGS', 'FEES', 'SYSTEM'];
+const NOTIFICATION_CATEGORIES = ['LEADS', 'ESCROW', 'KYC', 'LISTINGS', 'FEES', 'SERVICES', 'SYSTEM'];
 
 function categoryFor(type) {
   return CATEGORY_BY_TYPE[type] || 'SYSTEM';

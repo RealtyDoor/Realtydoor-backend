@@ -141,6 +141,8 @@ model Lead {
   updatedAt DateTime @updatedAt
 
   escrowTransactions EscrowTransaction[]
+  // 7.8 — post-purchase ServiceTickets traced back to this deal.
+  serviceTickets     ServiceTicket[]
 
   @@index([assignedPartnerId])
   @@index([buyerId])

@@ -339,9 +339,12 @@ async function reopenTicket(userId, ticketId, reason) {
   if (!ticket) throw new ApiError(404, 'Ticket not found');
   if (ticket.status !== 'RESOLVED') throw new ApiError(400, 'Only a resolved ticket can be reopened');
 
+  // 7.6 — sticky once true: "first-time verify rate" asks whether THIS
+  // ticket was ever reopened, not just whether the current resolve attempt
+  // was clean.
   return prisma.serviceTicket.update({
     where: { id: ticketId },
-    data: { status: 'IN_PROGRESS', reopenReason: reason, resolvedAt: null },
+    data: { status: 'IN_PROGRESS', reopenReason: reason, resolvedAt: null, wasReopened: true },
   });
 }
 

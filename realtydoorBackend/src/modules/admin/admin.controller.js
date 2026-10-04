@@ -15,6 +15,9 @@ const {
   requestPropertyChangesSchema,
   requestKycDocumentsSchema,
   updateTicketSchema,
+  dispatchTicketSchema,
+  resolveTicketSchema,
+  linkTicketToDealSchema,
   createServiceSchema,
   updateServiceSchema,
   createTeamMemberSchema,
@@ -301,6 +304,34 @@ async function getTicketStats(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// 7.2 / 7.9 — dispatch a vendor (or reassign, by calling again with a
+// different vendorId).
+async function dispatchTicket(req, res, next) {
+  try {
+    const data = dispatchTicketSchema.parse(req.body);
+    const ticket = await service.dispatchTicket(req.params.id, data, req.user.id, req.ip);
+    success(res, ticket, 'Vendor dispatched');
+  } catch (err) { next(err); }
+}
+
+// 7.4 / 7.5
+async function resolveTicket(req, res, next) {
+  try {
+    const data = resolveTicketSchema.parse(req.body);
+    const ticket = await service.resolveTicket(req.params.id, data, req.user.id, req.ip);
+    success(res, ticket, 'Ticket resolved');
+  } catch (err) { next(err); }
+}
+
+// 7.8
+async function linkTicketToDeal(req, res, next) {
+  try {
+    const { leadId } = linkTicketToDealSchema.parse(req.body);
+    const ticket = await service.linkTicketToDeal(req.params.id, leadId, req.user.id, req.ip);
+    success(res, ticket, 'Ticket linked to deal');
+  } catch (err) { next(err); }
+}
+
 async function getPropertyById(req, res, next) {
   try {
     const property = await service.getPropertyByIdAdmin(req.params.id);
@@ -469,6 +500,14 @@ async function listVendors(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// 7.1 — rating + jobsCount, not on the plain list row shape.
+async function getVendor(req, res, next) {
+  try {
+    const vendor = await service.getVendorById(req.params.id);
+    success(res, vendor);
+  } catch (err) { next(err); }
+}
+
 async function createVendor(req, res, next) {
   try {
     const data = createVendorSchema.parse(req.body);
@@ -562,6 +601,7 @@ module.exports = {
   getPendingKyc, verifyKyc,
   getRevenue, getAuditLogs, getPartnerMetrics,
   getTickets, getTicket, updateTicket, getTicketStats,
+  dispatchTicket, resolveTicket, linkTicketToDeal,
   getLoans, updateLoanStatus, getLoanBankStats,
   getUsers, changeUserRole, getUserById, suspendUser,
   getPartnerById,
@@ -573,7 +613,7 @@ module.exports = {
   listTeam, createTeamMember, updateTeamMember, deleteTeamMember,
   listServices, createService, updateService, deleteService,
   listVideoTours, updateVideoTour, uploadVideoTourFile,
-  listVendors, createVendor, updateVendor, deleteVendor,
+  listVendors, getVendor, createVendor, updateVendor, deleteVendor,
   getAnalytics,
   listDisputes, resolveDispute,
   listReviews, moderateReview,
