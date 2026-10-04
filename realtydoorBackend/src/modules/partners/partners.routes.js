@@ -90,6 +90,10 @@ router.get('/payout-account',  ctrl.getPayoutAccount);
 router.post('/payout-account', ctrl.createPayoutAccount);
 router.patch('/bank-account', requireKyc, ctrl.updateBankAccount);
 
+// R8 — billing details (for the commission invoice).
+router.get('/billing',   requireKyc, ctrl.getBilling);
+router.patch('/billing', requireKyc, ctrl.updateBilling);
+
 // Support tickets (Help & Support page)
 router.get('/support-tickets',      ctrl.getSupportTickets);
 router.post('/support-tickets',     ctrl.createSupportTicket);

@@ -127,6 +127,13 @@ model Property {
   loanNocStatus  LoanNocStatus?
   loanNocUrl     String?
 
+  // R19 — CO_OWNER_CONSENT is only a real requirement when the property
+  // actually has more than one legal owner. Same nullable-on-purpose
+  // reasoning as isMortgaged above: null means "not recorded", not "no
+  // co-owners", so a pre-existing listing is never silently treated as
+  // single-owner by a default that was never actually confirmed.
+  hasCoOwners Boolean?
+
   // Media
   images          String[]
   videos          String[]

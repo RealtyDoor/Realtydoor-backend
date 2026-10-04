@@ -238,6 +238,30 @@ async function updateBankAccount(partnerId, data) {
   });
 }
 
+// ─── R8 — billing details ─────────────────────────────────────────────────────
+
+// gstin is NOT billingGstin — it's the existing partner-identity field
+// (3.2/3.3/B1.6), reused here rather than duplicated.
+const BILLING_FIELDS = [
+  'billingLegalName', 'gstin', 'billingAddress',
+  'billingAccountsContactName', 'billingAccountsContactEmail', 'billingAccountsContactPhone',
+];
+
+async function getBilling(partnerId) {
+  return prisma.user.findUnique({
+    where: { id: partnerId },
+    select: Object.fromEntries(BILLING_FIELDS.map((f) => [f, true])),
+  });
+}
+
+async function updateBilling(partnerId, data) {
+  return prisma.user.update({
+    where: { id: partnerId },
+    data,
+    select: Object.fromEntries(BILLING_FIELDS.map((f) => [f, true])),
+  });
+}
+
 // ─── B12.1 / B12.4 — RazorpayX payout account ────────────────────────────────
 // Decision: RazorpayX Payouts, not Razorpay Route. There is no linked-account
 // onboarding and no Route KYC queue — we register the partner as a RazorpayX
@@ -267,6 +291,33 @@ async function getPayoutAccount(partnerId) {
   const row = await prisma.user.findUnique({ where: { id: partnerId }, select: PAYOUT_PUBLIC_FIELDS });
   if (!row) throw new ApiError(404, 'User not found');
   return maskPayout(row);
+}
+
+// R14 — admin needs every partner's payout account in one view, not a
+// one-at-a-time status-setter with nothing to list from. Same masking as the
+// partner's own read: this reaches an admin screen, not a raw export, and
+// there is no reason an admin needs the full account number or PAN on a list
+// view either.
+async function listPayoutAccounts(filters, skip, limit) {
+  const where = { role: 'PARTNER' };
+  // "Not yet set up at all" is MISSING, not null (no default was ever
+  // applied) — the same missing-vs-null trap seen elsewhere in this schema.
+  // Checked first and explicitly, rather than relying on statement order to
+  // override a looser assignment below.
+  if (filters.status === 'NOT_SET_UP') {
+    where.payoutAccountStatus = { isSet: false };
+  } else if (filters.status) {
+    where.payoutAccountStatus = filters.status;
+  }
+
+  const [rows, total] = await Promise.all([
+    prisma.user.findMany({
+      where, skip, take: limit, orderBy: { createdAt: 'desc' },
+      select: { id: true, name: true, companyName: true, email: true, ...PAYOUT_PUBLIC_FIELDS },
+    }),
+    prisma.user.count({ where }),
+  ]);
+  return { data: rows.map(maskPayout), total };
 }
 
 async function createPayoutAccount(partnerId, data) {
@@ -488,8 +539,8 @@ module.exports = {
   acceptPartnerTerms, recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
   getFinanceSummary, getRatings,
   getSettings, updateSettings,
-  getBankAccount, updateBankAccount,
-  getPayoutAccount, createPayoutAccount, setPayoutAccountStatus,
+  getBankAccount, updateBankAccount, getBilling, updateBilling,
+  getPayoutAccount, createPayoutAccount, setPayoutAccountStatus, listPayoutAccounts,
   getSupportTickets, getSupportTicketById, createSupportTicket,
   getPartnerAnalytics,
 };

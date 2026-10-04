@@ -4,7 +4,7 @@ const service = require('./partners.service');
 const {
   updateProfileSchema,
   updateSettingsSchema,
-  updateBankAccountSchema,
+  updateBankAccountSchema, updateBillingSchema,
   createSupportTicketSchema,
   acceptTermsSchema,
   createPayoutAccountSchema,
@@ -128,6 +128,19 @@ async function updateBankAccount(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getBilling(req, res, next) {
+  try {
+    success(res, await service.getBilling(req.user.id));
+  } catch (err) { next(err); }
+}
+
+async function updateBilling(req, res, next) {
+  try {
+    const data = updateBillingSchema.parse(req.body);
+    success(res, await service.updateBilling(req.user.id, data), 'Billing details updated');
+  } catch (err) { next(err); }
+}
+
 async function getPayoutAccount(req, res, next) {
   try {
     success(res, await service.getPayoutAccount(req.user.id));
@@ -171,7 +184,7 @@ module.exports = {
   acceptTerms, recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
   getFinanceSummary, getAnalytics, getRatings,
   getSettings, updateSettings,
-  getBankAccount, updateBankAccount,
+  getBankAccount, updateBankAccount, getBilling, updateBilling,
   getPayoutAccount, createPayoutAccount,
   getSupportTickets, getSupportTicketById, createSupportTicket,
 };

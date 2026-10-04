@@ -113,6 +113,16 @@ async function setPayoutAccountStatus(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// R14 — every partner's payout account in one view, not a one-at-a-time
+// status-setter with nothing to list from.
+async function listPayoutAccounts(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const { data, total } = await partnerService.listPayoutAccounts(req.query, skip, limit);
+    success(res, paginate(data, total, page, limit));
+  } catch (err) { next(err); }
+}
+
 async function getPendingProperties(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
@@ -545,7 +555,7 @@ async function deleteConfig(req, res, next) {
 
 module.exports = {
   getLeadById, getLeads, assignLead, autoAssignLead, autoAssignUnassignedLeads, createLead, confirmLead, rejectLead, overrideLeadOtp,
-  setPayoutAccountStatus,
+  setPayoutAccountStatus, listPayoutAccounts,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   requestPropertyChanges,
   requestKycDocuments,

@@ -1,7 +1,10 @@
 const { z } = require('zod');
 
 const uploadChecklistDocumentSchema = z.object({
-  documentType: z.enum(['SALE_DEED', 'ENCUMBRANCE_CERTIFICATE', 'KHATA', 'SOCIETY_NOC']),
+  // R19 — CO_OWNER_CONSENT/RERA_CERT added. Uploadable any time; whether
+  // they're actually REQUIRED on a given listing is conditional (see
+  // checklist.service.js::getChecklist).
+  documentType: z.enum(['SALE_DEED', 'ENCUMBRANCE_CERTIFICATE', 'KHATA', 'SOCIETY_NOC', 'CO_OWNER_CONSENT', 'RERA_CERT']),
 });
 
 const rejectChecklistDocumentSchema = z.object({

@@ -4141,6 +4141,107 @@
           ]
         },
         {
+          "name": "Billing",
+          "item": [
+            {
+              "name": "Get Billing Details",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/billing",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "billing"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Billing Details",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"billingLegalName\":\"Sharma Realty Private Limited\",\"gstin\":\"27AAAPL1234C1ZV\",\"billingAddress\":\"4th Floor, Prestige Towers, HSR Layout, Bangalore 560102\",\"billingAccountsContactName\":\"Priya Sharma\",\"billingAccountsContactEmail\":\"accounts@sharmarealty.example\",\"billingAccountsContactPhone\":\"9876543210\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Update Billing Details",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/billing",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "billing"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"billingLegalName\": \"Sharma Realty Private Limited\",\n  \"gstin\": \"27AAAPL1234C1ZV\",\n  \"billingAddress\": \"4th Floor, Prestige Towers, HSR Layout, Bangalore 560102\",\n  \"billingAccountsContactName\": \"Priya Sharma\",\n  \"billingAccountsContactEmail\": \"accounts@sharmarealty.example\",\n  \"billingAccountsContactPhone\": \"9876543210\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Billing Updated",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"billingLegalName\":\"Sharma Realty Private Limited\",\"gstin\":\"27AAAPL1234C1ZV\",\"billingAddress\":\"4th Floor, Prestige Towers, HSR Layout, Bangalore 560102\",\"billingAccountsContactName\":\"Priya Sharma\",\"billingAccountsContactEmail\":\"accounts@sharmarealty.example\",\"billingAccountsContactPhone\":\"9876543210\"}}"
+                },
+                {
+                  "name": "400 - Invalid GSTIN format",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"Invalid GSTIN format\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "Support Tickets",
           "item": [
             {
@@ -8415,6 +8516,110 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":false,\"message\":\"Partner not found\"}"
+                }
+              ]
+            },
+            {
+              "name": "List Payout Accounts (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/payout-accounts?page=1&limit=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "payout-accounts"
+                  ],
+                  "query": [
+                    { "key": "page", "value": "1" },
+                    { "key": "limit", "value": "20" },
+                    { "key": "status", "value": "NOT_SET_UP", "disabled": true }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Payout Accounts",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a1a3213aa8de854e8acfad7\",\"name\":\"Ravi Kumar\",\"companyName\":\"Sharma Realty\",\"email\":\"ravi@example.com\",\"payoutAccountStatus\":\"ACTIVE\",\"payoutAccountNote\":null,\"payoutValidatedAt\":\"2026-09-01T10:00:00.000Z\",\"razorpayContactId\":\"cont_xxx\",\"razorpayFundAccountId\":\"fa_xxx\",\"bankName\":\"HDFC Bank\",\"bankIfsc\":\"HDFC0000634\",\"bankHolderName\":\"Ravi Kumar\",\"bankAccountNo\":\"XXXXXXXXXX6280\",\"bankLinkedAt\":\"2026-08-30T09:00:00.000Z\",\"panNumber\":\"XXXXXX234C\"}],\"pagination\":{\"total\":16,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                }
+              ]
+            },
+            {
+              "name": "Set Payout Account Status (Admin)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/partners/{{partnerId}}/payout-account/status",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "partners",
+                    "{{partnerId}}",
+                    "payout-account",
+                    "status"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"ACTIVE\",\n  \"note\": \"Verified against Razorpay dashboard\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Payout Account Marked ACTIVE",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Payout account marked ACTIVE\",\"data\":{\"payoutAccountStatus\":\"ACTIVE\",\"payoutAccountNote\":\"Verified against Razorpay dashboard\",\"payoutValidatedAt\":\"2026-09-01T10:00:00.000Z\",\"razorpayContactId\":\"cont_xxx\",\"razorpayFundAccountId\":\"fa_xxx\",\"bankName\":\"HDFC Bank\",\"bankIfsc\":\"HDFC0000634\",\"bankHolderName\":\"Ravi Kumar\",\"bankAccountNo\":\"XXXXXXXXXX6280\",\"bankLinkedAt\":\"2026-08-30T09:00:00.000Z\",\"panNumber\":\"XXXXXX234C\"}}"
+                },
+                {
+                  "name": "400 - Note Required",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"A note is required when the status is not ACTIVE\"}"
                 }
               ]
             }

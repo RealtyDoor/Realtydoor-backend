@@ -2853,6 +2853,53 @@ writes it.
 
 ---
 
+### GET /api/partner/billing
+
+Billing details — who the commission invoice is addressed to, not where
+payouts land (that's the bank account above / the RazorpayX payout account).
+
+**Auth:** PARTNER + KYC verified
+
+**Response `200`:**
+
+```json
+{
+  "success": true, "message": "Success",
+  "data": {
+    "billingLegalName": "Sharma Realty Private Limited",
+    "gstin": "27AAAPL1234C1ZV",
+    "billingAddress": "12 MG Road, Pune, Maharashtra 411001",
+    "billingAccountsContactName": "Finance Team",
+    "billingAccountsContactEmail": "finance@sharmarealty.example.com",
+    "billingAccountsContactPhone": "+919800011122"
+  }
+}
+```
+
+### PATCH /api/partner/billing
+
+**Auth:** PARTNER + KYC verified
+
+**Request Body:** any subset of the fields above — at least one required.
+
+**`gstin` is NOT a new field** — it's the existing partner-identity `gstin`
+(docs 3.2/3.3/B1.6), also settable via `PATCH /api/partner/profile`. This
+endpoint validates it against the real GSTIN format
+(`\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]`); the profile endpoint's own
+`gstin` field is only loosely length-checked, so prefer this endpoint when
+you actually need the format enforced.
+
+**`billingLegalName` is deliberately distinct from `companyName`** (the
+partner's trading/display name, shown throughout the app) — a partner can
+trade under one name while being registered, for GST/invoicing purposes,
+under a different legal entity name. **`billingAddress` is deliberately
+distinct from the buyer-facing `address` field** — that one is a buyer's
+personal address; this is a business billing address.
+
+**Errors:** `400` invalid GSTIN format, or no field provided.
+
+---
+
 ### GET /api/partner/support-tickets
 
 List the authenticated partner's support tickets (paginated).
@@ -4898,8 +4945,8 @@ never actually becomes `TIMED_OUT`; only the response does.
 
 Upload one OWNER-persona checklist document. Distinct from
 `POST /api/properties/:id/documents` (free-form uploads — brochures, floor
-plans): this endpoint is for the four structured, persona-tracked document
-types only.
+plans): this endpoint is for structured, persona-tracked document types
+only.
 
 **Auth:** PARTNER
 
@@ -4908,7 +4955,19 @@ plus `documentType` in the body.
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `documentType` | yes | One of `SALE_DEED`, `ENCUMBRANCE_CERTIFICATE`, `KHATA`, `SOCIETY_NOC`. |
+| `documentType` | yes | One of `SALE_DEED`, `ENCUMBRANCE_CERTIFICATE`, `KHATA`, `SOCIETY_NOC`, `CO_OWNER_CONSENT`, `RERA_CERT`. |
+
+**`CO_OWNER_CONSENT` and `RERA_CERT` are uploadable at any time** (R19), but
+only show up as a *required* item on `GET .../checklist` conditionally —
+`CO_OWNER_CONSENT` when `Property.hasCoOwners` is `true`, `RERA_CERT` when
+`Property.reraNumber` is set. An owner can upload `RERA_CERT` proactively
+before `reraNumber` is ever set; it just won't yet be counted toward
+`missingCount`/`ready` until the condition is actually true.
+
+**`MORTGAGE_NOC` from R19's original list is NOT a `documentType` here.** It
+already exists as `Property.loanNocUrl` / `loanNocStatus` (doc 4.5), folded
+into the same checklist response. Adding a second upload mechanism for the
+same document would give it two inconsistent homes.
 
 **Response `201`:**
 
@@ -4924,7 +4983,7 @@ rejection puts the document straight back in front of an admin.
 
 **Errors:**
 - `400` the listing's partner is not persona `OWNER`
-- `400` `documentType` not one of the four values, or no file provided
+- `400` `documentType` not one of the six values, or no file provided
 - `403` not your listing
 - `404` property not found
 
@@ -5863,6 +5922,72 @@ each compliance document independently, not just the project as a whole.
 **Errors:** `400` unknown `:item`.
 
 ---
+
+### PATCH /api/admin/partners/:id/payout-account/status
+
+Admin side of the payout-account clarification flow — `createPayoutAccount`
+soft-fails the Razorpay penny-drop validation (it can't run in Razorpay test
+mode, and is itself async) and lands a new account as `NEEDS_CLARIFICATION`
+rather than blocking the partner or silently claiming it's good. An admin
+resolves it here after checking Razorpay directly.
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{ "status": "ACTIVE", "note": "Verified against Razorpay dashboard" }
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `status` | Yes | One of `ACTIVE`, `PENDING_VALIDATION`, `NEEDS_CLARIFICATION`, `SUSPENDED` |
+| `note` | Conditional | Required unless `status` is `ACTIVE` |
+
+**Response `200`:** `{ "success": true, "message": "Payout account marked ACTIVE", "data": { ...masked payout fields } }`
+
+**Errors:** `400` missing note for a non-`ACTIVE` status.
+
+---
+
+### GET /api/admin/payout-accounts
+
+R14 — every partner's payout account in one view, rather than only a
+one-at-a-time status-setter with nothing to list from. Same field set and
+masking (`bankAccountNo`/`panNumber` tail-masked) as the partner's own
+`GET /api/partner/payout-account`.
+
+**Auth:** ADMIN
+
+**Query Parameters:**
+
+| Param | Notes |
+|-------|-------|
+| `page`, `limit` | Pagination |
+| `status` | One of `ACTIVE`, `PENDING_VALIDATION`, `NEEDS_CLARIFICATION`, `SUSPENDED`, or `NOT_SET_UP` (partner has never submitted a payout account at all — a missing field, not a null one) |
+
+**Response `200`:**
+
+```json
+{
+  "success": true, "message": "Success",
+  "data": {
+    "data": [
+      {
+        "id": "...", "name": "Ravi Kumar", "companyName": "Sharma Realty",
+        "email": "ravi@example.com",
+        "payoutAccountStatus": "ACTIVE", "payoutAccountNote": null,
+        "payoutValidatedAt": "2026-09-01T10:00:00.000Z",
+        "razorpayContactId": "cont_...", "razorpayFundAccountId": "fa_...",
+        "bankName": "HDFC Bank", "bankIfsc": "HDFC0000634",
+        "bankHolderName": "Ravi Kumar", "bankAccountNo": "XXXXXXXXXX6280",
+        "bankLinkedAt": "2026-08-30T09:00:00.000Z", "panNumber": "XXXXXX234C"
+      }
+    ],
+    "pagination": { "page": 1, "limit": 20, "total": 16, "pages": 1 }
+  }
+}
+```
 
 ---
 ### GET /api/admin/kyc

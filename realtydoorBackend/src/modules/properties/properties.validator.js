@@ -50,6 +50,9 @@ const createPropertySchema = z.object({
   mortgageLender: z.string().max(200).optional(),
   loanNocStatus: z.enum(['NOT_REQUIRED', 'PENDING', 'RECEIVED', 'REJECTED']).optional(),
   loanNocUrl: z.string().url().optional(),
+  // R19 — turns on the CO_OWNER_CONSENT checklist item (checklist.service.js).
+  // Nullable, same reasoning as isMortgaged: null means "not recorded".
+  hasCoOwners: z.boolean().optional(),
   amenities: z.array(z.string()).optional(),
   societyFeatures: z.array(z.string()).optional(),
   metaTitle: z.string().max(60).optional(),

@@ -155,6 +155,22 @@ model User {
   razorpayRouteAccountId String?
   bankLinkedAt           DateTime?
 
+  // R8 — billing details, for the commission invoice this partner is issued.
+  // Separate from the bank fields above: this is who the invoice is
+  // addressed to, not where the money lands. GSTIN already exists below
+  // (`gstin`, 3.2/3.3/B1.6) — reused here rather than duplicated.
+  // billingLegalName is deliberately distinct from companyName above: a
+  // partner can trade under one name (companyName, shown throughout the
+  // app) while being registered, for GST/invoicing purposes, under a
+  // different legal entity name. billingAddress is likewise distinct from
+  // the buyer-facing `address` field — that one is a buyer's personal
+  // address, this is a business billing address.
+  billingLegalName            String?
+  billingAddress              String?
+  billingAccountsContactName  String?
+  billingAccountsContactEmail String?
+  billingAccountsContactPhone String?
+
   // B12.1/B12.4 — RazorpayX payout account. A contact + fund account are
   // created once at onboarding and reused for every release, instead of being
   // rebuilt from the release request each time (which left no pre-validated

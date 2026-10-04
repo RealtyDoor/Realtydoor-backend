@@ -100,6 +100,8 @@ router.get('/partners',     ctrl.getPartnerMetrics);
 router.get('/partners/:id', ctrl.getPartnerById);
 // 3.5 — flag a payout account for clarification, or clear it once fixed.
 router.patch('/partners/:id/payout-account/status', ctrl.setPayoutAccountStatus);
+// R14 — every partner's payout account in one list.
+router.get('/payout-accounts', ctrl.listPayoutAccounts);
 
 // Escrow (admin actions)
 router.patch('/escrow/:id/release', escrowCtrl.releaseEscrow);

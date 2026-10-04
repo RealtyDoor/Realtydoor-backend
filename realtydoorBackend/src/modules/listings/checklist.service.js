@@ -18,13 +18,22 @@ const { createAuditLog } = require('../../lib/auditLog');
 // PROJECT, not a single unit listing — docs 4.10/4.11's Project entity, not
 // yet modelled. Reported as "not yet available" rather than guessed at.
 
+// Unconditionally required for every OWNER listing.
 const OWNER_DOCUMENT_TYPES = ['SALE_DEED', 'ENCUMBRANCE_CERTIFICATE', 'KHATA', 'SOCIETY_NOC'];
+// Conditionally required (see getChecklist's hasCoOwners/reraNumber checks),
+// but uploadable at any time regardless — an owner may reasonably upload
+// RERA_CERT before admin or anyone else has set reraNumber, for example.
+const CONDITIONAL_OWNER_DOCUMENT_TYPES = ['CO_OWNER_CONSENT', 'RERA_CERT'];
+// The full allowlist uploadChecklistDocument accepts.
+const UPLOADABLE_OWNER_DOCUMENT_TYPES = [...OWNER_DOCUMENT_TYPES, ...CONDITIONAL_OWNER_DOCUMENT_TYPES];
 
 const DOCUMENT_LABELS = {
   SALE_DEED: 'Sale deed',
   ENCUMBRANCE_CERTIFICATE: 'Encumbrance certificate',
   KHATA: 'Khata',
   SOCIETY_NOC: 'Society NOC',
+  CO_OWNER_CONSENT: 'Co-owner consent',
+  RERA_CERT: 'RERA certificate',
 };
 
 function checklistFor(subType) {
@@ -34,7 +43,11 @@ function checklistFor(subType) {
       documents: OWNER_DOCUMENT_TYPES.map((type) => ({ type, label: DOCUMENT_LABELS[type] })),
       // Loan NOC is conditional, not a flat requirement — a non-mortgaged
       // property genuinely has nothing to upload here. See Property fields.
-      conditionalItems: ['LOAN_NOC (only if the listing is mortgaged)'],
+      conditionalItems: [
+        'LOAN_NOC (only if the listing is mortgaged)',
+        'CO_OWNER_CONSENT (only if hasCoOwners is true)',
+        'RERA_CERT (only if reraNumber is set)',
+      ],
     };
   }
   if (subType === 'AGENT') {
@@ -123,7 +136,27 @@ async function getChecklist(propertyId, requirePartnerId = null) {
       }
     : null;
 
-  const allItems = loanNocItem ? [...items, loanNocItem] : items;
+  // R19 — CO_OWNER_CONSENT and RERA_CERT are real PropertyDocument uploads
+  // (unlike loan NOC above), but still conditional: most listings have one
+  // owner and no RERA registration claimed, so requiring either
+  // unconditionally would ask most owners for a document that doesn't apply
+  // to them. Pulled from the same byType map as the base items, exactly like
+  // SALE_DEED etc. — only whether they're INCLUDED is conditional.
+  const conditionalDocTypes = [];
+  if (property.hasCoOwners) conditionalDocTypes.push({ type: 'CO_OWNER_CONSENT', label: 'Co-owner consent' });
+  if (property.reraNumber) conditionalDocTypes.push({ type: 'RERA_CERT', label: 'RERA certificate' });
+  const resolvedConditionalDocs = conditionalDocTypes.map(({ type, label }) => {
+    const doc = byType[type];
+    return {
+      type, label,
+      status: doc ? doc.status : 'MISSING',
+      fileUrl: doc?.fileUrl ?? null,
+      uploadedAt: doc?.uploadedAt ?? null,
+      rejectionNote: doc?.rejectionNote ?? null,
+    };
+  });
+
+  const allItems = [...items, ...(loanNocItem ? [loanNocItem] : []), ...resolvedConditionalDocs];
   const missing = allItems.filter((i) => i.status === 'MISSING' || i.status === 'REJECTED');
 
   // Newest non-SUPERSEDED confirmation, with status derived the same way
@@ -177,8 +210,8 @@ async function uploadChecklistDocument(propertyId, partnerId, { documentType, fi
     throw new ApiError(400,
       `This checklist document type is for the OWNER persona. This listing's partner is ${property.partner.partnerSubType || 'unset'}.`);
   }
-  if (!OWNER_DOCUMENT_TYPES.includes(documentType)) {
-    throw new ApiError(400, `documentType must be one of ${OWNER_DOCUMENT_TYPES.join(', ')}`);
+  if (!UPLOADABLE_OWNER_DOCUMENT_TYPES.includes(documentType)) {
+    throw new ApiError(400, `documentType must be one of ${UPLOADABLE_OWNER_DOCUMENT_TYPES.join(', ')}`);
   }
 
   // Upsert on the (propertyId, documentType) unique index: a re-upload
@@ -329,7 +362,7 @@ async function recordOwnerConfirmationResponse(id, { status, note }, adminId, ip
 }
 
 module.exports = {
-  OWNER_DOCUMENT_TYPES, CONFIRMATION_WINDOW_MS,
+  OWNER_DOCUMENT_TYPES, UPLOADABLE_OWNER_DOCUMENT_TYPES, CONFIRMATION_WINDOW_MS,
   getChecklist,
   uploadChecklistDocument, verifyChecklistDocument, rejectChecklistDocument,
   requestOwnerConfirmation, recordOwnerConfirmationResponse,

@@ -47,6 +47,15 @@ enum PropertyDocumentType {
   ENCUMBRANCE_CERTIFICATE
   KHATA
   SOCIETY_NOC
+  // R19's full OWNER-persona list is EC/KHATA/MORTGAGE_NOC/CO_OWNER_CONSENT/
+  // SALE_DEED/RERA_CERT. MORTGAGE_NOC is deliberately NOT a value here — it
+  // already exists as Property.loanNocUrl/loanNocStatus (doc 4.5), which is
+  // conditional (only required when isMortgaged) and reads as MISSING for a
+  // non-mortgaged property rather than as a document nobody uploaded. Adding
+  // a second PropertyDocument row for the same concept would give it two
+  // inconsistent homes.
+  CO_OWNER_CONSENT
+  RERA_CERT
 }
 
 // 4.2 — owner confirmation for an agent-submitted listing. Created alongside

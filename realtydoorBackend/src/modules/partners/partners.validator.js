@@ -45,6 +45,17 @@ const updateBankAccountSchema = z.object({
   bankHolderName:         z.string().min(2).max(100),
 });
 
+// R8 — all optional individually (a partner may fill these in over several
+// visits), but at least one must be given per call.
+const updateBillingSchema = z.object({
+  billingLegalName: z.string().min(2).max(200).optional(),
+  gstin: z.string().regex(/^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}Z[A-Z\d]{1}$/, 'Invalid GSTIN format').optional(),
+  billingAddress: z.string().min(5).max(500).optional(),
+  billingAccountsContactName: z.string().min(2).max(100).optional(),
+  billingAccountsContactEmail: z.string().email().optional(),
+  billingAccountsContactPhone: z.string().min(5).max(20).optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: 'At least one field required' });
+
 const createSupportTicketSchema = z.object({
   subject:     z.string().min(5).max(200),
   description: z.string().min(10).max(2000),
@@ -85,6 +96,6 @@ module.exports = {
   acceptTermsSchema,
   updateProfileSchema,
   updateSettingsSchema,
-  updateBankAccountSchema,
+  updateBankAccountSchema, updateBillingSchema,
   createSupportTicketSchema,
 };
