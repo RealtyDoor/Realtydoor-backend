@@ -153,8 +153,23 @@ async function approveChangeRequest(id, { adminId, adminName, note, force }, ip)
   // Refuse by default when the listing moved underneath the request. Approving
   // anyway is a real choice an admin may need to make, so it is allowed with
   // force=true, but it is never the silent default.
+  //
+  // pair.before is ALREADY a JSON-encoded string (diffProperty in
+  // properties.service.js stores JSON.stringify(value), not the raw value) —
+  // it must be compared directly against JSON.stringify(property[field]),
+  // not re-stringified. An earlier version wrapped it in JSON.stringify()
+  // again, which turned "7500000" into "\"7500000\"" and made the two sides
+  // structurally unable to match for ANY field, on ANY request, ever — every
+  // normal approval 409'd as "the listing changed" even when nothing had.
+  // getChangeRequest's read-only conflict check (above) never had this bug:
+  // it decodes pair.before through presentChanges() before comparing, so it
+  // compares real values, not JSON text. This was missed in the original
+  // live verification because every test of this path happened to use
+  // force=true, which bypasses the check regardless of whether it's correct
+  // — the plain, no-interference approval was never actually exercised
+  // without force until this was caught.
   const conflicts = entries
-    .filter(([field, pair]) => JSON.stringify(property[field] ?? null) !== JSON.stringify(pair.before))
+    .filter(([field, pair]) => JSON.stringify(property[field] ?? null) !== pair.before)
     .map(([field]) => field);
   if (conflicts.length && !force) {
     throw new ApiError(409,
