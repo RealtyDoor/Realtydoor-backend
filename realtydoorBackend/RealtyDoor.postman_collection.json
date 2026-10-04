@@ -5294,6 +5294,45 @@
                   "body": "{\"success\":true,\"message\":\"Unit removed\",\"data\":{\"id\":\"6a44...\",\"unitNumber\":\"A-101\",\"bhk\":2,\"carpetArea\":650,\"price\":4500000,\"floorNumber\":1,\"status\":\"AVAILABLE\"}}"
                 }
               ]
+            },
+            {
+              "name": "List My Builder Invoices (R28)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/builder-invoices?page=1&limit=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "builder-invoices"
+                  ],
+                  "query": [
+                    { "key": "page", "value": "1" },
+                    { "key": "limit", "value": "20" },
+                    { "key": "status", "value": "INVOICED", "disabled": true }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - My Builder Invoices",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a1a3213aa8de854e8acfad7\",\"amount\":130000,\"status\":\"INVOICED\",\"invoiceUrl\":\"https://realtydoor-production.s3.ap-south-2.amazonaws.com/receipts/....pdf\",\"project\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"title\":\"Skyline Towers\"},\"unit\":{\"id\":\"6a1a3213aa8de854e8acfadA\",\"unitNumber\":\"A-101\"}}],\"pagination\":{\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                }
+              ]
             }
           ]
         }
@@ -8633,6 +8672,249 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":true,\"message\":\"approvedPlan marked APPROVED\",\"data\":{\"id\":\"6a44...\",\"title\":\"Skyline Towers\",\"slug\":\"skyline-towers-1791121172908\",\"city\":\"Pune\",\"locality\":\"Hinjewadi\",\"publishStatus\":\"APPROVED\",\"reraProjectNumber\":\"P52100012345\",\"commercials\":{\"totalUnits\":40,\"availableUnits\":22,\"bookedUnits\":10,\"soldUnits\":8,\"priceFrom\":4500000,\"priceTo\":9500000},\"approvedPlanStatus\":\"APPROVED\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Set Brokerage Rate (R28)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"brokeragePct\": 3.5\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/projects/{{projectId}}/brokerage",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "projects",
+                    "{{projectId}}",
+                    "brokerage"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Brokerage Set",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Brokerage rate set\",\"data\":{\"id\":\"6a44...\",\"brokeragePct\":3.5}}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Builder Invoices",
+          "item": [
+            {
+              "name": "Create Builder Invoice",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"unitId\": \"{{unitId}}\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/builder-invoices",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "builder-invoices"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "201 - Invoice Issued",
+                  "status": "Created",
+                  "code": 201,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Invoice issued\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad7\",\"projectId\":\"6a1a3213aa8de854e8acfad8\",\"unitId\":\"{{unitId}}\",\"builderId\":\"6a1a3213aa8de854e8acfad9\",\"unitPrice\":6500000,\"brokeragePct\":2,\"amount\":130000,\"status\":\"INVOICED\",\"invoiceUrl\":\"https://realtydoor-production.s3.ap-south-2.amazonaws.com/receipts/....pdf\",\"invoicedAt\":\"2026-10-04T16:13:34.939Z\",\"collectedAt\":null}}"
+                },
+                {
+                  "name": "400 - Unit Not Sold",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"Cannot invoice a unit that is AVAILABLE — mark it SOLD first\"}"
+                },
+                {
+                  "name": "409 - Already Invoiced",
+                  "status": "Conflict",
+                  "code": 409,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"This unit already has an invoice\"}"
+                }
+              ]
+            },
+            {
+              "name": "List Builder Invoices (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/builder-invoices?page=1&limit=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "builder-invoices"
+                  ],
+                  "query": [
+                    { "key": "page", "value": "1" },
+                    { "key": "limit", "value": "20" },
+                    { "key": "builderId", "value": "", "disabled": true },
+                    { "key": "projectId", "value": "", "disabled": true },
+                    { "key": "status", "value": "INVOICED", "disabled": true }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Invoices",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a1a3213aa8de854e8acfad7\",\"amount\":130000,\"status\":\"INVOICED\",\"project\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"title\":\"Skyline Towers\"},\"unit\":{\"id\":\"6a1a3213aa8de854e8acfadA\",\"unitNumber\":\"A-101\"},\"builder\":{\"id\":\"6a1a3213aa8de854e8acfad9\",\"name\":\"Ramesh Builder\",\"companyName\":\"Skyline Developers\"}}],\"pagination\":{\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                }
+              ]
+            },
+            {
+              "name": "Collect Builder Invoice",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/builder-invoices/{{builderInvoiceId}}/collect",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "builder-invoices",
+                    "{{builderInvoiceId}}",
+                    "collect"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Collected",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Payment recorded as collected\",\"data\":{\"id\":\"{{builderInvoiceId}}\",\"status\":\"COLLECTED\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Dispute Builder Invoice",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Builder disputes the unit price used\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/builder-invoices/{{builderInvoiceId}}/dispute",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "builder-invoices",
+                    "{{builderInvoiceId}}",
+                    "dispute"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Disputed",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Marked as disputed\",\"data\":{\"id\":\"{{builderInvoiceId}}\",\"status\":\"DISPUTED\",\"disputeNote\":\"Builder disputes the unit price used\"}}"
                 }
               ]
             }

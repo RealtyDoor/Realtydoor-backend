@@ -1,0 +1,46 @@
+// ─── BUILDER INVOICE ──────────────────────────────────────────────────────────
+// R28 — brokerage RealtyDoor charges a BUILDER per unit sold through a
+// Project (docs 4.10/4.11). Separate from the Lead-based owner success fee
+// (R26, commission.prisma): a Project/ProjectUnit sale has no Lead at all
+// (ProjectUnit.status just flips to SOLD, builder-side, with nothing else
+// tracking the sale) — this is the only record of the money owed on it.
+//
+// Admin-created, deliberately not auto-generated when a builder flips their
+// own unit to SOLD: setUnitStatus is self-service, and a self-interested
+// builder choosing when to declare a unit sold is not a fact the platform
+// should invoice itself on without a human checking it first.
+//
+// No PENDING state (unlike Lead.commissionStatus, which has a real
+// negotiation phase before terms are even agreed) — a brokerage rate is
+// already known at creation time (Project.brokeragePct or the platform
+// default), so this starts at INVOICED directly.
+
+model BuilderInvoice {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  projectId String @db.ObjectId
+  project   Project @relation(fields: [projectId], references: [id])
+  unitId    String @db.ObjectId
+  unit      ProjectUnit @relation(fields: [unitId], references: [id])
+  builderId String @db.ObjectId
+  builder   User   @relation(fields: [builderId], references: [id])
+
+  unitPrice    Float
+  brokeragePct Float
+  amount       Float
+
+  status      CommissionStatus @default(INVOICED)
+  invoiceUrl  String?
+  invoicedAt  DateTime?
+  collectedAt DateTime?
+  disputeNote String?
+
+  createdByAdminId String  @db.ObjectId
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // One invoice per unit — a unit only sells once.
+  @@unique([unitId])
+  @@index([projectId])
+  @@index([builderId, status])
+  @@index([status])
+}

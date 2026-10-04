@@ -45,6 +45,12 @@ model Project {
   designatedAccountNumber     String?
   designatedAccountIfsc       String?
 
+  // R28 — brokerage rate RealtyDoor charges this builder per unit sold.
+  // Nullable: falls back to a platform default (config key
+  // default_builder_brokerage_pct), same pattern as commission.service.js's
+  // DEFAULT_FEE_PCT, rather than blocking invoicing until admin sets one.
+  brokeragePct Float?
+
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
   publishStatus PublishStatus @default(PENDING_APPROVAL)
   rejectionNote String?
@@ -63,6 +69,7 @@ model Project {
   updatedAt DateTime @updatedAt
 
   units ProjectUnit[]
+  invoices BuilderInvoice[]
 
   @@index([builderId])
   @@index([publishStatus])
@@ -104,6 +111,8 @@ model ProjectUnit {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  invoice BuilderInvoice?
 
   // A builder re-numbering or re-entering the same unit twice is a data
   // error worth catching rather than silently duplicating inventory.

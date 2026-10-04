@@ -55,7 +55,12 @@ const setApprovalItemSchema = z.object({
   status: z.enum(['APPROVED', 'REJECTED']),
 });
 
+// R28
+const setBrokerageSchema = z.object({
+  brokeragePct: z.number().min(0).max(100),
+});
+
 module.exports = {
   createProjectSchema, updateProjectSchema, unitSchema, bulkAddUnitsSchema, setUnitStatusSchema,
-  rejectProjectSchema, requestProjectChangesSchema, setApprovalItemSchema,
+  rejectProjectSchema, requestProjectChangesSchema, setApprovalItemSchema, setBrokerageSchema,
 };

@@ -7,6 +7,7 @@ const listingCtrl = require('../listings/listings.partner.controller');
 const dataAckCtrl = require('./dataAck.controller');
 const projectCtrl = require('../projects/project.controller');
 const referralCtrl = require('../referrals/referral.controller');
+const builderInvoiceCtrl = require('../projects/builderInvoice.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
@@ -70,6 +71,8 @@ router.post('/projects/:id/units/bulk',      requireKyc, projectCtrl.bulkAddUnit
 router.patch('/projects/:id/units/:unitId',          requireKyc, projectCtrl.updateUnit);
 router.patch('/projects/:id/units/:unitId/status',   requireKyc, projectCtrl.setUnitStatus);
 router.delete('/projects/:id/units/:unitId',         requireKyc, projectCtrl.deleteUnit);
+// R28 — builder's own brokerage invoices (admin creates; builder views).
+router.get('/builder-invoices', requireKyc, builderInvoiceCtrl.listMine);
 
 // Finance/escrow summary (KYC required)
 router.get('/finance',    requireKyc, ctrl.getFinanceSummary);

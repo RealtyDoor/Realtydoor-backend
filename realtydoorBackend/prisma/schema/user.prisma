@@ -214,6 +214,8 @@ model User {
   // (separately) this user as a referred buyer, once matched.
   advisorReferrals    AdvisorReferral[] @relation("AdvisorReferrals")
   referredAsBuyer     AdvisorReferral[] @relation("ReferredAsBuyer")
+  // R28 — brokerage invoices for units sold in this builder's own projects.
+  builderInvoices     BuilderInvoice[]
 
   @@index([phone])
   @@index([deletedAt])

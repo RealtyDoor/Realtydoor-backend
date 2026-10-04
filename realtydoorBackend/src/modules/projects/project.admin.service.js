@@ -124,4 +124,24 @@ async function setApprovalItemStatus(id, item, status, adminId, ip) {
   return updated;
 }
 
-module.exports = { approveProject, rejectProject, requestProjectChanges, setApprovalItemStatus, APPROVAL_FIELD_MAP };
+// R28 — the brokerage rate RealtyDoor charges this builder, deliberately
+// admin-only: a builder setting their own fee is the same conflict-of-
+// interest 3.17 already guards against on the Lead-commission side.
+async function setBrokeragePct(id, brokeragePct, adminId, ip) {
+  const project = await prisma.project.findUnique({ where: { id }, select: { id: true, brokeragePct: true } });
+  if (!project) throw new ApiError(404, 'Project not found');
+
+  const updated = await prisma.project.update({ where: { id }, data: { brokeragePct } });
+
+  await createAuditLog({
+    adminId, action: 'PROJECT_BROKERAGE_SET', targetType: 'Project', targetId: id,
+    before: { brokeragePct: project.brokeragePct }, after: { brokeragePct }, ipAddress: ip,
+  });
+
+  return updated;
+}
+
+module.exports = {
+  approveProject, rejectProject, requestProjectChanges, setApprovalItemStatus, setBrokeragePct,
+  APPROVAL_FIELD_MAP,
+};

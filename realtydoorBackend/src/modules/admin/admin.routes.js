@@ -15,6 +15,7 @@ const integrityCtrl = require('../listings/integrity.controller');
 const locationCtrl = require('../listings/location.controller');
 const checklistCtrl = require('../listings/checklist.controller');
 const projectCtrl = require('../projects/project.controller');
+const builderInvoiceCtrl = require('../projects/builderInvoice.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
@@ -82,6 +83,15 @@ router.patch('/projects/:id/approve',        projectCtrl.approve);
 router.patch('/projects/:id/reject',         projectCtrl.reject);
 router.patch('/projects/:id/request-changes', projectCtrl.requestChanges);
 router.patch('/projects/:id/approvals/:item', projectCtrl.setApprovalItem);
+// R28 — admin-only; a builder cannot set their own brokerage rate.
+router.patch('/projects/:id/brokerage',       projectCtrl.setBrokerage);
+
+// R28 — builder brokerage invoices. Static segments stay above
+// /builder-invoices/:id for the same reason as /projects/:id above.
+router.get('/builder-invoices',                builderInvoiceCtrl.listAdmin);
+router.post('/builder-invoices',                builderInvoiceCtrl.createInvoice);
+router.post('/builder-invoices/:id/collect',    builderInvoiceCtrl.collectInvoice);
+router.post('/builder-invoices/:id/dispute',    builderInvoiceCtrl.disputeInvoice);
 
 // KYC
 router.get('/kyc',                ctrl.getPendingKyc);

@@ -51,6 +51,9 @@ const CATEGORY_BY_TYPE = {
   // R26 — the owner's success-fee payment lifecycle.
   COMMISSION_INVOICED: 'FEES',
   COMMISSION_COLLECTED: 'FEES',
+  // R28 — the builder's brokerage-invoice payment lifecycle.
+  BUILDER_INVOICE_ISSUED: 'FEES',
+  BUILDER_INVOICE_COLLECTED: 'FEES',
 };
 
 const NOTIFICATION_CATEGORIES = ['LEADS', 'ESCROW', 'KYC', 'LISTINGS', 'FEES', 'SYSTEM'];

@@ -6265,6 +6265,117 @@ each compliance document independently, not just the project as a whole.
 
 ---
 
+### PATCH /api/admin/projects/:id/brokerage
+
+R28 — sets the brokerage rate RealtyDoor charges this builder per unit
+sold. Admin-only on purpose: a builder setting their own fee would be the
+same conflict of interest 3.17 already guards against on the Lead-commission
+side. Nullable until set — `POST .../builder-invoices` falls back to a
+platform default (`default_builder_brokerage_pct` config, 2% out of the
+box) rather than blocking invoicing.
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "brokeragePct": 3.5 }` — 0–100.
+
+---
+
+## Builder Invoices (R28)
+
+Brokerage RealtyDoor charges a builder per unit sold through a Project
+(4.10/4.11). Separate from the Lead-based owner success fee (R26): a
+Project/`ProjectUnit` sale has no `Lead` at all — `setUnitStatus` just flips
+the unit to `SOLD`, builder-side, with nothing else tracking the sale. This
+is the only record of money owed on it.
+
+**Admin-created, not auto-generated when a builder marks their own unit
+SOLD** — `setUnitStatus` is self-service, and a self-interested builder
+choosing when to declare a sale isn't a fact the platform should invoice
+itself on without a human checking it first.
+
+A simple payment receipt, same as R26 (no GST breakup). No `PENDING` state:
+unlike Lead commission, there's no negotiation phase — the rate is already
+known at creation time — so an invoice starts at `INVOICED` directly. One
+invoice per unit, enforced at the database level.
+
+### POST /api/admin/builder-invoices
+
+Confirms a unit sold and issues the invoice in one step.
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "unitId": "..." }`
+
+**Response `201`:**
+
+```json
+{
+  "success": true, "message": "Invoice issued",
+  "data": {
+    "id": "...", "projectId": "...", "unitId": "...", "builderId": "...",
+    "unitPrice": 6500000, "brokeragePct": 2, "amount": 130000,
+    "status": "INVOICED",
+    "invoiceUrl": "https://realtydoor-production.s3.ap-south-2.amazonaws.com/receipts/....pdf",
+    "invoicedAt": "2026-10-04T16:13:34.939Z", "collectedAt": null
+  }
+}
+```
+
+**Errors:**
+- `400` `UNIT_NOT_SOLD` — unit isn't `SOLD` yet
+- `400` `UNIT_PRICE_MISSING` — unit has no price set
+- `409` `INVOICE_ALREADY_EXISTS` — this unit already has one
+
+---
+
+### POST /api/admin/builder-invoices/:id/collect
+
+Marks the invoice paid. `INVOICED` → `COLLECTED`, `collectedAt` set.
+Notifies the builder (`BUILDER_INVOICE_COLLECTED`, `FEES` category).
+
+**Auth:** ADMIN
+
+**Errors:** `400` `INVALID_INVOICE_STATUS` — not currently `INVOICED`.
+
+---
+
+### POST /api/admin/builder-invoices/:id/dispute
+
+The builder disputes the invoice. `INVOICED` → `DISPUTED`, reason stored on
+`disputeNote`. Refused once `COLLECTED` (a settled payment needs a human
+decision to reverse, not a status flip) or already `DISPUTED`.
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "reason": "Builder disputes the unit price used" }` — required, 5–500 chars.
+
+**Errors:** `400` `INVALID_INVOICE_STATUS` — currently `COLLECTED` or already `DISPUTED`.
+
+---
+
+### GET /api/admin/builder-invoices
+
+Every builder invoice, any project — oversight, not creation.
+
+**Auth:** ADMIN
+
+**Query Parameters:** `builderId`, `projectId`, `status`, `page`, `limit`
+
+**Response `200`:** each row includes `project: { id, title }`,
+`unit: { id, unitNumber }`, `builder: { id, name, companyName }`.
+
+---
+
+### GET /api/partner/builder-invoices
+
+The builder's own invoices, across all their projects.
+
+**Auth:** PARTNER + KYC verified
+
+**Query Parameters:** `status`, `page`, `limit`
+
+---
+
 ### PATCH /api/admin/partners/:id/payout-account/status
 
 Admin side of the payout-account clarification flow — `createPayoutAccount`

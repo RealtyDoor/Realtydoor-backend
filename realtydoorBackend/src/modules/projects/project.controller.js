@@ -5,7 +5,7 @@ const unitSvc = require('./projectUnit.service');
 const adminSvc = require('./project.admin.service');
 const {
   createProjectSchema, updateProjectSchema, bulkAddUnitsSchema, unitSchema, setUnitStatusSchema,
-  rejectProjectSchema, requestProjectChangesSchema, setApprovalItemSchema,
+  rejectProjectSchema, requestProjectChangesSchema, setApprovalItemSchema, setBrokerageSchema,
 } = require('./project.validator');
 
 // ─── Public ───────────────────────────────────────────────────────────────────
@@ -134,8 +134,16 @@ async function setApprovalItem(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// R28
+async function setBrokerage(req, res, next) {
+  try {
+    const { brokeragePct } = setBrokerageSchema.parse(req.body);
+    success(res, await adminSvc.setBrokeragePct(req.params.id, brokeragePct, req.user.id, req.ip), 'Brokerage rate set');
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   search, getBySlug,
   create, getMine, listMine, update, addUnit, bulkAddUnits, updateUnit, setUnitStatus, deleteUnit,
-  listAdmin, getAdmin, approve, reject, requestChanges, setApprovalItem,
+  listAdmin, getAdmin, approve, reject, requestChanges, setApprovalItem, setBrokerage,
 };
