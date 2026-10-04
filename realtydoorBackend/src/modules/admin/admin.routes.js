@@ -8,6 +8,7 @@ const watiCtrl = require('../wati/wati.controller');
 const b2bCtrl = require('../b2b/b2b.controller');
 const contactCtrl = require('../contact/contact.admin.controller');
 const commissionCtrl = require('../commission/commission.controller');
+const referralCtrl = require('../referrals/referral.controller');
 const analyticsCtrl = require('../analytics/analytics.controller');
 const listingCtrl = require('../listings/listings.admin.controller');
 const integrityCtrl = require('../listings/integrity.controller');
@@ -236,6 +237,11 @@ router.get('/leads/:id/commission/history',  commissionCtrl.leadTermsHistory);
 router.post('/leads/:id/commission/prefill', commissionCtrl.prefillLeadTerms);
 router.put('/leads/:id/commission',          commissionCtrl.setLeadTerms);
 router.post('/leads/:id/commission/lock',    commissionCtrl.lockLeadTerms);
+
+// R29 — advisor referrals (oversight; creation is self-service, see
+// POST /api/partner/referrals).
+router.get('/advisor-referrals',             referralCtrl.listAdmin);
+router.patch('/advisor-referrals/:id/revoke', referralCtrl.revokeAdmin);
 
 // Platform config
 router.get('/config',         ctrl.listConfig);

@@ -4733,6 +4733,189 @@
           ]
         },
         {
+          "name": "Referrals",
+          "item": [
+            {
+              "name": "Refer a Client",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/referrals",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "referrals"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"buyerName\": \"Priya Sharma\",\n  \"buyerPhone\": \"9876543210\",\n  \"buyerEmail\": \"priya@example.com\",\n  \"note\": \"Met at a property expo\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [
+                {
+                  "name": "201 - Referral Recorded",
+                  "status": "Created",
+                  "code": 201,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Referral recorded\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad7\",\"advisorId\":\"6a1a3213aa8de854e8acfad8\",\"buyerName\":\"Priya Sharma\",\"buyerPhone\":\"9876543210\",\"buyerEmail\":\"priya@example.com\",\"buyerId\":null,\"status\":\"ACTIVE\",\"note\":\"Met at a property expo\"}}"
+                },
+                {
+                  "name": "400 - Not an ADVISOR Persona",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"Only an ADVISOR-persona partner can refer a client. This partner is AGENT.\"}"
+                },
+                {
+                  "name": "409 - Already Has an Active Referral",
+                  "status": "Conflict",
+                  "code": 409,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"This phone number already has an active referral from a different advisor. Ask admin to revoke it first.\"}"
+                }
+              ]
+            },
+            {
+              "name": "List My Referrals",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/referrals?page=1&limit=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "referrals"
+                  ],
+                  "query": [
+                    { "key": "page", "value": "1" },
+                    { "key": "limit", "value": "20" }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - My Referrals",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a1a3213aa8de854e8acfad7\",\"buyerName\":\"Priya Sharma\",\"buyerPhone\":\"9876543210\",\"status\":\"ACTIVE\",\"createdAt\":\"2026-09-20T10:00:00.000Z\"}],\"pagination\":{\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                }
+              ]
+            },
+            {
+              "name": "Revoke My Referral",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/partner/referrals/{{referralId}}/revoke",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "partner",
+                    "referrals",
+                    "{{referralId}}",
+                    "revoke"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"No longer in touch with this buyer\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Referral Revoked",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Referral revoked\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad7\",\"status\":\"REVOKED\",\"revokedReason\":\"No longer in touch with this buyer\"}}"
+                },
+                {
+                  "name": "403 - Not Your Referral",
+                  "status": "Forbidden",
+                  "code": 403,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"Not your referral\"}"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "Projects",
           "item": [
             {
@@ -7702,6 +7885,97 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":true,\"message\":\"Override revoked\",\"data\":{\"id\":\"{{overrideId}}\",\"isActive\":false}}"
+                }
+              ]
+            },
+            {
+              "name": "List Advisor Referrals (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/advisor-referrals?page=1&limit=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "advisor-referrals"
+                  ],
+                  "query": [
+                    { "key": "page", "value": "1" },
+                    { "key": "limit", "value": "20" },
+                    { "key": "advisorId", "value": "", "disabled": true },
+                    { "key": "buyerPhone", "value": "", "disabled": true },
+                    { "key": "status", "value": "ACTIVE", "disabled": true }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Referrals",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a1a3213aa8de854e8acfad7\",\"advisorId\":\"6a1a3213aa8de854e8acfad8\",\"buyerName\":\"Priya Sharma\",\"buyerPhone\":\"9876543210\",\"status\":\"ACTIVE\",\"advisor\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"name\":\"Rajdeep Kumar\",\"companyName\":\"RealtyPro Solutions\"}}],\"pagination\":{\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                }
+              ]
+            },
+            {
+              "name": "Revoke Advisor Referral (Admin)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/advisor-referrals/{{referralId}}/revoke",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "advisor-referrals",
+                    "{{referralId}}",
+                    "revoke"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"Buyer disputes ever being referred by this advisor\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Revoked",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Referral revoked\",\"data\":{\"id\":\"{{referralId}}\",\"status\":\"REVOKED\",\"revokedReason\":\"Buyer disputes ever being referred by this advisor\"}}"
                 }
               ]
             },

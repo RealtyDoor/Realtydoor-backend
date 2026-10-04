@@ -1,0 +1,44 @@
+// ─── ADVISOR REFERRAL ─────────────────────────────────────────────────────────
+// R29 — attaches an advisor to a buyer, so the advisor's cut (ADVISOR
+// commission line, already modelled — see commission.prisma) is pre-filled
+// automatically on every lead that buyer later generates, instead of admin
+// re-naming the same advisor by hand on each one.
+//
+// Keyed by buyerPhone, not buyerId: an advisor typically refers someone
+// *before* they have a RealtyDoor account (the same reason Lead.buyerId is
+// optional). buyerId is filled in opportunistically once a matching account
+// is found, for display only — commission.service.js's lookup always
+// matches on phone, which is guaranteed present on both this model and Lead.
+
+model AdvisorReferral {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  advisorId String @db.ObjectId
+  advisor   User   @relation("AdvisorReferrals", fields: [advisorId], references: [id])
+
+  buyerName  String
+  buyerPhone String
+  buyerEmail String?
+  buyerId    String? @db.ObjectId
+  buyer      User?   @relation("ReferredAsBuyer", fields: [buyerId], references: [id])
+
+  note   String?
+  status ReferralStatus @default(ACTIVE)
+
+  revokedAt         DateTime?
+  revokedReason     String?
+  createdByAdminId  String?   @db.ObjectId
+  createdAt         DateTime  @default(now())
+
+  // One buyerPhone has at most one ACTIVE referral at a time, enforced in
+  // the service rather than a partial unique index (Mongo/Prisma can't
+  // express "unique only where status = ACTIVE") — the same reasoning as
+  // ExclusiveMandate's "one mandate in force per listing" check.
+  @@index([advisorId, status])
+  @@index([buyerPhone, status])
+  @@index([buyerId, status])
+}
+
+enum ReferralStatus {
+  ACTIVE
+  REVOKED
+}

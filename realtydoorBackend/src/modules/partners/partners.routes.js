@@ -6,6 +6,7 @@ const analyticsCtrl = require('../analytics/analytics.controller');
 const listingCtrl = require('../listings/listings.partner.controller');
 const dataAckCtrl = require('./dataAck.controller');
 const projectCtrl = require('../projects/project.controller');
+const referralCtrl = require('../referrals/referral.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
@@ -95,6 +96,14 @@ router.patch('/bank-account', requireKyc, ctrl.updateBankAccount);
 // R8 — billing details (for the commission invoice).
 router.get('/billing',   requireKyc, ctrl.getBilling);
 router.patch('/billing', requireKyc, ctrl.updateBilling);
+
+// R29 — advisor referrals: attach a buyer so the ADVISOR commission line
+// pre-fills automatically on their leads. Any KYC'd partner can view/revoke
+// their own; creating one is refused by the service unless partnerSubType
+// is ADVISOR.
+router.post('/referrals',         requireKyc, referralCtrl.createMine);
+router.get('/referrals',          requireKyc, referralCtrl.listMine);
+router.patch('/referrals/:id/revoke', requireKyc, referralCtrl.revokeMine);
 
 // Support tickets (Help & Support page)
 router.get('/support-tickets',      ctrl.getSupportTickets);

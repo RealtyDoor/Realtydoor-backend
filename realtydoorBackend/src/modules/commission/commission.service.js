@@ -4,6 +4,7 @@ const { createAuditLog } = require('../../lib/auditLog');
 const { createNotification } = require('../../lib/notifications');
 const { getConfigNumber } = require('../config/config.service');
 const { isSelfListedByAgent } = require('../listings/integrity.service');
+const { getActiveReferralForPhone } = require('../referrals/referral.service');
 
 // Platform default, the last fallback when no card matches. Admin-controlled
 // via platform config, consistent with the 2%-is-admin-controlled decision.
@@ -197,7 +198,7 @@ async function previewTermsForLead(leadId) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
     select: {
-      id: true, assignedPartnerId: true, propertyId: true,
+      id: true, assignedPartnerId: true, propertyId: true, buyerPhone: true,
       property: { select: { id: true, city: true, price: true, partnerId: true, partner: { select: { partnerSubType: true } } } },
     },
   });
@@ -250,10 +251,23 @@ async function previewTermsForLead(leadId) {
   const override = await resolveOverride(lead.assignedPartnerId, lead.propertyId);
   if (override) lines = applyPartnerShareOverride(lines, override.partnerSharePct);
 
+  // R29 — this buyer was referred by an advisor; pre-fill their ADVISOR
+  // line (no pct/flatAmountPaise — setLeadTerms's linesWithAdvisorDefault
+  // looks up advisorStandardFeePaise, the same path a manually-added
+  // advisor line without a rate already goes through) instead of requiring
+  // admin to re-attach the same advisor by hand on every lead this buyer
+  // generates. An explicit ADVISOR line already present (admin override,
+  // or a different advisor named for this specific deal) always wins.
+  const referral = await getActiveReferralForPhone(lead.buyerPhone);
+  if (referral && !lines.some((l) => l.payeeRole === 'ADVISOR')) {
+    lines = [...lines, { payeeRole: 'ADVISOR', payeeUserId: referral.advisorId }];
+  }
+
   return {
     leadId,
     sellerType,
     selfListed,
+    referredByAdvisorId: referral?.advisorId ?? null,
     feePct,
     lines,
     dealPrice: lead.property?.price ?? null,

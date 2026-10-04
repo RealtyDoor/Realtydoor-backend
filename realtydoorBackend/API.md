@@ -5669,12 +5669,21 @@ partner override applied. Writes nothing.
 {
   "leadId": "...", "sellerType": "AGENT", "selfListed": false, "feePct": 2,
   "lines": [{ "payeeRole": "CLOSING_AGENT", "pct": 45 }, { "payeeRole": "PLATFORM", "pct": 55 }],
-  "dealPrice": 7500000, "resolvedFrom": "CITY", "rateCardId": "...", "rateCardVersion": 3
+  "dealPrice": 7500000, "resolvedFrom": "CITY", "rateCardId": "...", "rateCardVersion": 3,
+  "referredByAdvisorId": null
 }
 ```
 
 `resolvedFrom` is `PROPERTY`, `CITY`, `PLATFORM_DEFAULT`, or
 `PARTNER_OVERRIDE` when an override applied on top.
+
+**R29 — `referredByAdvisorId` is set when this lead's buyer phone number
+matches an `ACTIVE` advisor referral** (see **Advisor Referrals** below),
+and an `ADVISOR` line for that advisor is appended to `lines` automatically
+(no `pct` — resolved from their `advisorStandardFeePaise` the same way a
+manually-added advisor line without a rate already is). An `ADVISOR` line
+already present for a *different* advisor, named explicitly for this deal,
+always wins over the referral.
 
 **R21 — `sellerType` resolves to `OWNER` (not the partner's actual
 registered type) when the listing partner is an AGENT who is self-listing**
@@ -5825,6 +5834,110 @@ computed from rows whose `payeeUserId` is literally them. A separate
 figure. The platform's cut is not their business and is not returned.
 
 **Auth:** PARTNER
+
+---
+
+## Advisor Referrals (R29)
+
+Attaches an advisor to a buyer so the `ADVISOR` commission line (already
+modelled — see rate cards/overrides above) pre-fills automatically on every
+lead that buyer generates, instead of admin re-naming the same advisor by
+hand each time.
+
+Keyed by **phone**, not an account: an advisor typically refers someone
+*before* they have a RealtyDoor account (the same reason `Lead.buyerId` is
+optional). `buyerId` is filled in opportunistically for display if a
+matching account already exists; the actual commission match in
+`GET .../commission/preview` always compares phone numbers, which both
+sides are guaranteed to have.
+
+One phone number has **at most one `ACTIVE` referral at a time, across every
+advisor** — a second attempt is refused (`409`), naming whether it's a
+retry (already yours) or a conflict with a different advisor's referral
+(ask admin to revoke it first).
+
+### POST /api/partner/referrals
+
+Self-service: a KYC'd partner refers a client. Refused unless the caller's
+`partnerSubType` is `ADVISOR`.
+
+**Auth:** PARTNER + KYC verified
+
+**Request Body:**
+
+```json
+{ "buyerName": "Priya Sharma", "buyerPhone": "9876543210", "buyerEmail": "priya@example.com", "note": "Met at a property expo" }
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `buyerName` | Yes | 2–100 chars |
+| `buyerPhone` | Yes | 5–20 chars |
+| `buyerEmail` | No | |
+| `note` | No | Up to 500 chars |
+
+**Response `201`:** the referral row, `status: "ACTIVE"`, `buyerId` set only
+if an existing `USER`-role account already has this phone number.
+
+**Errors:**
+- `400` caller is not an `ADVISOR`-persona partner
+- `409` `REFERRAL_ALREADY_ACTIVE` — this phone already has an active referral
+
+---
+
+### GET /api/partner/referrals
+
+The advisor's own referrals.
+
+**Auth:** PARTNER + KYC verified
+
+**Query Parameters:** `status` (`ACTIVE`/`REVOKED`), `page`, `limit`
+
+---
+
+### PATCH /api/partner/referrals/:id/revoke
+
+An advisor revoking their own referral (e.g. the client is no longer being
+worked with). Self-revoke doesn't notify anyone — only an admin revocation
+(below) does, since that's the side that needs explaining.
+
+**Auth:** PARTNER + KYC verified
+
+**Request Body:** `{ "reason": "No longer in touch with this buyer" }` — required, 5–500 chars.
+
+**Response `200`:** the referral, `status: "REVOKED"`.
+
+**Errors:** `400` already revoked · `403` not your referral · `404` not found.
+
+---
+
+### GET /api/admin/advisor-referrals
+
+Every referral, any advisor — oversight, not creation (creation is
+self-service above).
+
+**Auth:** ADMIN
+
+**Query Parameters:** `advisorId`, `buyerPhone`, `status`, `page`, `limit`
+
+**Response `200`:** each row includes `advisor: { id, name, companyName }`.
+
+---
+
+### PATCH /api/admin/advisor-referrals/:id/revoke
+
+Admin revoking a referral on the advisor's behalf — e.g. resolving the
+"different advisor already has an active referral for this phone" conflict
+from the create endpoint above. Notifies the advisor (`ADVISOR_REFERRAL_REVOKED`,
+under the `FEES` category) with the reason.
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "reason": "..." }` — required, 5–500 chars.
+
+**Errors:** `400` already revoked · `404` not found.
+
+---
 
 ## Projects (docs 4.10 / 4.11, R22 / R23)
 

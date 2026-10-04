@@ -210,6 +210,10 @@ model User {
   builderProjects     Project[] @relation("BuilderProjects")
   mandates            ExclusiveMandate[]
   dataAcknowledgments PartnerDataAcknowledgment[]
+  // R29 — advisor referrals: this user as the referring advisor, and
+  // (separately) this user as a referred buyer, once matched.
+  advisorReferrals    AdvisorReferral[] @relation("AdvisorReferrals")
+  referredAsBuyer     AdvisorReferral[] @relation("ReferredAsBuyer")
 
   @@index([phone])
   @@index([deletedAt])

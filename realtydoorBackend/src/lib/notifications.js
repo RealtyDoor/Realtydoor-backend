@@ -46,6 +46,8 @@ const CATEGORY_BY_TYPE = {
   // R32 — a partner's own earnings on a deal, distinct from ESCROW (whether
   // the *money itself* moved) and LEADS (the deal's own lifecycle).
   COMMISSION_LOCKED: 'FEES',
+  // R29 — affects whether an advisor earns anything on a referred buyer at all.
+  ADVISOR_REFERRAL_REVOKED: 'FEES',
 };
 
 const NOTIFICATION_CATEGORIES = ['LEADS', 'ESCROW', 'KYC', 'LISTINGS', 'FEES', 'SYSTEM'];
