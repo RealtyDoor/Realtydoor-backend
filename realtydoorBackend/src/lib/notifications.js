@@ -43,9 +43,12 @@ const CATEGORY_BY_TYPE = {
   SERVICE_ACTIVATED: 'SYSTEM',
   LOAN_STATUS_UPDATE: 'SYSTEM',
   ANNOUNCEMENT: 'SYSTEM',
+  // R32 — a partner's own earnings on a deal, distinct from ESCROW (whether
+  // the *money itself* moved) and LEADS (the deal's own lifecycle).
+  COMMISSION_LOCKED: 'FEES',
 };
 
-const NOTIFICATION_CATEGORIES = ['LEADS', 'ESCROW', 'KYC', 'LISTINGS', 'SYSTEM'];
+const NOTIFICATION_CATEGORIES = ['LEADS', 'ESCROW', 'KYC', 'LISTINGS', 'FEES', 'SYSTEM'];
 
 function categoryFor(type) {
   return CATEGORY_BY_TYPE[type] || 'SYSTEM';

@@ -1,6 +1,7 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { createAuditLog } = require('../../lib/auditLog');
+const { createNotification } = require('../../lib/notifications');
 const { getConfigNumber } = require('../config/config.service');
 const { isSelfListedByAgent } = require('../listings/integrity.service');
 
@@ -541,6 +542,26 @@ async function lockLeadTerms(leadId, adminId, ip) {
     adminId, action: 'COMMISSION_LOCKED', targetType: 'Lead', targetId: leadId,
     after: { version: locked.commissionVersion, feePct: locked.feePct }, ipAddress: ip,
   });
+
+  // R32 — every named partner payee (LISTING_AGENT/CLOSING_AGENT/ADVISOR)
+  // finds out what they're actually earning once it's locked, not only on
+  // request. Fired here specifically, not on every prefill/revision before
+  // this — terms can churn while still unlocked, and notifying on each
+  // revision would be noise for a figure that isn't final yet.
+  const amountsByPayee = new Map((terms.amounts?.byPayee || []).map((a) => [`${a.payeeRole}:${a.payeeUserId}`, a]));
+  for (const line of terms.lines) {
+    if (!PARTNER_ROLES.includes(line.payeeRole) || !line.payeeUserId) continue;
+    const amt = amountsByPayee.get(`${line.payeeRole}:${line.payeeUserId}`);
+    await createNotification({
+      userId: line.payeeUserId,
+      title: 'Commission locked',
+      message: amt?.amount != null
+        ? `Your commission for this deal is locked at ₹${amt.amount.toLocaleString('en-IN')} (${line.pct}% of the fee).`
+        : `Your commission for this deal is locked at ${line.pct}% of the fee.`,
+      type: 'COMMISSION_LOCKED',
+      linkUrl: '/partner/finance',
+    });
+  }
 
   return getLeadTerms(leadId);
 }

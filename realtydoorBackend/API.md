@@ -5797,6 +5797,13 @@ Freezes the current version. A locked lead's terms never change silently —
 
 **Auth:** ADMIN
 
+**R32 — every named partner payee** (`LISTING_AGENT`/`CLOSING_AGENT`/
+`ADVISOR` lines with a `payeeUserId`) **is notified of their locked
+commission** (`COMMISSION_LOCKED`, under the new `FEES` category — see
+`GET /api/notifications`). Fired on lock specifically, not on every
+prefill/revision before it, since terms can still churn while unlocked and
+a figure that isn't final yet isn't worth notifying about.
+
 **Errors:** `400` already locked · `400` no lines set yet.
 
 ---
