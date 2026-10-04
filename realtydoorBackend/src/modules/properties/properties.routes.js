@@ -6,12 +6,17 @@ const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
 const { propertyImageUploader, propertyVideoUploader, propertyDocUploader } = require('../../lib/fileUpload');
 const checklistCtrl = require('../listings/checklist.controller');
-const { searchLimiter } = require('../../middleware/rateLimiter');
+const { searchLimiter, defaultLimiter } = require('../../middleware/rateLimiter');
 
 // Public
 router.get('/', searchLimiter, ctrl.search);
 router.get('/featured', ctrl.getFeatured);
 router.get('/:slug', ctrl.getBySlug);
+
+// R27 — public (the real owner may have no RealtyDoor account at all).
+// Above the slug-only GET for the same reason as construction-updates below:
+// a further path segment, so it can't be captured by `/:slug`.
+router.post('/:id/report-unauthorized', defaultLimiter, ctrl.reportUnauthorizedListing);
 
 // Reviews (public GET, authenticated POST)
 router.use('/:propertyId/reviews', reviewsRouter);

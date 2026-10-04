@@ -38,6 +38,8 @@ const CATEGORY_BY_TYPE = {
   PROPERTY_CHANGES_REQUESTED: 'LISTINGS',
   // 4.1 — a checklist document needed resubmission.
   LISTING_DOCUMENT_REJECTED: 'LISTINGS',
+  // R27 — an owner self-reported a listing as unauthorized.
+  LISTING_OWNER_REPORTED: 'LISTINGS',
   SERVICE_ACTIVATED: 'SYSTEM',
   LOAN_STATUS_UPDATE: 'SYSTEM',
   ANNOUNCEMENT: 'SYSTEM',

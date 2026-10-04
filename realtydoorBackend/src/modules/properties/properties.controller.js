@@ -1,6 +1,6 @@
-const { success } = require('../../utils/ApiResponse');
+const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination } = require('../../utils/pagination');
-const { searchSchema, createPropertySchema } = require('./properties.validator');
+const { searchSchema, createPropertySchema, reportUnauthorizedListingSchema } = require('./properties.validator');
 const service = require('./properties.service');
 const ApiError = require('../../utils/ApiError');
 
@@ -97,7 +97,16 @@ async function addConstructionUpdate(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// R27 — public (no auth): the real owner may have no RealtyDoor account.
+async function reportUnauthorizedListing(req, res, next) {
+  try {
+    const data = reportUnauthorizedListingSchema.parse(req.body);
+    const result = await service.reportUnauthorizedListing(req.params.id, data);
+    created(res, result, 'Report received. Our team will review this listing.');
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   search, getBySlug, getFeatured, create, update, uploadImages, uploadVideos, uploadDocuments, getEditLogs,
-  getConstructionUpdates, addConstructionUpdate,
+  getConstructionUpdates, addConstructionUpdate, reportUnauthorizedListing,
 };

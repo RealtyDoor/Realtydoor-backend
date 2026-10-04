@@ -94,6 +94,10 @@ enum ConflictType {
   // 4.2 — an owner, when actually contacted, denied authorizing the agent's
   // mandate. Written by checklist.service.js::recordOwnerConfirmationResponse.
   OWNER_DENIED_MANDATE
+  // R27 — an owner self-reported this listing as unauthorized, independent
+  // of any admin-initiated confirmation. Written by
+  // integrity.service.js::recordOwnerReport.
+  OWNER_REPORTED_UNAUTHORIZED
 }
 
 enum ConflictStatus {

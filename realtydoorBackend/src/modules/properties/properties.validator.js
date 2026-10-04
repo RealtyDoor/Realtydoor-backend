@@ -92,4 +92,18 @@ const constructionUpdateSchema = z.object({
   completionPct:  z.number().int().min(0).max(100).optional(),
 });
 
-module.exports = { createPropertySchema, searchSchema, constructionUpdateSchema };
+// R27 — public, unauthenticated: the actual owner may have no RealtyDoor
+// account at all, so this can't require a phone/email on file the way an
+// authenticated report could. At least one contact channel is required so
+// admin can follow up at all.
+const reportUnauthorizedListingSchema = z.object({
+  reporterName: z.string().min(2).max(100),
+  reporterEmail: z.string().email().optional(),
+  reporterPhone: z.string().min(5).max(20).optional(),
+  message: z.string().min(10).max(1000),
+}).refine((d) => !!d.reporterEmail || !!d.reporterPhone, {
+  message: 'Provide an email or phone number so we can follow up',
+  path: ['reporterEmail'],
+});
+
+module.exports = { createPropertySchema, searchSchema, constructionUpdateSchema, reportUnauthorizedListingSchema };

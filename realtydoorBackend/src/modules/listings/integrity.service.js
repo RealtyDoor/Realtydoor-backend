@@ -1,6 +1,6 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
-const { createNotification } = require('../../lib/notifications');
+const { createNotification, broadcastNotification } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const logger = require('../../lib/logger');
 
@@ -251,6 +251,41 @@ async function upsertConflict({ propertyId, conflictingPropertyId, type, detail,
   });
 }
 
+// R27 — an owner reporting, on their own initiative, that a listing was not
+// authorized by them. Independent of 4.2's admin-initiated confirmation
+// flow: there, admin reaches out and records what the owner said; here, the
+// owner reaches in first, possibly without ever having been contacted. The
+// conflict is deduped the same way every other OPEN conflict on this
+// property/type pair is (upsertConflict), so a second report before admin
+// has resolved the first doesn't create a duplicate row — the contact
+// message is still logged every time, since each submission is its own
+// piece of evidence.
+async function recordOwnerReport(propertyId, { reporterName, reporterContact, message }) {
+  const property = await prisma.property.findUnique({ where: { id: propertyId }, select: { id: true, title: true } });
+  if (!property) throw new ApiError(404, 'Property not found');
+
+  const conflict = await upsertConflict({
+    propertyId,
+    type: 'OWNER_REPORTED_UNAUTHORIZED',
+    detail: `Reported by "${reporterName}" (${reporterContact}): ${message}`,
+  });
+
+  const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
+  if (admins.length > 0) {
+    await broadcastNotification({
+      userIds: admins.map((a) => a.id),
+      title: 'Owner reported an unauthorized listing',
+      message: `"${property.title}" was reported by ${reporterName} as not authorized by them. Needs review.`,
+      type: 'LISTING_OWNER_REPORTED',
+      linkUrl: `/admin/listings/conflicts`,
+    });
+  }
+
+  logger.warn('[Integrity] Owner reported a listing as unauthorized', { propertyId, reporterName, reporterContact });
+
+  return { propertyId, conflictCreated: !!conflict, conflictId: conflict?.id ?? null };
+}
+
 async function detectConflicts(propertyId) {
   const property = await prisma.property.findUnique({
     where: { id: propertyId },
@@ -414,6 +449,6 @@ async function resolveConflict(id, { status, resolution, adminId }, ip) {
 module.exports = {
   effectiveStatusOf, unitKeyFor, inForceFilter, isSelfListedByAgent,
   createMandate, listMandates, getMandate, revokeMandate,
-  detectConflicts, listConflicts, resolveConflict,
+  detectConflicts, listConflicts, resolveConflict, recordOwnerReport,
   CONFLICT_STATUSES,
 };

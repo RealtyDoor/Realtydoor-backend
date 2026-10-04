@@ -787,6 +787,72 @@
           ]
         },
         {
+          "name": "Report Unauthorized Listing",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/properties/{{propertyId}}/report-unauthorized",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "properties",
+                "{{propertyId}}",
+                "report-unauthorized"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reporterName\": \"Ramesh Owner\",\n  \"reporterEmail\": \"ramesh@example.com\",\n  \"reporterPhone\": \"9876543210\",\n  \"message\": \"I never authorized anyone to list my property on this platform.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "201 - Report Received",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Report received. Our team will review this listing.\",\"data\":{\"contactMessageId\":\"6a1a3213aa8de854e8acfad7\",\"conflictCreated\":true,\"conflictId\":\"6a1a3213aa8de854e8acfad8\"}}"
+            },
+            {
+              "name": "400 - Missing Contact Info",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Provide an email or phone number so we can follow up\"}"
+            }
+          ]
+        },
+        {
           "name": "Add Construction Update",
           "request": {
             "method": "POST",

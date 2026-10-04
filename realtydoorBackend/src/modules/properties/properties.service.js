@@ -4,6 +4,7 @@ const { paginate } = require('../../utils/pagination');
 const { withCache, cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 const logger = require('../../lib/logger');
+const { recordOwnerReport } = require('../listings/integrity.service');
 
 // 4.14 — "appears in search results". null means searchable: these fields were
 // added after 18 listings were already live, and on MongoDB a Prisma default
@@ -572,6 +573,31 @@ async function getConstructionUpdates(propertyId) {
   });
 }
 
+// R27 — public (the real owner may have no account), so this both logs a
+// ContactMessage for the general admin inbox AND opens a ListingConflict
+// (deduped against any already-OPEN one) so it also surfaces directly on
+// the admin Conflicts screen, where integrity issues are actually reviewed
+// rather than mixed in with support-ticket-style inbox traffic.
+async function reportUnauthorizedListing(propertyId, { reporterName, reporterEmail, reporterPhone, message }) {
+  const property = await prisma.property.findUnique({ where: { id: propertyId }, select: { id: true, title: true } });
+  if (!property) throw new ApiError(404, 'Property not found');
+
+  const contactMessage = await prisma.contactMessage.create({
+    data: {
+      name: reporterName, email: reporterEmail || null, phone: reporterPhone || null,
+      subject: `Unauthorized listing report: "${property.title}"`,
+      message,
+      source: 'LISTING_REPORT',
+    },
+  });
+
+  const { conflictCreated, conflictId } = await recordOwnerReport(propertyId, {
+    reporterName, reporterContact: reporterEmail || reporterPhone, message,
+  });
+
+  return { contactMessageId: contactMessage.id, conflictCreated, conflictId };
+}
+
 async function addConstructionUpdate(propertyId, partnerId, data) {
   const property = await prisma.property.findFirst({ where: { id: propertyId, partnerId } });
   if (!property) throw new ApiError(404, 'Property not found');
@@ -584,5 +610,5 @@ async function addConstructionUpdate(propertyId, partnerId, data) {
 module.exports = {
   searchProperties, getPropertyBySlug, createProperty, updateProperty, getFeaturedProperties,
   addImages, addVideos, addDocuments, getPropertyEditLogs,
-  getConstructionUpdates, addConstructionUpdate,
+  getConstructionUpdates, addConstructionUpdate, reportUnauthorizedListing,
 };

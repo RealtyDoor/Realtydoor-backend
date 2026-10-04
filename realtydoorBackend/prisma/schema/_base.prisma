@@ -177,6 +177,9 @@ enum ContactSource {
   USER_SUPPORT
   PRESS
   OUTBOUND
+  // R27 — a property owner (or someone claiming to be one) reporting that a
+  // listing was not authorized by them.
+  LISTING_REPORT
 }
 
 enum VideoTourStatus {

@@ -852,6 +852,61 @@ Ordered by `postedAt` descending. Returns `[]` if no updates yet.
 
 ---
 
+### POST /api/properties/:id/report-unauthorized
+
+R27 — lets a property's actual owner report that a listing was not
+authorized by them. Public and unauthenticated on purpose: the real owner
+may have no RealtyDoor account at all. Distinct from doc 4.2's
+admin-initiated owner-confirmation flow (`OwnerConfirmation` — admin reaches
+out and records what the owner said); this is the owner reaching in first,
+on their own initiative.
+
+**Auth:** Public (rate-limited)
+
+**Request Body:**
+
+```json
+{
+  "reporterName": "Ramesh Owner",
+  "reporterEmail": "ramesh@example.com",
+  "reporterPhone": "9876543210",
+  "message": "I never authorized anyone to list my property on this platform."
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `reporterName` | Yes | 2–100 chars |
+| `reporterEmail` | Conditional | At least one of email/phone is required |
+| `reporterPhone` | Conditional | At least one of email/phone is required |
+| `message` | Yes | 10–1000 chars |
+
+Does two things: logs a `ContactMessage` (`source: "LISTING_REPORT"`, visible
+in the general admin inbox) **and** opens a `ListingConflict`
+(`type: "OWNER_REPORTED_UNAUTHORIZED"`) on the property, so it also surfaces
+directly on the admin Conflicts screen where integrity issues are actually
+reviewed. The conflict is deduped against any already-`OPEN` one of the same
+type on this property — a second report before admin resolves the first
+doesn't create a duplicate conflict row, but the contact message is still
+logged every time, since each submission is its own piece of evidence. All
+admins are notified (`LISTING_OWNER_REPORTED`, under the Listings chip).
+
+**Response `201`:**
+
+```json
+{
+  "success": true, "message": "Report received. Our team will review this listing.",
+  "data": { "contactMessageId": "...", "conflictCreated": true, "conflictId": "..." }
+}
+```
+
+`conflictCreated` is `false` (and `conflictId` is `null`) on a repeat report
+while the earlier conflict is still open.
+
+**Errors:** `400` missing both email and phone, or message too short · `404` property not found.
+
+---
+
 ### POST /api/properties/:id/construction-updates
 
 Add a construction milestone update to an under-construction listing.
@@ -5144,6 +5199,11 @@ Records the owner's actual response.
 `OWNER_DENIED_MANDATE` — an agent claiming authorization the named owner did
 not give is a real integrity problem, not a bookkeeping update. See **Listing
 conflicts (docs 4.4)** above for the conflict review endpoints.
+
+**R27's `POST /api/properties/:id/report-unauthorized` (above, public) is
+the owner-initiated counterpart** — it raises the same kind of conflict
+(`OWNER_REPORTED_UNAUTHORIZED`) but without admin ever having reached out
+first.
 
 **Errors:**
 - `400` `status` not `CONFIRMED`/`DENIED`, or `note` too short
