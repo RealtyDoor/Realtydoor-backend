@@ -1,0 +1,140 @@
+// ─── COMMISSION ───────────────────────────────────────────────────────────────
+// Admin docs 3.12-3.17, partner B12.2.
+//
+// The money record is the LEAD's negotiated lines, not the rate card. Terms are
+// agreed per deal and legitimately differ from any default — urgency, how hard
+// the property is to move, what the seller wants. A RateCard is only a template
+// used to PRE-FILL those lines.
+//
+// Arithmetic, all three flows (builder / admin-listed / owner):
+//   fee        = dealPrice * feePct          (taken from the deal)
+//   each line  = fee * line.pct              (lines sum to exactly 100)
+//   seller gets  dealPrice - fee             (derived, never stored as a pct)
+// The partner's take is the sum of their lines, so the partner is paid FROM the
+// fee and is never an extra deduction on top of it.
+
+enum CommissionPayeeRole {
+  PLATFORM
+  LISTING_AGENT
+  CLOSING_AGENT
+  ADVISOR
+}
+
+// Who the fee is charged to. SELLER is the only flow in use; BUYER exists so
+// that buyer-side fees become data entry rather than a migration on money
+// tables if the business confirms them. Nothing reads BUYER yet.
+enum CommissionPayer {
+  SELLER
+  BUYER
+}
+
+// PLATFORM only, deliberately. Every current flow has the company receiving
+// and disbursing. PARTNER collection needs its own escrow/release design, so
+// no code path assumes it — the enum just makes adding it a code change.
+// Pending business sign-off.
+enum CommissionCollectedBy {
+  PLATFORM
+}
+
+enum CommissionOverrideScope {
+  ALL
+  SELECTED
+}
+
+// ─── RateCard — a DEFAULT TEMPLATE, never the money record ───────────────────
+// Resolution for pre-fill: property card → city card → platform default.
+// projectId is intentionally unused: when the Project entity (4.10) lands it
+// becomes a backfill, not a key change.
+
+model RateCard {
+  id         String          @id @default(auto()) @map("_id") @db.ObjectId
+  propertyId String?         @db.ObjectId
+  property   Property?       @relation(fields: [propertyId], references: [id])
+  projectId  String?         @db.ObjectId
+  city       String?
+  sellerType PartnerSubType
+
+  // Default total brokerage as a % of deal price. A lead may negotiate its own.
+  feePct      Float
+  collectedBy CommissionCollectedBy @default(PLATFORM)
+  payer       CommissionPayer       @default(SELLER)
+  terms       String?
+
+  isActive Boolean @default(true)
+  // Bumped on every content edit so a lead can record which version it was
+  // pre-filled from (3.13 change history).
+  version  Int     @default(1)
+
+  lastChangedByAdminId String?  @db.ObjectId
+  lines                RateCardLine[]
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([propertyId])
+  @@index([city, sellerType])
+  @@index([sellerType, isActive])
+}
+
+// Default slices. Same shape as LeadCommissionLine so pre-fill is a copy and
+// both can share one validator.
+model RateCardLine {
+  id         String              @id @default(auto()) @map("_id") @db.ObjectId
+  rateCardId String              @db.ObjectId
+  rateCard   RateCard            @relation(fields: [rateCardId], references: [id], onDelete: Cascade)
+  payeeRole  CommissionPayeeRole
+  pct        Float
+  createdAt  DateTime            @default(now())
+
+  @@index([rateCardId])
+}
+
+// ─── Partner override (3.14) ──────────────────────────────────────────────────
+// Changes ONLY the partner's share of the fee — never the company's cut and
+// never the seller's price. Sits above the property card in precedence but
+// below a lead's own negotiated lines.
+
+model PartnerCommissionOverride {
+  id        String                  @id @default(auto()) @map("_id") @db.ObjectId
+  partnerId String                  @db.ObjectId
+  partner   User                    @relation(fields: [partnerId], references: [id])
+  scope     CommissionOverrideScope @default(ALL)
+  // Only meaningful when scope is SELECTED.
+  propertyIds String[]              @db.ObjectId
+
+  // The partner's total share of the fee, as a % of the fee.
+  partnerSharePct Float
+  validUntil      DateTime?
+  reason          String
+  isActive        Boolean   @default(true)
+
+  createdByAdminId String?  @db.ObjectId
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([partnerId, isActive])
+  @@index([validUntil])
+}
+
+// ─── LeadCommissionLine — THE money record ───────────────────────────────────
+// One row per payee per version. Pre-filled at assignment, adjustable until
+// the lead locks. After lock, a change writes a NEW version rather than
+// editing in place, so the agreed terms stay auditable; superseded rows keep
+// their old version number.
+
+model LeadCommissionLine {
+  id        String              @id @default(auto()) @map("_id") @db.ObjectId
+  leadId    String              @db.ObjectId
+  lead      Lead                @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  payeeRole CommissionPayeeRole
+  // Which partner this line pays, when known. Null for PLATFORM.
+  payeeUserId String?           @db.ObjectId
+  // % of the lead's fee. All lines of a version sum to exactly 100.
+  pct       Float
+  // Why this differs from the template (urgency, hard-to-sell, seller ask).
+  reason    String?
+  version   Int                 @default(1)
+  createdAt DateTime            @default(now())
+
+  @@index([leadId, version])
+  @@index([leadId])
+}

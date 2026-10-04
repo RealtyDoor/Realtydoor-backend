@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const ctrl = require('./partners.controller');
 const leadsCtrl = require('../leads/leads.controller');
+const commissionCtrl = require('../commission/commission.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
@@ -13,6 +14,8 @@ router.use(authenticate, requirePartner, perUserLimiter);
 router.post('/kyc/consent', ctrl.recordKycConsent);
 // B12.3 — accept a versioned commission/terms agreement.
 router.post('/terms/accept', ctrl.acceptTerms);
+// B12.2 — the partner's effective default plus their agreed per-lead terms.
+router.get('/rate-cards', commissionCtrl.myRateCards);
 router.post('/kyc', uploadLimiter, kycDocUploader.array('documents', 5), ctrl.submitKyc);
 
 // Leads (KYC required)

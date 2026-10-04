@@ -169,6 +169,7 @@ model User {
   disputes          Dispute[]
   reviews           PropertyReview[]
   supportTickets    PartnerSupportTicket[]
+  commissionOverrides PartnerCommissionOverride[]
 
   @@index([phone])
   @@index([deletedAt])

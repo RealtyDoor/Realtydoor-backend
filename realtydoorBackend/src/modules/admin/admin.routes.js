@@ -7,6 +7,7 @@ const leadsCtrl = require('../leads/leads.controller');
 const watiCtrl = require('../wati/wati.controller');
 const b2bCtrl = require('../b2b/b2b.controller');
 const contactCtrl = require('../contact/contact.admin.controller');
+const commissionCtrl = require('../commission/commission.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
@@ -156,6 +157,22 @@ router.post('/wati/templates/:id/test-send', watiCtrl.testSend);
 // offline bypass, so unlike the partner views this one does include contacts.
 router.get('/b2b',         b2bCtrl.adminList);
 router.patch('/b2b/:id',   b2bCtrl.adminUpdate);
+
+// Commission rate cards, overrides and per-lead negotiated terms (3.12-3.17)
+router.get('/rate-cards',            commissionCtrl.listRateCards);
+router.post('/rate-cards',           commissionCtrl.createRateCard);
+router.patch('/rate-cards/:id',      commissionCtrl.updateRateCard);
+router.delete('/rate-cards/:id',     commissionCtrl.deleteRateCard);
+router.get('/commission-overrides',        commissionCtrl.listOverrides);
+router.post('/commission-overrides',       commissionCtrl.createOverride);
+router.delete('/commission-overrides/:id', commissionCtrl.revokeOverride);
+// A lead's own terms are the money record; the card only pre-fills them.
+router.get('/leads/:id/commission',          commissionCtrl.getLeadTerms);
+router.get('/leads/:id/commission/preview',  commissionCtrl.previewLeadTerms);
+router.get('/leads/:id/commission/history',  commissionCtrl.leadTermsHistory);
+router.post('/leads/:id/commission/prefill', commissionCtrl.prefillLeadTerms);
+router.put('/leads/:id/commission',          commissionCtrl.setLeadTerms);
+router.post('/leads/:id/commission/lock',    commissionCtrl.lockLeadTerms);
 
 // Platform config
 router.get('/config',         ctrl.listConfig);

@@ -105,7 +105,21 @@ model Lead {
   droppedAt              DateTime?
   droppedByAdminId       String?   @db.ObjectId
 
-  // Commission summary (Phase 2 — §3.3)
+  // Commission (docs 3.12-3.17). The authoritative terms are
+  // commissionLines below; these two are DERIVED from the locked lines and
+  // kept because netAmount and the finance views already read them.
+  //
+  // feePct is lead-level because the fee itself is negotiated per deal — the
+  // rate card only supplies a default.
+  feePct                Float?
+  dealPriceAtLock       Float?
+  commissionLockedAt    DateTime?
+  commissionVersion     Int       @default(1)
+  // Which template this was pre-filled from, for 3.13's change history.
+  rateCardId            String?   @db.ObjectId
+  rateCardVersion       Int?
+  commissionLines       LeadCommissionLine[]
+
   platformCommissionPct Float?
   commissionAmountPaise Int?
   commissionStatus      CommissionStatus @default(PENDING)

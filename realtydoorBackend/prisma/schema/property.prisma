@@ -105,6 +105,7 @@ model Property {
   b2bConnections      B2BConnection[]
   videoTourRequests   VideoTourRequest[]
   reviews             PropertyReview[]
+  rateCards           RateCard[]
   serviceTickets      ServiceTicket[]
 
   @@index([publishStatus, isB2BOnly])
