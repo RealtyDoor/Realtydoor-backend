@@ -171,6 +171,8 @@ model Property {
   changeRequests      PropertyChangeRequest[]
   mandates            ExclusiveMandate[]
   conflicts           ListingConflict[]
+  checklistDocuments  PropertyDocument[]
+  ownerConfirmations  OwnerConfirmation[]
 
   @@index([publishStatus, isB2BOnly])
   @@index([partnerId])

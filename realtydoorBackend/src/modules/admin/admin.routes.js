@@ -12,6 +12,7 @@ const analyticsCtrl = require('../analytics/analytics.controller');
 const listingCtrl = require('../listings/listings.admin.controller');
 const integrityCtrl = require('../listings/integrity.controller');
 const locationCtrl = require('../listings/location.controller');
+const checklistCtrl = require('../listings/checklist.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
@@ -55,6 +56,12 @@ router.post('/properties/:id/detect-conflicts',      integrityCtrl.detectConflic
 // 4.6 / 4.7 — location check and admin location edit.
 router.get('/properties/:id/location-check',          locationCtrl.locationCheck);
 router.patch('/properties/:id/location',              locationCtrl.updateLocation);
+// 4.1 / 4.2 — persona document checklist and owner-confirmation review.
+router.get('/properties/:id/checklist',                checklistCtrl.getChecklist);
+router.patch('/properties/checklist-documents/:docId/verify', checklistCtrl.verifyChecklistDocument);
+router.patch('/properties/checklist-documents/:docId/reject', checklistCtrl.rejectChecklistDocument);
+router.post('/properties/:id/mandates/:mandateId/owner-confirmation/request', checklistCtrl.requestOwnerConfirmation);
+router.patch('/properties/owner-confirmation/:confirmationId', checklistCtrl.recordOwnerConfirmation);
 router.get('/properties/:id',          ctrl.getPropertyById);
 router.patch('/properties/:id/approve', ctrl.approveProperty);
 router.patch('/properties/:id/reject',  ctrl.rejectProperty);

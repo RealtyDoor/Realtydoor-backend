@@ -1,0 +1,101 @@
+// ─── LISTING REVIEW CHECKLIST ─────────────────────────────────────────────────
+// Docs 4.1 (persona-specific document types) and 4.2 (owner confirmation for
+// agent-submitted listings).
+//
+// Scope note on 4.1: the doc's checklist spans three personas — owner, agent,
+// builder. Agent's items (mandate letter, owner confirmation, owner PAN) are
+// already fully modelled: ExclusiveMandate.documentUrl, this file's
+// OwnerConfirmation, and ExclusiveMandate.ownerPan (all from docs 4.2/4.3).
+// Builder's items (RERA project number, approved plan, commencement
+// certificate, land title, designated account) belong to a developer-led
+// PROJECT, not a single unit listing — that is docs 4.10/4.11's Project
+// entity, not yet modelled. Building a parallel builder-checklist here would
+// fork the compliance record the day a Project entity exists. So the only
+// new schema below is for the OWNER persona's genuinely unmodelled items:
+// sale deed, encumbrance certificate, khata, society NOC. Loan NOC — also an
+// owner-persona item — already exists as Property.loanNocStatus/loanNocUrl
+// (doc 4.5).
+
+model PropertyDocument {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  propertyId String   @db.ObjectId
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  documentType PropertyDocumentType
+  fileUrl      String
+  fileName     String
+  uploadedByPartnerId String @db.ObjectId
+
+  status            DocumentStatus @default(PENDING_REVIEW)
+  verifiedByAdminId String?        @db.ObjectId
+  verifiedAt        DateTime?
+  rejectionNote     String?
+
+  uploadedAt DateTime @default(now())
+
+  // One row per (property, documentType): a re-upload replaces the previous
+  // attempt rather than piling up duplicates for the checklist to pick
+  // between. The old file is left in S3 (deleteFile is best-effort, not
+  // transactional with this delete) and only the metadata row is replaced.
+  @@unique([propertyId, documentType])
+  @@index([propertyId])
+  @@index([status])
+}
+
+enum PropertyDocumentType {
+  SALE_DEED
+  ENCUMBRANCE_CERTIFICATE
+  KHATA
+  SOCIETY_NOC
+}
+
+// 4.2 — owner confirmation for an agent-submitted listing. Created alongside
+// an ExclusiveMandate when the mandate's partner is persona AGENT (see
+// integrity.service.js::createMandate); the owner's name/phone come from the
+// mandate rather than being captured twice.
+//
+// NOT automated over WhatsApp in this phase — the user explicitly deferred
+// WATI template/conversation work here (2026-10-04). An admin confirms with
+// the owner by whatever channel is actually in use (phone call, email,
+// WhatsApp sent by hand) and records the outcome through
+// PATCH .../owner-confirmation/:id/confirm|deny, with a mandatory note saying
+// how contact was made. requestedVia is free text for the same reason — it is
+// a record of what actually happened, not a channel this backend drives.
+model OwnerConfirmation {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  propertyId String   @db.ObjectId
+  property   Property @relation(fields: [propertyId], references: [id])
+  mandateId  String   @db.ObjectId
+  partnerId  String   @db.ObjectId
+
+  ownerName  String
+  ownerPhone String
+
+  status           OwnerConfirmationStatus @default(PENDING)
+  requestedVia     String?
+  responseNote     String?
+  respondedAt      DateTime?
+  respondedByAdminId String? @db.ObjectId
+
+  requestedAt DateTime @default(now())
+  // requestedAt + 48h, computed once rather than derived from a separately
+  // tracked duration, so the stored row is self-contained.
+  expiresAt   DateTime
+
+  createdAt DateTime @default(now())
+
+  @@index([propertyId])
+  @@index([ownerPhone, status])
+  @@index([status, expiresAt])
+}
+
+enum OwnerConfirmationStatus {
+  PENDING
+  CONFIRMED
+  DENIED
+  // Set only by an explicit re-request, never by time passing. TIMED_OUT is
+  // NOT a stored value — it is derived from expiresAt at read time, the same
+  // pattern as ExclusiveMandate's effectiveStatus, so there is no scheduled
+  // job and no window where a timed-out confirmation still reads as pending.
+  SUPERSEDED
+}

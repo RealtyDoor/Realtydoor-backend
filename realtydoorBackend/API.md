@@ -4577,6 +4577,253 @@ queried or repaired from the Prisma client at all. Nullable keeps them
 queryable (`{ isMortgaged: { isSet: false } }`) and avoids a backfill.
 
 Treat `null` as "unknown, ask" rather than as "no" in the owner-listing review.
+---
+
+## Listing review checklist (docs 4.1 / 4.2)
+
+A listing's required-document checklist is **persona-specific**, derived from
+the submitting partner's `partnerSubType` (`OWNER`, `AGENT`, `BUILDER`, or
+unset).
+
+**Scope note — this is not three parallel checklists.** AGENT's items (mandate
+letter, owner PAN, owner confirmation) are already fully modelled elsewhere —
+`ExclusiveMandate.documentUrl`, `ExclusiveMandate.ownerPan`, and
+`OwnerConfirmation` below — so nothing new was built to track them a second
+time; the checklist response just points at where each one actually lives.
+BUILDER's items (RERA project number, approved plan, commencement certificate,
+land title, designated account) belong to a developer-led **Project**, not a
+single unit listing — docs 4.10/4.11's Project entity, which does not exist
+yet. The checklist reports `available: false` for BUILDER rather than
+inventing a per-listing stand-in. **The only new upload/verify model is for
+OWNER's genuinely unmodelled items**: sale deed, encumbrance certificate,
+khata, society NOC. Loan NOC — also an owner item — already exists as
+`Property.loanNocStatus` / `loanNocUrl` (doc 4.5) and is folded into the same
+response rather than duplicated.
+
+**4.2's owner confirmation is admin-recorded this phase, not WhatsApp-automated.**
+WATI template/conversation work for this was explicitly deferred. An admin
+confirms with the owner by whatever channel is actually used — phone call,
+email, WhatsApp sent by hand — and records the outcome through the endpoints
+below. `requestedVia` is free text describing that channel, not something this
+backend drives.
+
+---
+
+### GET /api/admin/properties/:id/checklist
+
+**Auth:** ADMIN
+
+### GET /api/properties/:id/checklist
+
+The partner's own view of the same checklist, scoped to their own listing.
+
+**Auth:** PARTNER (no KYC gate, matching the existing free-form document
+upload)
+
+**Response `200`, OWNER persona:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "propertyId": "6a44a67d...",
+    "partnerSubType": "OWNER",
+    "persona": "OWNER",
+    "available": true,
+    "reason": null,
+    "items": [
+      { "type": "SALE_DEED", "label": "Sale deed", "status": "APPROVED", "fileUrl": "https://...", "uploadedAt": "2026-10-04T...", "rejectionNote": null },
+      { "type": "ENCUMBRANCE_CERTIFICATE", "label": "Encumbrance certificate", "status": "PENDING_REVIEW", "fileUrl": "https://...", "uploadedAt": "2026-10-04T...", "rejectionNote": null },
+      { "type": "KHATA", "label": "Khata", "status": "MISSING", "fileUrl": null, "uploadedAt": null, "rejectionNote": null },
+      { "type": "SOCIETY_NOC", "label": "Society NOC", "status": "MISSING", "fileUrl": null, "uploadedAt": null, "rejectionNote": null }
+    ],
+    "missingCount": 2,
+    "ready": false,
+    "elsewhere": [],
+    "conditionalItems": ["LOAN_NOC (only if the listing is mortgaged)"],
+    "ownerConfirmation": null,
+    "activeMandateId": null
+  }
+}
+```
+
+`items[].status` is one of `MISSING`, `PENDING_REVIEW`, `APPROVED`, `REJECTED`
+— `MISSING` is not a `DocumentStatus` enum value, it means no row exists yet.
+A `LOAN_NOC` item appears **only when `Property.isMortgaged` is true** (its
+`status` reads from `Property.loanNocStatus` directly, not from a
+`PropertyDocument` row). `ready` is `true` only when nothing is `MISSING` or
+`REJECTED`; it is `null` for a persona with `available: false`, since
+"ready" has no meaning there yet.
+
+**Response, AGENT persona:**
+
+```json
+{
+  "...": "...",
+  "persona": "AGENT",
+  "items": [],
+  "elsewhere": [
+    { "item": "Mandate letter", "source": "ExclusiveMandate.documentUrl" },
+    { "item": "Owner PAN", "source": "ExclusiveMandate.ownerPan" },
+    { "item": "Owner confirmation", "source": "OwnerConfirmation (this module)" }
+  ],
+  "ownerConfirmation": {
+    "id": "6ac3...", "status": "PENDING", "ownerName": "Ramesh Owner", "ownerPhone": "+919000000088",
+    "requestedVia": "Phone call to owner", "requestedAt": "2026-10-04T...", "expiresAt": "2026-10-06T...",
+    "respondedAt": null, "responseNote": null
+  },
+  "activeMandateId": "6ac2..."
+}
+```
+
+`ownerConfirmation.status` is the **newest non-`SUPERSEDED`** confirmation on
+the listing, with `PENDING` past `expiresAt` reported as **`TIMED_OUT`** —
+derived at read time, the same way `ExclusiveMandate.effectiveStatus` derives
+`EXPIRED`. There is no scheduled job, and the stored row's `status` column
+never actually becomes `TIMED_OUT`; only the response does.
+
+**Response, BUILDER persona:**
+
+```json
+{ "...": "...", "persona": "BUILDER", "available": false, "reason": "Builder compliance (...) is modelled at the PROJECT level, which does not exist yet (docs 4.10/4.11). Nothing to check per listing until then.", "items": [] }
+```
+
+**Response, no `partnerSubType` set:**
+
+```json
+{ "...": "...", "persona": null, "available": false, "reason": "No document checklist is defined for persona (unset)." }
+```
+
+**Errors:** `403` (partner route only) not your listing · `404` not found.
+
+---
+
+### POST /api/properties/:id/checklist-documents
+
+Upload one OWNER-persona checklist document. Distinct from
+`POST /api/properties/:id/documents` (free-form uploads — brochures, floor
+plans): this endpoint is for the four structured, persona-tracked document
+types only.
+
+**Auth:** PARTNER
+
+**Request:** `multipart/form-data`, field name `document` (single file),
+plus `documentType` in the body.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `documentType` | yes | One of `SALE_DEED`, `ENCUMBRANCE_CERTIFICATE`, `KHATA`, `SOCIETY_NOC`. |
+
+**Response `201`:**
+
+```json
+{ "success": true, "message": "Document uploaded", "data": { "id": "...", "documentType": "SALE_DEED", "status": "PENDING_REVIEW", "fileUrl": "https://...", "fileName": "sale-deed.pdf" } }
+```
+
+**Re-uploading the same `documentType` replaces the previous attempt** rather
+than creating a second row — there is a unique index on
+`(propertyId, documentType)`. Any prior `verifiedByAdminId` / `rejectionNote`
+is cleared and `status` resets to `PENDING_REVIEW`, so resubmitting after a
+rejection puts the document straight back in front of an admin.
+
+**Errors:**
+- `400` the listing's partner is not persona `OWNER`
+- `400` `documentType` not one of the four values, or no file provided
+- `403` not your listing
+- `404` property not found
+
+---
+
+### PATCH /api/admin/properties/checklist-documents/:docId/verify
+
+**Auth:** ADMIN
+
+**Request Body:** none.
+
+**Response `200`:** the document, `status: "APPROVED"`.
+
+**Errors:** `404` not found.
+
+---
+
+### PATCH /api/admin/properties/checklist-documents/:docId/reject
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "note": "Scanned copy is unreadable, resend a clearer scan" }` —
+required, 5–500 chars, shown to the partner verbatim.
+
+**Response `200`:** the document, `status: "REJECTED"`.
+
+**Errors:** `400` `note` too short · `404` not found.
+
+---
+
+### POST /api/admin/properties/:id/mandates/:mandateId/owner-confirmation/request
+
+Starts (or restarts) the 48-hour confirmation window for an **AGENT** mandate.
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "requestedVia": "Phone call to owner" }` — optional, free
+text, max 200 chars. Describes how contact was actually made; it is a record,
+not a channel this backend drives.
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "Owner confirmation requested",
+  "data": { "id": "...", "status": "PENDING", "ownerName": "Ramesh Owner", "ownerPhone": "+919000000088", "requestedVia": "Phone call to owner", "requestedAt": "2026-10-04T...", "expiresAt": "2026-10-06T..." }
+}
+```
+
+`ownerName` / `ownerPhone` are copied from the mandate, not re-entered.
+`expiresAt` is `requestedAt` + exactly 48 hours, fixed at creation.
+
+**Calling this again on the same mandate marks the previous `PENDING` request
+`SUPERSEDED`** and starts a fresh 48-hour window — the checklist only ever
+shows the latest one.
+
+**Errors:**
+- `400` the mandate's partner is not persona `AGENT` — owner confirmation only
+  applies to agent-submitted listings
+- `404` mandate not found, or not on this property
+
+---
+
+### PATCH /api/admin/properties/owner-confirmation/:confirmationId
+
+Records the owner's actual response.
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{ "status": "DENIED", "note": "Owner says they never authorized this agent to list the property" }
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `status` | yes | `CONFIRMED` or `DENIED`. |
+| `note` | yes | 5–1000 chars. How contact was made and what the owner actually said — not just the yes/no. |
+
+**Response `200`:** the confirmation, `status` set as given.
+
+**A `DENIED` response raises a `ListingConflict`** of type
+`OWNER_DENIED_MANDATE` — an agent claiming authorization the named owner did
+not give is a real integrity problem, not a bookkeeping update. See **Listing
+conflicts (docs 4.4)** above for the conflict review endpoints.
+
+**Errors:**
+- `400` `status` not `CONFIRMED`/`DENIED`, or `note` too short
+- `400` this confirmation is no longer `PENDING` (already recorded, or
+  superseded by a later request)
+- `404` not found
+
 
 ## Listing location (docs 4.6 / 4.7)
 

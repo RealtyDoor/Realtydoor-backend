@@ -5,6 +5,7 @@ const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
 const { propertyImageUploader, propertyVideoUploader, propertyDocUploader } = require('../../lib/fileUpload');
+const checklistCtrl = require('../listings/checklist.controller');
 const { searchLimiter } = require('../../middleware/rateLimiter');
 
 // Public
@@ -26,5 +27,11 @@ router.patch('/:id', authenticate, requirePartner, requireKyc, ctrl.update);
 router.post('/:id/images', authenticate, requirePartner, propertyImageUploader.array('images', 10), ctrl.uploadImages);
 router.post('/:id/videos', authenticate, requirePartner, propertyVideoUploader.array('videos', 5), ctrl.uploadVideos);
 router.post('/:id/documents', authenticate, requirePartner, propertyDocUploader.array('documents', 10), ctrl.uploadDocuments);
+// 4.1 — structured OWNER-persona checklist documents (sale deed, encumbrance
+// certificate, khata, society NOC), distinct from the free-form uploads
+// above (brochures, floor plans). One file per documentType; a re-upload
+// replaces the previous attempt.
+router.post('/:id/checklist-documents', authenticate, requirePartner, propertyDocUploader.single('document'), checklistCtrl.uploadChecklistDocument);
+router.get('/:id/checklist', authenticate, requirePartner, checklistCtrl.getMyChecklist);
 
 module.exports = router;

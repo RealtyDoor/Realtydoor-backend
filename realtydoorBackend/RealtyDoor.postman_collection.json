@@ -1017,6 +1017,91 @@
               "body": "{\"success\":true,\"message\":\"Changes saved and resubmitted for review\",\"data\":{\"property\":{\"id\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"slug\":\"3bhk-palm-grove\",\"publishStatus\":\"PENDING_APPROVAL\",\"isSearchable\":true,\"isFeatured\":false,\"rejectionNote\":null,\"requestedChanges\":[],\"requestedChangesNote\":null,\"changesRequestedAt\":null,\"changesRequestedByAdminId\":null},\"changeRequest\":null}}"
             }
           ]
+        },
+        {
+          "name": "My Listing Checklist (4.1/4.2)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/properties/{{propertyId}}/checklist",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "properties",
+                "{{propertyId}}",
+                "checklist"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 - Own checklist",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"propertyId\":\"6a44a67d...\",\"partnerSubType\":\"OWNER\",\"persona\":\"OWNER\",\"available\":true,\"reason\":null,\"items\":[{\"type\":\"SALE_DEED\",\"label\":\"Sale deed\",\"status\":\"APPROVED\",\"fileUrl\":\"https://...\",\"uploadedAt\":\"2026-10-04T12:00:00.000Z\",\"rejectionNote\":null},{\"type\":\"ENCUMBRANCE_CERTIFICATE\",\"label\":\"Encumbrance certificate\",\"status\":\"PENDING_REVIEW\",\"fileUrl\":\"https://...\",\"uploadedAt\":\"2026-10-04T12:05:00.000Z\",\"rejectionNote\":null},{\"type\":\"KHATA\",\"label\":\"Khata\",\"status\":\"MISSING\",\"fileUrl\":null,\"uploadedAt\":null,\"rejectionNote\":null},{\"type\":\"SOCIETY_NOC\",\"label\":\"Society NOC\",\"status\":\"MISSING\",\"fileUrl\":null,\"uploadedAt\":null,\"rejectionNote\":null}],\"missingCount\":2,\"ready\":false,\"elsewhere\":[],\"conditionalItems\":[\"LOAN_NOC (only if the listing is mortgaged)\"],\"ownerConfirmation\":null,\"activeMandateId\":null}}"
+            }
+          ]
+        },
+        {
+          "name": "Upload Checklist Document (4.1)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "documentType",
+                  "type": "text",
+                  "value": "SALE_DEED"
+                },
+                {
+                  "key": "document",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/properties/{{propertyId}}/checklist-documents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "properties",
+                "{{propertyId}}",
+                "checklist-documents"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "201 - Uploaded",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Document uploaded\",\"data\":{\"id\":\"6ac4...\",\"documentType\":\"SALE_DEED\",\"status\":\"PENDING_REVIEW\",\"fileUrl\":\"https://files.realtydoor.com/properties/documents/sale-deed.pdf\",\"fileName\":\"sale-deed.pdf\"}}"
+            }
+          ]
         }
       ]
     },
@@ -5982,6 +6067,388 @@
                   ],
                   "cookie": [],
                   "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6a44a67d...\",\"title\":\"3BHK in Palm Grove\",\"slug\":\"3bhk-palm-grove\",\"publishStatus\":\"CHANGES_REQUESTED\",\"isSearchable\":true,\"isFeatured\":false,\"rejectionNote\":null,\"requestedChanges\":[\"Add interior photos\"],\"requestedChangesNote\":null,\"changesRequestedAt\":null,\"changesRequestedByAdminId\":null}],\"total\":1,\"page\":1,\"limit\":20,\"totalPages\":1}}"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Review Checklist & Owner Confirmation",
+          "item": [
+            {
+              "name": "Checklist - OWNER persona (4.1)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/checklist",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "checklist"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Owner checklist",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"propertyId\":\"6a44a67d...\",\"partnerSubType\":\"OWNER\",\"persona\":\"OWNER\",\"available\":true,\"reason\":null,\"items\":[{\"type\":\"SALE_DEED\",\"label\":\"Sale deed\",\"status\":\"APPROVED\",\"fileUrl\":\"https://...\",\"uploadedAt\":\"2026-10-04T12:00:00.000Z\",\"rejectionNote\":null},{\"type\":\"ENCUMBRANCE_CERTIFICATE\",\"label\":\"Encumbrance certificate\",\"status\":\"PENDING_REVIEW\",\"fileUrl\":\"https://...\",\"uploadedAt\":\"2026-10-04T12:05:00.000Z\",\"rejectionNote\":null},{\"type\":\"KHATA\",\"label\":\"Khata\",\"status\":\"MISSING\",\"fileUrl\":null,\"uploadedAt\":null,\"rejectionNote\":null},{\"type\":\"SOCIETY_NOC\",\"label\":\"Society NOC\",\"status\":\"MISSING\",\"fileUrl\":null,\"uploadedAt\":null,\"rejectionNote\":null}],\"missingCount\":2,\"ready\":false,\"elsewhere\":[],\"conditionalItems\":[\"LOAN_NOC (only if the listing is mortgaged)\"],\"ownerConfirmation\":null,\"activeMandateId\":null}}"
+                }
+              ]
+            },
+            {
+              "name": "Checklist - AGENT persona (4.1/4.2)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/checklist",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "checklist"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Agent checklist with owner confirmation",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"propertyId\":\"6a44a67e...\",\"partnerSubType\":\"AGENT\",\"persona\":\"AGENT\",\"available\":true,\"reason\":null,\"items\":[],\"elsewhere\":[{\"item\":\"Mandate letter\",\"source\":\"ExclusiveMandate.documentUrl\"},{\"item\":\"Owner PAN\",\"source\":\"ExclusiveMandate.ownerPan\"},{\"item\":\"Owner confirmation\",\"source\":\"OwnerConfirmation (this module)\"}],\"missingCount\":0,\"ready\":true,\"conditionalItems\":[],\"ownerConfirmation\":{\"id\":\"6ac3...\",\"status\":\"PENDING\",\"ownerName\":\"Ramesh Owner\",\"ownerPhone\":\"+919000000088\",\"requestedVia\":\"Phone call to owner\",\"requestedAt\":\"2026-10-04T13:00:00.000Z\",\"expiresAt\":\"2026-10-06T13:00:00.000Z\",\"respondedAt\":null,\"responseNote\":null},\"activeMandateId\":\"6ac2...\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Checklist - BUILDER persona (not yet available)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/checklist",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "checklist"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Deferred to Project entity",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"propertyId\":\"6a44a67f...\",\"partnerSubType\":\"BUILDER\",\"persona\":\"BUILDER\",\"available\":false,\"reason\":\"Builder compliance (RERA project number, approved plan, commencement certificate, land title, designated account) is modelled at the PROJECT level, which does not exist yet (docs 4.10/4.11). Nothing to check per listing until then.\",\"items\":[],\"missingCount\":0,\"ready\":null,\"elsewhere\":[],\"conditionalItems\":[],\"ownerConfirmation\":null,\"activeMandateId\":null}}"
+                }
+              ]
+            },
+            {
+              "name": "Verify Checklist Document (4.1)",
+              "request": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/checklist-documents/{{docId}}/verify",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "checklist-documents",
+                    "{{docId}}",
+                    "verify"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Verified",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Document verified\",\"data\":{\"id\":\"{{docId}}\",\"documentType\":\"SALE_DEED\",\"status\":\"APPROVED\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Reject Checklist Document (4.1)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"note\": \"Scanned copy is unreadable, resend a clearer scan\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/checklist-documents/{{docId}}/reject",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "checklist-documents",
+                    "{{docId}}",
+                    "reject"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Rejected",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Document rejected\",\"data\":{\"id\":\"{{docId}}\",\"documentType\":\"SALE_DEED\",\"status\":\"REJECTED\",\"rejectionNote\":\"Scanned copy is unreadable, resend a clearer scan\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Request Owner Confirmation (4.2)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"requestedVia\": \"Phone call to owner\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/mandates/{{mandateId}}/owner-confirmation/request",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "mandates",
+                    "{{mandateId}}",
+                    "owner-confirmation",
+                    "request"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "201 - Requested, 48h window started",
+                  "status": "Created",
+                  "code": 201,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Owner confirmation requested\",\"data\":{\"id\":\"6ac3...\",\"status\":\"PENDING\",\"ownerName\":\"Ramesh Owner\",\"ownerPhone\":\"+919000000088\",\"requestedVia\":\"Phone call to owner\",\"requestedAt\":\"2026-10-04T13:00:00.000Z\",\"expiresAt\":\"2026-10-06T13:00:00.000Z\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Request Owner Confirmation - 400 wrong persona",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/{{propertyId}}/mandates/{{mandateId}}/owner-confirmation/request",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "{{propertyId}}",
+                    "mandates",
+                    "{{mandateId}}",
+                    "owner-confirmation",
+                    "request"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "400 - Not an agent mandate",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"Owner confirmation applies to agent-submitted listings. This mandate's partner is OWNER.\"}"
+                }
+              ]
+            },
+            {
+              "name": "Record Owner Confirmation - Confirmed (4.2)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"CONFIRMED\",\n  \"note\": \"Called the owner directly; they confirmed the agent is authorized.\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/owner-confirmation/{{confirmationId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "owner-confirmation",
+                    "{{confirmationId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Confirmed",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Owner confirmation recorded as CONFIRMED\",\"data\":{\"id\":\"{{confirmationId}}\",\"status\":\"CONFIRMED\",\"responseNote\":\"Called the owner directly; they confirmed the agent is authorized.\",\"respondedAt\":\"2026-10-04T14:00:00.000Z\"}}"
+                }
+              ]
+            },
+            {
+              "name": "Record Owner Confirmation - Denied (4.2)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"DENIED\",\n  \"note\": \"Owner says they never authorized this agent to list the property\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/properties/owner-confirmation/{{confirmationId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "properties",
+                    "owner-confirmation",
+                    "{{confirmationId}}"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Denied, raises a listing conflict",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Owner confirmation recorded as DENIED\",\"data\":{\"id\":\"{{confirmationId}}\",\"status\":\"DENIED\",\"responseNote\":\"Owner says they never authorized this agent to list the property\"}}"
                 }
               ]
             }

@@ -91,6 +91,9 @@ enum ConflictType {
   AGENT_OWNER_PAN_MATCH
   // Two unexpired mandates cover the same unit, held by different partners.
   MANDATE_OVERLAP
+  // 4.2 — an owner, when actually contacted, denied authorizing the agent's
+  // mandate. Written by checklist.service.js::recordOwnerConfirmationResponse.
+  OWNER_DENIED_MANDATE
 }
 
 enum ConflictStatus {

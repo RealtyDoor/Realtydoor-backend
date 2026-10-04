@@ -34,6 +34,8 @@ const CATEGORY_BY_TYPE = {
   PROPERTY_LOCATION_EDITED: 'LISTINGS',
   // 4.15 — admin asked for fixes rather than rejecting.
   PROPERTY_CHANGES_REQUESTED: 'LISTINGS',
+  // 4.1 — a checklist document needed resubmission.
+  LISTING_DOCUMENT_REJECTED: 'LISTINGS',
   SERVICE_ACTIVATED: 'SYSTEM',
   LOAN_STATUS_UPDATE: 'SYSTEM',
   ANNOUNCEMENT: 'SYSTEM',
