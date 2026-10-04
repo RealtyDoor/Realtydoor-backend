@@ -13,6 +13,7 @@ const { setUserRole } = require('../../lib/clerkAdmin');
 const { ROLES } = require('../../utils/validators');
 const { nextRefCode } = require('../../lib/refCode');
 const { stalledInfoFor } = require('../leads/leads.service');
+const { CONTACT_STATUSES } = require('../contact/contact.admin.validator');
 const { generate, expiresAt } = require('../../lib/otp');
 const logger = require('../../lib/logger');
 const { cacheDel } = require('../../lib/cache');
@@ -1084,16 +1085,43 @@ async function getUserByIdAdmin(userId) {
 async function listContactMessages(filters, skip, limit) {
   const where = {};
   if (filters.isRead !== undefined) where.isRead = filters.isRead === 'true';
+  // 11.2 / 11.5 — inbox tabs and channel grouping.
+  if (filters.status) where.status = filters.status;
+  if (filters.source) where.source = filters.source;
+  if (filters.search) where.OR = [
+    { name:    { contains: filters.search, mode: 'insensitive' } },
+    { email:   { contains: filters.search, mode: 'insensitive' } },
+    { subject: { contains: filters.search, mode: 'insensitive' } },
+  ];
 
-  const [data, total] = await Promise.all([
+  const [data, total, statusCounts] = await Promise.all([
     prisma.contactMessage.findMany({
       where, skip, take: limit,
       orderBy: { createdAt: 'desc' },
-      include: { user: { select: { name: true, email: true, role: true } } },
+      include: {
+        user: { select: { name: true, email: true, role: true } },
+        // Reply count rather than the bodies — the list doesn't need them,
+        // and the thread endpoint serves the full conversation.
+        _count: { select: { replies: true } },
+      },
     }),
     prisma.contactMessage.count({ where }),
+    // Tab counts are deliberately NOT narrowed by the current status filter,
+    // or every tab would read as its own total once one was selected.
+    //
+    // Explicit per-status counts rather than a groupBy: groupBy on an enum
+    // throws outright ("non-enum-compatible value 'null'") for rows written
+    // before the field existed, since Mongo doesn't apply @default
+    // retroactively. Counts just don't match those rows, which is accurate
+    // and can't take the endpoint down.
+    Promise.all(CONTACT_STATUSES.map(async (st) => [st, await prisma.contactMessage.count({ where: { status: st } })])),
   ]);
-  return { data, total };
+
+  return {
+    data: data.map(({ _count, ...m }) => ({ ...m, replyCount: _count.replies })),
+    total,
+    statusCounts: Object.fromEntries(statusCounts),
+  };
 }
 
 async function markContactRead(id) {

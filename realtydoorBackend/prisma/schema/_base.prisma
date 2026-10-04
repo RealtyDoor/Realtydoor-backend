@@ -145,6 +145,24 @@ enum B2BConnectionStatus {
   CLOSED
 }
 
+// 11.2 — contact inbox workflow. SPAM is terminal and hides the row from the
+// default inbox without deleting it, so a mis-flag is recoverable.
+enum ContactStatus {
+  NEW
+  REPLIED
+  RESOLVED
+  SPAM
+}
+
+// 11.5 — where a contact message came from.
+enum ContactSource {
+  CONTACT_FORM
+  PARTNER_SUPPORT
+  USER_SUPPORT
+  PRESS
+  OUTBOUND
+}
+
 enum VideoTourStatus {
   PENDING
   ASSIGNED

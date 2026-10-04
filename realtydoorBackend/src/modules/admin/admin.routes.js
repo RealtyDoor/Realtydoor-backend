@@ -6,6 +6,7 @@ const notifCtrl = require('../notifications/notifications.controller');
 const leadsCtrl = require('../leads/leads.controller');
 const watiCtrl = require('../wati/wati.controller');
 const b2bCtrl = require('../b2b/b2b.controller');
+const contactCtrl = require('../contact/contact.admin.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
@@ -94,9 +95,18 @@ router.delete('/services/:id',  ctrl.deleteService);
 router.get('/documents',               ctrl.listDocuments);
 router.patch('/documents/:id/verify',  ctrl.verifyDocument);
 
-// Contact inbox
-router.get('/contact',             ctrl.listContactMessages);
-router.patch('/contact/:id/read',  ctrl.markContactRead);
+// Contact inbox (docs 11.1-11.5)
+router.get('/contact',                  ctrl.listContactMessages);
+// Templates before /contact/:id so "templates" isn't swallowed as an id.
+router.get('/contact/templates',        contactCtrl.listTemplates);
+router.post('/contact/templates',       contactCtrl.createTemplate);
+router.patch('/contact/templates/:id',  contactCtrl.updateTemplate);
+router.delete('/contact/templates/:id', contactCtrl.deleteTemplate);
+router.post('/contact/compose',         contactCtrl.compose);
+router.get('/contact/:id',              contactCtrl.getThread);
+router.patch('/contact/:id/read',       ctrl.markContactRead);
+router.patch('/contact/:id/status',     contactCtrl.setStatus);
+router.post('/contact/:id/reply',       contactCtrl.reply);
 
 // NRI leads inbox
 router.get('/nri-leads',             ctrl.listNriLeads);

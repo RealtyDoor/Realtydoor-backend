@@ -285,8 +285,10 @@ async function verifyDocument(req, res, next) {
 async function listContactMessages(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
-    const { data, total } = await service.listContactMessages(req.query, skip, limit);
-    success(res, paginate(data, total, page, limit));
+    const { data, total, statusCounts } = await service.listContactMessages(req.query, skip, limit);
+    // statusCounts rides alongside the pagination envelope so the inbox tabs
+    // get their badges without a second request.
+    success(res, { ...paginate(data, total, page, limit), statusCounts });
   } catch (err) { next(err); }
 }
 

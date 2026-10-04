@@ -13,8 +13,56 @@ model ContactMessage {
   user      User?    @relation(fields: [userId], references: [id])
   role      String?
   isRead    Boolean  @default(false)
+
+  // 11.2 — inbox tabs. isRead above is kept separate on purpose: "seen" and
+  // "dealt with" are different things, and the existing mark-read endpoint
+  // and its frontend keep working untouched.
+  status    ContactStatus @default(NEW)
+  resolvedAt DateTime?
+
+  // 11.5 — which channel it arrived through, for inbox grouping. Defaults to
+  // the public form because that is the only path that existed before.
+  source    ContactSource @default(CONTACT_FORM)
+
+  replies   ContactReply[]
   createdAt DateTime @default(now())
 
   @@index([isRead])
   @@index([userId])
+  @@index([status])
+  @@index([source])
+  @@index([createdAt])
+}
+
+// ─── CONTACT REPLY (11.1) ─────────────────────────────────────────────────────
+// One row per outbound reply, so a message becomes a thread rather than a
+// single free-text field that each reply would overwrite.
+
+model ContactReply {
+  id               String         @id @default(auto()) @map("_id") @db.ObjectId
+  contactMessageId String         @db.ObjectId
+  contactMessage   ContactMessage @relation(fields: [contactMessageId], references: [id], onDelete: Cascade)
+  body             String
+  // Which channels actually went out. Recorded as a result, not an intent:
+  // a reply to someone with no phone on file is email-only, and the thread
+  // should say so rather than implying a WhatsApp that never sent.
+  channels         String[]
+  // Per-channel failures, when one leg didn't make it.
+  deliveryNote     String?
+  sentByAdminId    String         @db.ObjectId
+  createdAt        DateTime       @default(now())
+
+  @@index([contactMessageId])
+}
+
+// ─── CONTACT REPLY TEMPLATE (11.3) ────────────────────────────────────────────
+
+model ContactReplyTemplate {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String   @unique
+  subject   String
+  body      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
