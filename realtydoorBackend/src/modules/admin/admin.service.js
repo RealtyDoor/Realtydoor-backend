@@ -361,6 +361,151 @@ async function assignLead(leadId, partnerId, adminId, ip) {
   return updated;
 }
 
+// ─── AUTO-ASSIGN ──────────────────────────────────────────────────────────────
+//
+// Picks a partner for a lead and assigns it through the exact same assignLead
+// above, so every guard that function already enforces (KYC-verified, not
+// already assigned, not closed/dropped, the R34 data-handling gate) applies
+// identically whether a human or this picked the partner. This file never
+// writes assignedPartnerId directly — it only decides WHO, and leaves HOW to
+// assignLead.
+
+const UNASSIGNABLE_LEAD_STATUSES = ['CLOSED', 'DROPPED'];
+
+// Workload used to rank candidates: currently active leads, not lifetime
+// volume — a partner who closed 200 leads last year but has none open right
+// now should rank above one sitting on 10 open leads today.
+const ACTIVE_LEAD_STATUSES = { notIn: ['CLOSED', 'DROPPED'] };
+
+// Ranks eligible partners for one lead, most-preferred first. Returns an
+// empty array rather than throwing — "no eligible partner" is a normal
+// outcome for a locality nobody covers yet, not an error.
+//
+// Three eligibility layers, each narrowing the pool but never to zero when
+// the wider pool is non-empty: an exact locality match in leadPreferredLocalities
+// is preferred over coverageAreas, which is preferred over no locality signal
+// at all, so a lead in an uncovered area is still assignable to SOMEONE rather
+// than silently unassignable.
+async function rankCandidatePartners(lead) {
+  const base = {
+    role: 'PARTNER', kycStatus: 'VERIFIED', deletedAt: { isSet: false },
+    // leadAutoAccept defaults to FALSE and leadPauseOverloaded defaults to
+    // TRUE (both deliberately conservative — see user.prisma) — together they
+    // mean a brand-new partner who has never touched Settings is excluded
+    // from auto-assign by default on BOTH counts, not just one. A partner is
+    // only eligible once they have explicitly opted in (leadAutoAccept) AND
+    // are not currently signalling overload (leadPauseOverloaded).
+    //
+    // An earlier version of this filter checked only leadPauseOverloaded and
+    // missed leadAutoAccept entirely. Caught by checking the schema's actual
+    // defaults against this filter before shipping, not by a failing test —
+    // the test's own setup had reset both fields on its fixtures, so it would
+    // have passed either way and never surfaced the gap on its own.
+    leadAutoAccept: true,
+    leadPauseOverloaded: { not: true },
+  };
+
+  const locality = lead.property?.locality;
+  const city = lead.property?.city;
+
+  const pools = [];
+  if (locality) {
+    pools.push({ ...base, leadPreferredLocalities: { has: locality } });
+    pools.push({ ...base, coverageAreas: { has: locality } });
+  }
+  if (city) {
+    pools.push({ ...base, leadPreferredLocalities: { has: city } });
+    pools.push({ ...base, coverageAreas: { has: city } });
+  }
+  pools.push(base); // no locality signal at all — every eligible partner
+
+  for (const where of pools) {
+    const candidates = await prisma.user.findMany({
+      where, select: { id: true, name: true, companyName: true },
+    });
+    if (!candidates.length) continue;
+
+    const withLoad = await Promise.all(candidates.map(async (c) => ({
+      ...c,
+      activeLeads: await prisma.lead.count({ where: { assignedPartnerId: c.id, status: ACTIVE_LEAD_STATUSES } }),
+    })));
+    withLoad.sort((a, b) => a.activeLeads - b.activeLeads);
+    return withLoad;
+  }
+  return [];
+}
+
+// Tries ranked candidates in order until one is actually assignable — a
+// candidate can still fail assignLead's own gates (most likely R34) even
+// after passing the eligibility filter above, and that failure should fall
+// through to the next candidate rather than failing the whole pick.
+async function autoAssignLead(leadId, adminId, ip) {
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    include: { property: { select: { locality: true, city: true } } },
+  });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.assignedPartnerId) throw new ApiError(409, 'Lead is already assigned to a partner');
+  if (UNASSIGNABLE_LEAD_STATUSES.includes(lead.status)) {
+    throw new ApiError(400, `Cannot assign a ${lead.status.toLowerCase()} lead`);
+  }
+
+  const candidates = await rankCandidatePartners(lead);
+  if (!candidates.length) {
+    throw new ApiError(400,
+      'No eligible, KYC-verified partner is available to auto-assign this lead to. '
+      + 'Most likely cause: no partner has turned on "auto-accept leads" in Settings yet.');
+  }
+
+  const attempted = [];
+  for (const candidate of candidates) {
+    try {
+      const updated = await assignLead(leadId, candidate.id, adminId, ip);
+      return { lead: updated, assignedTo: candidate, candidatesConsidered: attempted.length + 1 };
+    } catch (err) {
+      // Only skip to the next candidate for a gate this function can
+      // reasonably expect to differ between candidates (R34). Anything
+      // else (lead already assigned by a racing request, lead closed) is
+      // a real failure and should surface immediately rather than being
+      // masked by "no eligible partner".
+      if (err.statusCode === 400 && /data-handling rules/.test(err.message)) {
+        attempted.push({ partnerId: candidate.id, reason: err.message });
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new ApiError(400,
+    `${candidates.length} candidate(s) were eligible but none could actually be assigned `
+    + `(all failed: ${attempted.map((a) => a.reason).join('; ')})`);
+}
+
+// Batch form — every currently UNASSIGNED lead (optionally narrowed by
+// propertyId/city), each picked and assigned independently. One lead's
+// failure (e.g. no eligible partner for its locality) does not stop the
+// rest; the response reports both lists so nothing is silently dropped.
+async function autoAssignUnassignedLeads(query, adminId, ip) {
+  const where = { status: 'UNASSIGNED', assignedPartnerId: { isSet: false } };
+  if (query.propertyId) where.propertyId = query.propertyId;
+  if (query.city) where.property = { city: { equals: query.city, mode: 'insensitive' } };
+
+  const leads = await prisma.lead.findMany({ where, select: { id: true, refCode: true }, orderBy: { createdAt: 'asc' } });
+
+  const assigned = [];
+  const failed = [];
+  for (const lead of leads) {
+    try {
+      const result = await autoAssignLead(lead.id, adminId, ip);
+      assigned.push({ leadId: lead.id, refCode: lead.refCode, partnerId: result.assignedTo.id, partnerName: result.assignedTo.name });
+    } catch (err) {
+      failed.push({ leadId: lead.id, refCode: lead.refCode, reason: err.message });
+    }
+  }
+
+  return { totalConsidered: leads.length, assignedCount: assigned.length, failedCount: failed.length, assigned, failed };
+}
+
 // ─── PROPERTY APPROVAL ───────────────────────────────────────────────────────
 
 async function getPendingProperties(filters, skip, limit) {
@@ -1341,6 +1486,7 @@ module.exports = {
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   requestPropertyChanges,
   getPendingKyc, verifyKyc, requestKycDocuments, kycRequestEffectiveStatus,
+  autoAssignLead, autoAssignUnassignedLeads,
   getRevenueSummary,
   getAuditLogs,
   getAllTickets, getTicketById, updateTicketStatus, getTicketStats,

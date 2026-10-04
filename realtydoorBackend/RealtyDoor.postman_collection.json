@@ -4676,6 +4676,119 @@
                   "body": "{\"success\":false,\"message\":\"Partner not found or not KYC verified\"}"
                 }
               ]
+            },
+            {
+              "name": "Auto-Assign One Lead",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/{{leadId}}/auto-assign",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "{{leadId}}",
+                    "auto-assign"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Assigned",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"Assigned to Sharma Realty\",\"data\":{\"lead\":{\"id\":\"{{leadId}}\",\"status\":\"ASSIGNED\"},\"assignedTo\":{\"id\":\"6a44a67a...\",\"name\":\"Rahul Sharma\",\"companyName\":\"Sharma Realty\",\"activeLeads\":2},\"candidatesConsidered\":1}}"
+                }
+              ]
+            },
+            {
+              "name": "Auto-Assign One Lead - no eligible partner",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/{{leadId}}/auto-assign",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "{{leadId}}",
+                    "auto-assign"
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "400 - None eligible",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"No eligible, KYC-verified partner is available to auto-assign this lead to. Most likely cause: no partner has turned on \\\"auto-accept leads\\\" in Settings yet.\"}"
+                }
+              ]
+            },
+            {
+              "name": "Auto-Assign All Unassigned Leads",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/leads/auto-assign?city=Pune",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "leads",
+                    "auto-assign"
+                  ],
+                  "query": [
+                    {
+                      "key": "city",
+                      "value": "Pune"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "200 - Batch result",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"message\":\"4 of 5 lead(s) assigned\",\"data\":{\"totalConsidered\":5,\"assignedCount\":4,\"failedCount\":1,\"assigned\":[{\"leadId\":\"6a44a680...\",\"refCode\":\"L-2231\",\"partnerId\":\"6a44a67a...\",\"partnerName\":\"Rahul Sharma\"}],\"failed\":[{\"leadId\":\"6a44a681...\",\"refCode\":\"L-2240\",\"reason\":\"No eligible, KYC-verified partner is available to auto-assign this lead to. Most likely cause: no partner has turned on \\\"auto-accept leads\\\" in Settings yet.\"}]}}"
+                }
+              ]
             }
           ]
         },

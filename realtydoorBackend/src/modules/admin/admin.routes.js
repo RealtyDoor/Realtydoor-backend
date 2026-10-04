@@ -23,8 +23,12 @@ router.use(authenticate, requireAdmin, perUserLimiter);
 // Lead management
 router.get('/leads',        ctrl.getLeads);
 router.post('/leads',       ctrl.createLead);          // 6.4a — admin logs an off-platform lead
+// Auto-assign: static path, registered above /leads/:id so it is never
+// swallowed as a lead id.
+router.post('/leads/auto-assign', ctrl.autoAssignUnassignedLeads);
 router.get('/leads/:id',    ctrl.getLeadById);
 router.patch('/leads/:id/assign',        ctrl.assignLead);
+router.post('/leads/:id/auto-assign',    ctrl.autoAssignLead);
 // 6.3 — vet a partner-added (AWAITING_ADMIN) lead. Confirm optionally assigns
 // in one step; passing a different partnerId is the reassign case.
 router.patch('/leads/:id/confirm',       ctrl.confirmLead);

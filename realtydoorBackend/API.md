@@ -4061,6 +4061,107 @@ Also sends the buyer an in-app `LEAD_ASSIGNED` notification (`linkUrl: /user/inq
 **Errors:** `404` lead not found · `400` partner not found or not KYC verified.
 
 ---
+## Auto-assign leads
+
+The backend picks the partner instead of the admin naming one. Both forms
+reuse `assignLead` internally — every guard that endpoint already enforces
+(KYC-verified, not already assigned, not closed/dropped, the `LEAD_DATA_HANDLING`
+gate above) applies identically whether a human or the picker chose the
+partner. Neither endpoint writes `assignedPartnerId` directly.
+
+**Eligibility, applied in this order — none of it skipped:**
+
+| Check | Why |
+| --- | --- |
+| `role: PARTNER`, `kycStatus: VERIFIED`, not soft-deleted | Same bar as manual assignment. |
+| `leadAutoAccept: true` | **Defaults to `false`.** A partner who has never touched Settings is excluded by default — auto-assign only reaches partners who opted in. |
+| `leadPauseOverloaded` is not `true` | **Defaults to `true`.** Combined with the above, a brand-new partner is excluded on *both* counts until they configure Settings, not just one. `{ not: true }` matches `false` and a genuinely missing field alike, so a partner who predates this setting is not silently excluded by the missing-value case specifically — they are excluded by the default value instead, which is the intended outcome either way. |
+| The `LEAD_DATA_HANDLING` acknowledgment gate | Same as manual `assign` — see **Data acknowledgments** above. A candidate who fails only this check is skipped in favour of the next one, not treated as "no eligible partner". |
+
+**Locality ranking** (does not exclude anyone — it only orders the pool):
+1. `leadPreferredLocalities` contains the property's locality
+2. `leadPreferredLocalities` contains the property's city
+3. `coverageAreas` contains the locality
+4. `coverageAreas` contains the city
+5. No locality signal at all — every eligible partner
+
+The first non-empty tier wins. Within a tier, the partner with the **fewest
+currently active leads** (`status notIn [CLOSED, DROPPED]`) is picked —
+current workload, not lifetime volume, so a partner who closed 200 deals last
+year but has none open now ranks above one sitting on 10 open leads today.
+
+This means a lead in a locality nobody specifically covers is still
+assignable — it falls through to tier 5 rather than coming back as
+unassignable, which would be the more "correct"-looking but far less useful
+behaviour.
+
+---
+
+### POST /api/admin/leads/:id/auto-assign
+
+Auto-assign one lead.
+
+**Auth:** ADMIN
+
+**Request Body:** none.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Assigned to Sharma Realty",
+  "data": {
+    "lead": { "id": "...", "status": "ASSIGNED", "assignedPartnerId": "..." },
+    "assignedTo": { "id": "...", "name": "Rahul Sharma", "companyName": "Sharma Realty", "activeLeads": 2 },
+    "candidatesConsidered": 1
+  }
+}
+```
+
+`candidatesConsidered` is 1 unless an earlier-ranked candidate failed the
+data-handling gate and was skipped — then it is however many were tried
+before one actually succeeded.
+
+**Errors:**
+- `400` no eligible, KYC-verified, opted-in partner exists at all (names the
+  most likely cause — nobody has turned on auto-accept yet)
+- `400` every eligible candidate failed for the same reason (names each)
+- `404` lead not found · `409` already assigned · `400` lead is
+  `CLOSED`/`DROPPED`
+
+---
+
+### POST /api/admin/leads/auto-assign
+
+Auto-assign every currently `UNASSIGNED` lead in one call. Registered
+**above** `/leads/:id` — a static path, never swallowed as a lead id.
+
+**Auth:** ADMIN
+
+**Query:** `propertyId` · `city` — both optional, narrow which unassigned
+leads are considered. Omit both to sweep every unassigned lead in the system.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "4 of 5 lead(s) assigned",
+  "data": {
+    "totalConsidered": 5, "assignedCount": 4, "failedCount": 1,
+    "assigned": [{ "leadId": "...", "refCode": "L-2231", "partnerId": "...", "partnerName": "Rahul Sharma" }],
+    "failed": [{ "leadId": "...", "refCode": "L-2240", "reason": "No eligible, KYC-verified partner is available..." }]
+  }
+}
+```
+
+**One lead's failure never stops the rest.** Each lead is picked and assigned
+independently; both lists are returned so nothing is silently dropped from a
+partial run.
+
+
+---
 
 ### GET /api/admin/properties
 

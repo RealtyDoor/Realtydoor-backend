@@ -57,6 +57,21 @@ async function assignLead(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// Auto-assign: the backend picks the partner instead of the admin naming one.
+async function autoAssignLead(req, res, next) {
+  try {
+    const result = await service.autoAssignLead(req.params.id, req.user.id, req.ip);
+    success(res, result, `Assigned to ${result.assignedTo.companyName || result.assignedTo.name}`);
+  } catch (err) { next(err); }
+}
+
+async function autoAssignUnassignedLeads(req, res, next) {
+  try {
+    const result = await service.autoAssignUnassignedLeads(req.query, req.user.id, req.ip);
+    success(res, result, `${result.assignedCount} of ${result.totalConsidered} lead(s) assigned`);
+  } catch (err) { next(err); }
+}
+
 async function createLead(req, res, next) {
   try {
     const data = createLeadSchema.parse(req.body);
@@ -529,7 +544,7 @@ async function deleteConfig(req, res, next) {
 }
 
 module.exports = {
-  getLeadById, getLeads, assignLead, createLead, confirmLead, rejectLead, overrideLeadOtp,
+  getLeadById, getLeads, assignLead, autoAssignLead, autoAssignUnassignedLeads, createLead, confirmLead, rejectLead, overrideLeadOtp,
   setPayoutAccountStatus,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   requestPropertyChanges,
