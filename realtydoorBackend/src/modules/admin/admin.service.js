@@ -22,6 +22,9 @@ const { buildTicketChargeReceiptPdf } = require('../../lib/pdfReceipt');
 const { s3Upload } = require('../../lib/fileUpload');
 const { getConfigNumber } = require('../config/config.service');
 const { distanceMetres } = require('../../lib/mapLink');
+const {
+  ADMIN_PERMISSION_SCOPES, ADMIN_STAFF_ROLES, DEFAULT_PERMISSIONS_BY_STAFF_ROLE,
+} = require('../../utils/adminPermissions');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 
 // ─── LEAD MANAGEMENT ─────────────────────────────────────────────────────────
@@ -1115,6 +1118,116 @@ async function suspendUser(targetUserId, suspend, reason, adminId, ip) {
   return updated;
 }
 
+// ─── STAFF DIRECTORY / PERMISSION MATRIX (16.x) ──────────────────────────────
+// Internal RealtyDoor staff — every ADMIN-role User, with a staffRole label
+// and the adminPermissions scopes middleware/requirePermission.js actually
+// authorizes against. Distinct from TeamMember (the public About-page
+// roster, no auth implications) and from Vendor (external contractors).
+
+async function listStaff(skip, limit) {
+  const where = { role: 'ADMIN' };
+  const [data, total] = await Promise.all([
+    prisma.user.findMany({
+      where, skip, take: limit, orderBy: { createdAt: 'asc' },
+      select: {
+        id: true, name: true, email: true, phone: true,
+        staffRole: true, adminPermissions: true, isSuspended: true, createdAt: true,
+      },
+    }),
+    prisma.user.count({ where }),
+  ]);
+  return { data, total };
+}
+
+// Promotes an existing account to staff. Reuses changeUserRole for the
+// actual role flip (+ its Clerk sync) if not already ADMIN, then layers the
+// staffRole/permissions on top. staffRole is required here — unlike
+// updateStaffPermissions, a brand-new staff member should never land in the
+// "staffRole unset = full access" fail-open state by accident.
+async function createStaffMember(targetUserId, { staffRole, permissions }, adminId, ip) {
+  if (!ADMIN_STAFF_ROLES.includes(staffRole)) {
+    throw new ApiError(400, `staffRole must be one of ${ADMIN_STAFF_ROLES.join(', ')}`);
+  }
+  const grantedPermissions = permissions ?? DEFAULT_PERMISSIONS_BY_STAFF_ROLE[staffRole] ?? [];
+  const invalid = grantedPermissions.filter((p) => !ADMIN_PERMISSION_SCOPES.includes(p));
+  if (invalid.length) throw new ApiError(400, `Unknown permission(s): ${invalid.join(', ')}`);
+
+  const target = await prisma.user.findUnique({ where: { id: targetUserId } });
+  if (!target) throw new ApiError(404, 'User not found');
+
+  if (target.role !== 'ADMIN') {
+    await changeUserRole(targetUserId, 'ADMIN', adminId, ip);
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: targetUserId },
+    data: { staffRole, adminPermissions: grantedPermissions },
+    select: { id: true, name: true, email: true, role: true, staffRole: true, adminPermissions: true },
+  });
+
+  await createAuditLog({
+    adminId, action: 'STAFF_MEMBER_CREATED', targetType: 'User', targetId: targetUserId,
+    after: { staffRole, permissions: grantedPermissions }, ipAddress: ip,
+  });
+
+  return updated;
+}
+
+async function updateStaffPermissions(targetUserId, { staffRole, permissions }, adminId, ip) {
+  const target = await prisma.user.findUnique({ where: { id: targetUserId } });
+  if (!target) throw new ApiError(404, 'User not found');
+  if (target.role !== 'ADMIN') throw new ApiError(400, 'This user is not a staff member');
+
+  if (staffRole !== undefined && staffRole !== null && !ADMIN_STAFF_ROLES.includes(staffRole)) {
+    throw new ApiError(400, `staffRole must be one of ${ADMIN_STAFF_ROLES.join(', ')}`);
+  }
+  if (permissions !== undefined) {
+    const invalid = permissions.filter((p) => !ADMIN_PERMISSION_SCOPES.includes(p));
+    if (invalid.length) throw new ApiError(400, `Unknown permission(s): ${invalid.join(', ')}`);
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: targetUserId },
+    data: {
+      ...(staffRole !== undefined && { staffRole }),
+      ...(permissions !== undefined && { adminPermissions: permissions }),
+    },
+    select: { id: true, name: true, email: true, staffRole: true, adminPermissions: true },
+  });
+
+  await createAuditLog({
+    adminId, action: 'STAFF_PERMISSIONS_UPDATED', targetType: 'User', targetId: targetUserId,
+    before: { staffRole: target.staffRole, adminPermissions: target.adminPermissions },
+    after: { staffRole: updated.staffRole, adminPermissions: updated.adminPermissions },
+    ipAddress: ip,
+  });
+
+  return updated;
+}
+
+// Offboards a staff member back to a plain USER account — distinct from
+// suspendUser above, which still refuses to touch an ADMIN account at all
+// (unrelated to this feature; left as-is).
+async function removeStaffMember(targetUserId, adminId, ip) {
+  const target = await prisma.user.findUnique({ where: { id: targetUserId } });
+  if (!target) throw new ApiError(404, 'User not found');
+  if (target.role !== 'ADMIN') throw new ApiError(400, 'This user is not a staff member');
+
+  await changeUserRole(targetUserId, 'USER', adminId, ip);
+  const updated = await prisma.user.update({
+    where: { id: targetUserId },
+    data: { staffRole: null, adminPermissions: [] },
+    select: { id: true, name: true, email: true, role: true },
+  });
+
+  await createAuditLog({
+    adminId, action: 'STAFF_MEMBER_REMOVED', targetType: 'User', targetId: targetUserId,
+    before: { staffRole: target.staffRole }, after: { role: 'USER' }, ipAddress: ip,
+  });
+
+  return updated;
+}
+
 // ─── TICKET MANAGEMENT ───────────────────────────────────────────────────────
 
 // 7.3 — SLA by priority, admin-configurable per tier (mirrors
@@ -1756,6 +1869,7 @@ module.exports = {
   dispatchTicket, resolveTicket, linkTicketToDeal,
   getAllLoans, updateLoanStatus, getLoanBankStats,
   getAllUsers, changeUserRole, suspendUser,
+  listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,
   getPartnerMetrics, getPartnerById,
   adminListServices, adminCreateService, adminUpdateService, adminDeleteService,
   getPropertyByIdAdmin, getKycByUserId, getUserByIdAdmin,

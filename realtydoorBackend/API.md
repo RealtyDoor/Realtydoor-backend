@@ -7540,6 +7540,122 @@ Suspend or unsuspend a user. Suspended users receive `403` on every authenticate
 
 ---
 
+## Staff Directory / Permission Matrix (16.x)
+
+Internal RealtyDoor staff — every `ADMIN`-role `User`, with a `staffRole`
+label and the `adminPermissions` scopes that actually get checked. Distinct
+from the public-facing **Team roster** (`TeamMember`, the About-page
+listing, no auth implications) and from **Vendors** (external contractors).
+
+**The permission scopes:** `LEADS`, `LISTINGS`, `KYC`, `FINANCE`,
+`COMMISSION`, `TICKETS`, `USERS`, `CONTENT`, `STAFF`.
+
+**The staff roles (presets, not what's actually checked):** `SUPER_ADMIN`
+(bypasses the permission check entirely), `SUPPORT`, `FINANCE_STAFF`,
+`CONTENT_MANAGER`.
+
+**Backward compatibility is the load-bearing design decision here.** Every
+admin account that existed before this feature shipped has `staffRole`
+unset (`null`) — not an empty permission set. `requirePermission` treats a
+`null` `staffRole` as full access, exactly like before this feature
+existed. Only once an admin is explicitly given a `staffRole` (via
+`POST .../staff/:id` below) does `adminPermissions` start being checked at
+all. This is deliberate: an empty `adminPermissions` array can mean either
+"never configured" or "deliberately granted nothing," and on MongoDB a
+List field reads back as `[]` either way (unlike a nullable scalar, which
+can distinguish missing from set) — so `staffRole`, a plain nullable
+string, is the actual gate, not the array.
+
+**Only a small, selective set of existing routes are gated by a
+permission** in this pass — not a retrofit across every admin endpoint in
+the app. Gated so far: `PATCH /admin/kyc/:userId/verify` (`KYC`),
+`PATCH`/`POST /admin/escrow/:id/release`/`refund` (`FINANCE`),
+`POST /admin/leads/:id/commission/lock` (`COMMISSION`),
+`POST .../commission/invoice`/`collect` (`FINANCE`), and the staff
+directory routes below (`STAFF`). Every other admin route is unchanged,
+still only gated by the existing blanket `requireAdmin`.
+
+### GET /api/admin/staff
+
+The directory: every `ADMIN`-role user (paginated).
+
+**Auth:** ADMIN + `STAFF` permission
+
+**Response `200`:**
+
+```json
+{
+  "success": true, "message": "Success",
+  "data": {
+    "data": [
+      {
+        "id": "64admin...", "name": "Priya Support", "email": "priya@realtydoor.com", "phone": "+919000000010",
+        "staffRole": "SUPPORT", "adminPermissions": ["LEADS", "LISTINGS", "KYC", "TICKETS"],
+        "isSuspended": false, "createdAt": "2026-01-10T00:00:00.000Z"
+      }
+    ],
+    "pagination": { "total": 6, "page": 1, "limit": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
+  }
+}
+```
+
+`staffRole: null` rows are legacy/unscoped admins with full access.
+
+---
+
+### POST /api/admin/staff/:id
+
+Promotes an existing account (any role) to staff. Flips `role` to `ADMIN`
+first if it wasn't already (reusing `PATCH /admin/users/:id/role`'s own
+Clerk-sync logic), then sets `staffRole`/`adminPermissions`.
+
+**Auth:** ADMIN + `STAFF` permission
+
+**Request Body:**
+
+```json
+{ "staffRole": "SUPPORT", "permissions": ["LEADS", "TICKETS"] }
+```
+
+`staffRole` is required — one of the four listed above. `permissions` is
+optional; omitted, it falls back to a sensible default set per `staffRole`
+(e.g. `SUPPORT` defaults to `LEADS`/`LISTINGS`/`KYC`/`TICKETS`).
+`SUPER_ADMIN` bypasses the check regardless of what's stored here.
+
+**Response `201`:** the user, `role: "ADMIN"`, `staffRole`/`adminPermissions` set.
+
+**Errors:** `400` invalid `staffRole` or an unknown permission scope · `404` user not found.
+
+---
+
+### PATCH /api/admin/staff/:id
+
+Updates an existing staff member's role label and/or permissions.
+
+**Auth:** ADMIN + `STAFF` permission
+
+**Request Body:** `{ "staffRole": "FINANCE_STAFF" }` and/or `{ "permissions": ["FINANCE", "COMMISSION"] }` — at least one required.
+
+**Response `200`:** the user with updated `staffRole`/`adminPermissions`.
+
+**Errors:** `400` invalid `staffRole`/permission, or neither field given · `400` target is not a staff member (not `ADMIN`-role) · `404` not found.
+
+---
+
+### DELETE /api/admin/staff/:id
+
+Offboards a staff member back to a plain `USER` account — `staffRole` and
+`adminPermissions` are cleared. Distinct from
+`PATCH /admin/users/:id/suspend`, which still refuses to touch an `ADMIN`
+account at all (unrelated to this feature, left as-is); this is the
+staff-directory-specific removal path.
+
+**Auth:** ADMIN + `STAFF` permission
+
+**Errors:** `400` cannot remove yourself · `400` target is not a staff member · `404` not found.
+
+---
+
 ### GET /api/admin/services
 
 All services in the catalog (including inactive ones).

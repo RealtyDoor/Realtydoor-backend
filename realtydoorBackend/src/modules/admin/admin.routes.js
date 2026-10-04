@@ -18,6 +18,7 @@ const projectCtrl = require('../projects/project.controller');
 const builderInvoiceCtrl = require('../projects/builderInvoice.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
+const { requirePermission } = require('../../middleware/requirePermission');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
 const { videoTourUploader } = require('../../lib/fileUpload');
 
@@ -96,7 +97,11 @@ router.post('/builder-invoices/:id/dispute',    builderInvoiceCtrl.disputeInvoic
 // KYC
 router.get('/kyc',                ctrl.getPendingKyc);
 router.get('/kyc/:userId',        ctrl.getKycById);
-router.patch('/kyc/:userId/verify', ctrl.verifyKyc);
+// 16.x — one of a small, deliberately selective set of routes gated by the
+// permission matrix in this pass (see the staff-directory routes above for
+// why) — a SUPPORT staffRole can see KYC queues without also being able to
+// verify one.
+router.patch('/kyc/:userId/verify', requirePermission('KYC'), ctrl.verifyKyc);
 // R9 — ask for specific documents instead of a flat reject.
 router.post('/kyc/:userId/request-documents', ctrl.requestKycDocuments);
 
@@ -114,9 +119,9 @@ router.patch('/partners/:id/payout-account/status', ctrl.setPayoutAccountStatus)
 // R14 — every partner's payout account in one list.
 router.get('/payout-accounts', ctrl.listPayoutAccounts);
 
-// Escrow (admin actions)
-router.patch('/escrow/:id/release', escrowCtrl.releaseEscrow);
-router.post('/escrow/:id/refund', escrowCtrl.refundEscrow);
+// Escrow (admin actions) — release/refund move real money, gated by FINANCE.
+router.patch('/escrow/:id/release', requirePermission('FINANCE'), escrowCtrl.releaseEscrow);
+router.post('/escrow/:id/refund', requirePermission('FINANCE'), escrowCtrl.refundEscrow);
 // R10 — freeze / unfreeze for dispute.
 router.post('/escrow/:id/freeze',   escrowCtrl.freezeEscrow);
 router.post('/escrow/:id/unfreeze', escrowCtrl.unfreezeEscrow);
@@ -157,6 +162,16 @@ router.get('/users',                   ctrl.getUsers);
 router.get('/users/:id',               ctrl.getUserById);
 router.patch('/users/:id/role',        ctrl.changeUserRole);
 router.patch('/users/:id/suspend',     ctrl.suspendUser);
+
+// 16.x — staff directory / permission matrix. Gated by the STAFF permission
+// itself: who can grant permissions is the single most sensitive surface
+// this feature adds, so it's the one place requirePermission is applied in
+// this pass rather than left on the blanket requireAdmin check every other
+// admin route still uses.
+router.get('/staff',               requirePermission('STAFF'), ctrl.listStaff);
+router.post('/staff/:id',          requirePermission('STAFF'), ctrl.createStaffMember);
+router.patch('/staff/:id',         requirePermission('STAFF'), ctrl.updateStaffPermissions);
+router.delete('/staff/:id',        requirePermission('STAFF'), ctrl.removeStaffMember);
 
 // Service catalog management
 router.get('/services',         ctrl.listServices);
@@ -257,10 +272,13 @@ router.get('/leads/:id/commission/preview',  commissionCtrl.previewLeadTerms);
 router.get('/leads/:id/commission/history',  commissionCtrl.leadTermsHistory);
 router.post('/leads/:id/commission/prefill', commissionCtrl.prefillLeadTerms);
 router.put('/leads/:id/commission',          commissionCtrl.setLeadTerms);
-router.post('/leads/:id/commission/lock',    commissionCtrl.lockLeadTerms);
+// 16.x — locking/collecting commission is a FINANCE-gated action; setting
+// terms (above, PUT) is left ungated on COMMISSION since negotiating terms
+// and actually finalizing/collecting money are different levels of trust.
+router.post('/leads/:id/commission/lock',    requirePermission('COMMISSION'), commissionCtrl.lockLeadTerms);
 // R26 — owner success-fee payment record + receipt.
-router.post('/leads/:id/commission/invoice', commissionCtrl.invoiceLeadCommission);
-router.post('/leads/:id/commission/collect', commissionCtrl.collectLeadCommission);
+router.post('/leads/:id/commission/invoice', requirePermission('FINANCE'), commissionCtrl.invoiceLeadCommission);
+router.post('/leads/:id/commission/collect', requirePermission('FINANCE'), commissionCtrl.collectLeadCommission);
 router.post('/leads/:id/commission/dispute', commissionCtrl.disputeLeadCommission);
 
 // R29 — advisor referrals (oversight; creation is self-service, see

@@ -27,6 +27,19 @@ model User {
   phoneOtpAttempts    Int       @default(0)
   phoneOtpLockedUntil DateTime?
   role                Role      @default(USER)
+  // 16.x — staff directory / permission matrix, meaningful only when role
+  // is ADMIN. The actual gate middleware/requirePermission.js checks is
+  // staffRole, not adminPermissions directly: a scalar nullable field can
+  // reliably distinguish "never configured" (missing) from "deliberately
+  // set" the way other nullable fields do throughout this schema, but a
+  // List field on MongoDB reads back as [] when absent, not null/undefined
+  // — so an empty adminPermissions can't tell "no staffRole ever assigned"
+  // apart from "assigned a role with zero permissions". staffRole == null
+  // means every admin that existed before this feature shipped keeps full
+  // access; once a staffRole is set, adminPermissions is what's actually
+  // checked (SUPER_ADMIN bypasses it entirely). See utils/adminPermissions.js.
+  staffRole           String?
+  adminPermissions    String[]
   isNRI               Boolean   @default(false)
 
   // Profile & settings (buyer-facing)

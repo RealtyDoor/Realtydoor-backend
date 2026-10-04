@@ -1,6 +1,7 @@
 const { z } = require('zod');
 const { objectId, roleEnum } = require('../../utils/validators');
 const { phoneField } = require('../../lib/phoneUtils');
+const { ADMIN_PERMISSION_SCOPES, ADMIN_STAFF_ROLES } = require('../../utils/adminPermissions');
 
 // 6.4a — admin logs a lead that came in off-platform. Either propertyId (a
 // live listing) or propertyInterest (free text, when the property isn't
@@ -234,6 +235,20 @@ const updateVendorSchema = z.object({
   { message: 'At least one field must be provided' },
 );
 
+// 16.x
+const createStaffMemberSchema = z.object({
+  staffRole: z.enum(ADMIN_STAFF_ROLES),
+  permissions: z.array(z.enum(ADMIN_PERMISSION_SCOPES)).optional(),
+});
+
+const updateStaffPermissionsSchema = z.object({
+  staffRole: z.enum(ADMIN_STAFF_ROLES).nullable().optional(),
+  permissions: z.array(z.enum(ADMIN_PERMISSION_SCOPES)).optional(),
+}).refine(
+  (d) => d.staffRole !== undefined || d.permissions !== undefined,
+  { message: 'At least one of staffRole or permissions must be provided' },
+);
+
 // 7.1 — a vendor's recurring weekly availability window.
 const TIME_HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const addVendorAvailabilitySchema = z.object({
@@ -285,6 +300,8 @@ module.exports = {
   resolveTicketSchema,
   linkTicketToDealSchema,
   addVendorAvailabilitySchema,
+  createStaffMemberSchema,
+  updateStaffPermissionsSchema,
   createServiceSchema,
   updateServiceSchema,
   createTeamMemberSchema,

@@ -19,6 +19,8 @@ const {
   resolveTicketSchema,
   linkTicketToDealSchema,
   addVendorAvailabilitySchema,
+  createStaffMemberSchema,
+  updateStaffPermissionsSchema,
   createServiceSchema,
   updateServiceSchema,
   createTeamMemberSchema,
@@ -272,6 +274,39 @@ async function suspendUser(req, res, next) {
     if (typeof suspend !== 'boolean') throw new ApiError(400, '"suspend" must be a boolean');
     const updated = await service.suspendUser(req.params.id, suspend, reason, req.user.id, req.ip);
     success(res, updated, suspend ? 'User suspended' : 'User unsuspended');
+  } catch (err) { next(err); }
+}
+
+// ─── 16.x — staff directory / permission matrix ─────────────────────────────
+
+async function listStaff(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const { data, total } = await service.listStaff(skip, limit);
+    success(res, paginate(data, total, page, limit));
+  } catch (err) { next(err); }
+}
+
+async function createStaffMember(req, res, next) {
+  try {
+    const data = createStaffMemberSchema.parse(req.body);
+    const staff = await service.createStaffMember(req.params.id, data, req.user.id, req.ip);
+    created(res, staff, 'Staff member added');
+  } catch (err) { next(err); }
+}
+
+async function updateStaffPermissions(req, res, next) {
+  try {
+    const data = updateStaffPermissionsSchema.parse(req.body);
+    const staff = await service.updateStaffPermissions(req.params.id, data, req.user.id, req.ip);
+    success(res, staff, 'Permissions updated');
+  } catch (err) { next(err); }
+}
+
+async function removeStaffMember(req, res, next) {
+  try {
+    const removed = await service.removeStaffMember(req.params.id, req.user.id, req.ip);
+    success(res, removed, 'Staff member removed');
   } catch (err) { next(err); }
 }
 
@@ -628,6 +663,7 @@ module.exports = {
   dispatchTicket, resolveTicket, linkTicketToDeal,
   getLoans, updateLoanStatus, getLoanBankStats,
   getUsers, changeUserRole, getUserById, suspendUser,
+  listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,
   getPartnerById,
   getPropertyById,
   getKycById,
