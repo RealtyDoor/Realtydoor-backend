@@ -18,6 +18,7 @@ const {
   dispatchTicketSchema,
   resolveTicketSchema,
   linkTicketToDealSchema,
+  addVendorAvailabilitySchema,
   createServiceSchema,
   updateServiceSchema,
   createTeamMemberSchema,
@@ -500,11 +501,34 @@ async function listVendors(req, res, next) {
   } catch (err) { next(err); }
 }
 
-// 7.1 — rating + jobsCount, not on the plain list row shape.
+// 7.1 — rating + jobsCount + availableSlots, not on the plain list row
+// shape. ?nearPropertyId=/?nearLat=&nearLng= adds distanceMetres.
 async function getVendor(req, res, next) {
   try {
-    const vendor = await service.getVendorById(req.params.id);
+    const vendor = await service.getVendorById(req.params.id, req.query);
     success(res, vendor);
+  } catch (err) { next(err); }
+}
+
+async function addVendorAvailability(req, res, next) {
+  try {
+    const data = addVendorAvailabilitySchema.parse(req.body);
+    const slot = await service.addVendorAvailabilitySlot(req.params.id, data);
+    created(res, slot, 'Availability slot added');
+  } catch (err) { next(err); }
+}
+
+async function listVendorAvailability(req, res, next) {
+  try {
+    const slots = await service.listVendorAvailability(req.params.id);
+    success(res, slots);
+  } catch (err) { next(err); }
+}
+
+async function deleteVendorAvailability(req, res, next) {
+  try {
+    await service.deleteVendorAvailabilitySlot(req.params.id, req.params.slotId);
+    success(res, null, 'Availability slot removed');
   } catch (err) { next(err); }
 }
 
@@ -614,6 +638,7 @@ module.exports = {
   listServices, createService, updateService, deleteService,
   listVideoTours, updateVideoTour, uploadVideoTourFile,
   listVendors, getVendor, createVendor, updateVendor, deleteVendor,
+  addVendorAvailability, listVendorAvailability, deleteVendorAvailability,
   getAnalytics,
   listDisputes, resolveDispute,
   listReviews, moderateReview,

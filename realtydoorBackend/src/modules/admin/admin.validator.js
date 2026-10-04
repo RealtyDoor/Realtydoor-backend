@@ -214,6 +214,9 @@ const createVendorSchema = z.object({
   category: z.enum(['PLUMBING', 'ELECTRICAL', 'PAINTING', 'GENERAL', 'CARPENTRY', 'OTHER']),
   city:     z.string().max(100).optional(),
   notes:    z.string().max(500).optional(),
+  // 7.1 — the vendor's base location, for the directory's distance column.
+  latitude:  z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
 });
 
 const updateVendorSchema = z.object({
@@ -224,10 +227,20 @@ const updateVendorSchema = z.object({
   city:     z.string().max(100).optional(),
   notes:    z.string().max(500).optional(),
   isActive: z.boolean().optional(),
+  latitude:  z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
 }).refine(
   (d) => Object.keys(d).length > 0,
   { message: 'At least one field must be provided' },
 );
+
+// 7.1 — a vendor's recurring weekly availability window.
+const TIME_HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const addVendorAvailabilitySchema = z.object({
+  dayOfWeek: z.number().int().min(0).max(6),
+  startTime: z.string().regex(TIME_HHMM, 'startTime must be HH:mm, 24-hour'),
+  endTime:   z.string().regex(TIME_HHMM, 'endTime must be HH:mm, 24-hour'),
+}).refine((d) => d.startTime < d.endTime, { message: 'endTime must be after startTime', path: ['endTime'] });
 
 const adminResolveDisputeSchema = z.object({
   status:    z.enum(['UNDER_REVIEW', 'RESOLVED', 'CLOSED']).optional(),
@@ -271,6 +284,7 @@ module.exports = {
   dispatchTicketSchema,
   resolveTicketSchema,
   linkTicketToDealSchema,
+  addVendorAvailabilitySchema,
   createServiceSchema,
   updateServiceSchema,
   createTeamMemberSchema,

@@ -21,6 +21,7 @@ const dataAckService = require('../partners/dataAck.service');
 const { buildTicketChargeReceiptPdf } = require('../../lib/pdfReceipt');
 const { s3Upload } = require('../../lib/fileUpload');
 const { getConfigNumber } = require('../config/config.service');
+const { distanceMetres } = require('../../lib/mapLink');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 
 // ─── LEAD MANAGEMENT ─────────────────────────────────────────────────────────
@@ -1764,6 +1765,7 @@ module.exports = {
   adminListDocuments, adminVerifyDocument,
   listVideoTours, updateVideoTour, uploadVideoTourFile,
   adminListVendors, getVendorById, adminCreateVendor, adminUpdateVendor, adminDeleteVendor,
+  addVendorAvailabilitySlot, listVendorAvailability, deleteVendorAvailabilitySlot,
   getAdminAnalytics,
 };
 
@@ -1772,28 +1774,65 @@ module.exports = {
 // 7.1 — rating and jobs count, aggregated from ServiceTicket now that
 // dispatchTicket actually links a real vendorId (previously vendorName was
 // free text, so there was nothing to aggregate against). "Availability
-// slots" and "distance" from the same doc item are not built: slots needs a
-// scheduling-model decision (recurring weekly availability vs ad hoc) and
-// distance needs vendor coordinates, which don't exist on this model —
-// both are product/design decisions, not something to guess at here.
-async function withVendorStats(vendors) {
+// "distance" needs a reference point — there's no single fixed "distance
+// from where" for a vendor in the abstract, so it's only ever computed when
+// the caller supplies one (nearLat/nearLng, or nearPropertyId to resolve a
+// property's own coordinates), same nullable-when-no-reference pattern as
+// everywhere else: null, not a guess, when there's nothing to compare.
+async function withVendorStats(vendors, { nearLat, nearLng } = {}) {
   if (!vendors.length) return vendors;
   const vendorIds = vendors.map((v) => v.id);
-  const stats = await prisma.serviceTicket.groupBy({
-    by: ['vendorId'],
-    where: { vendorId: { in: vendorIds } },
-    _count: { _all: true },
-    _avg: { vendorRating: true },
-  });
-  const byVendorId = new Map(stats.map((s) => [s.vendorId, s]));
+  const [stats, slots] = await Promise.all([
+    prisma.serviceTicket.groupBy({
+      by: ['vendorId'],
+      where: { vendorId: { in: vendorIds } },
+      _count: { _all: true },
+      _avg: { vendorRating: true },
+    }),
+    prisma.vendorAvailabilitySlot.findMany({
+      where: { vendorId: { in: vendorIds } },
+      orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+    }),
+  ]);
+  const statsByVendorId = new Map(stats.map((s) => [s.vendorId, s]));
+  const slotsByVendorId = new Map();
+  for (const slot of slots) {
+    if (!slotsByVendorId.has(slot.vendorId)) slotsByVendorId.set(slot.vendorId, []);
+    slotsByVendorId.get(slot.vendorId).push(slot);
+  }
+
+  const hasReference = nearLat != null && nearLng != null;
   return vendors.map((v) => {
-    const s = byVendorId.get(v.id);
+    const s = statsByVendorId.get(v.id);
     return {
       ...v,
       jobsCount: s?._count._all ?? 0,
       rating: s?._avg.vendorRating != null ? Math.round(s._avg.vendorRating * 10) / 10 : null,
+      availableSlots: slotsByVendorId.get(v.id) ?? [],
+      distanceMetres: hasReference
+        ? distanceMetres({ latitude: v.latitude, longitude: v.longitude }, { latitude: nearLat, longitude: nearLng })
+        : null,
     };
   });
+}
+
+// `near` resolves a reference point either directly (nearLat/nearLng) or
+// via a property's own coordinates (nearPropertyId) — the common case is
+// "which vendors are close to THIS ticket's property", not an arbitrary
+// lat/lng admin happens to have on hand.
+async function resolveNearPoint(filters) {
+  if (filters.nearLat != null && filters.nearLng != null) {
+    return { nearLat: Number(filters.nearLat), nearLng: Number(filters.nearLng) };
+  }
+  if (filters.nearPropertyId) {
+    const property = await prisma.property.findUnique({
+      where: { id: filters.nearPropertyId }, select: { latitude: true, longitude: true },
+    });
+    if (property?.latitude != null && property?.longitude != null) {
+      return { nearLat: property.latitude, nearLng: property.longitude };
+    }
+  }
+  return {};
 }
 
 async function adminListVendors(filters, skip, limit) {
@@ -1802,17 +1841,19 @@ async function adminListVendors(filters, skip, limit) {
   if (filters.city)     where.city     = filters.city;
   if (filters.isActive !== undefined) where.isActive = filters.isActive !== 'false';
 
-  const [rows, total] = await Promise.all([
+  const [rows, total, near] = await Promise.all([
     prisma.vendor.findMany({ where, skip, take: limit, orderBy: { name: 'asc' } }),
     prisma.vendor.count({ where }),
+    resolveNearPoint(filters),
   ]);
-  return { data: await withVendorStats(rows), total };
+  return { data: await withVendorStats(rows, near), total };
 }
 
-async function getVendorById(id) {
+async function getVendorById(id, filters = {}) {
   const vendor = await prisma.vendor.findUnique({ where: { id } });
   if (!vendor) throw new ApiError(404, 'Vendor not found');
-  const [withStats] = await withVendorStats([vendor]);
+  const near = await resolveNearPoint(filters);
+  const [withStats] = await withVendorStats([vendor], near);
   return withStats;
 }
 
@@ -1830,6 +1871,27 @@ async function adminDeleteVendor(id) {
   const vendor = await prisma.vendor.findUnique({ where: { id } });
   if (!vendor) throw new ApiError(404, 'Vendor not found');
   return prisma.vendor.update({ where: { id }, data: { isActive: false } });
+}
+
+// 7.1 — recurring weekly availability. No overlap check: a vendor plausibly
+// has split hours in a day (e.g. 09:00-13:00 and 15:00-19:00), so two slots
+// on the same day is normal, not a duplicate.
+async function addVendorAvailabilitySlot(vendorId, data) {
+  const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
+  if (!vendor) throw new ApiError(404, 'Vendor not found');
+  return prisma.vendorAvailabilitySlot.create({ data: { ...data, vendorId } });
+}
+
+async function listVendorAvailability(vendorId) {
+  return prisma.vendorAvailabilitySlot.findMany({
+    where: { vendorId }, orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+  });
+}
+
+async function deleteVendorAvailabilitySlot(vendorId, slotId) {
+  const slot = await prisma.vendorAvailabilitySlot.findFirst({ where: { id: slotId, vendorId } });
+  if (!slot) throw new ApiError(404, 'Availability slot not found for this vendor');
+  await prisma.vendorAvailabilitySlot.delete({ where: { id: slotId } });
 }
 
 // ─── PLATFORM ANALYTICS ───────────────────────────────────────────────────────

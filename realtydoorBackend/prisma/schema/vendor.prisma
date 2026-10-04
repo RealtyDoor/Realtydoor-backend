@@ -11,12 +11,44 @@ model Vendor {
   city      String?
   notes     String?
   isActive  Boolean  @default(true)
+  // 7.1 — the vendor's own base location, for the directory's "distance"
+  // column. Reuses the same lat/lng shape (and lib/mapLink.js's
+  // distanceMetres) as Property's own coordinates — admin can paste a
+  // Google Maps link the same way.
+  latitude  Float?
+  longitude Float?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tickets ServiceTicket[]
+  tickets      ServiceTicket[]
+  availability VendorAvailabilitySlot[]
 
   @@index([category, isActive])
   @@index([isActive])
+}
+
+// 7.1 — "availability slots": a recurring weekly window, the simplest
+// reasonable default for "when is this vendor generally available" (as
+// opposed to ServiceTicket.scheduledSlot, which is a specific booked
+// appointment for one ticket, already built in 7.2). Not ad-hoc
+// date-specific slots — a vendor's general weekly hours is the far more
+// common real-world shape, and ad-hoc slots can be layered on top later
+// without touching this model.
+model VendorAvailabilitySlot {
+  id       String @id @default(auto()) @map("_id") @db.ObjectId
+  vendorId String @db.ObjectId
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  // 0 = Sunday .. 6 = Saturday, matching JS Date#getDay().
+  dayOfWeek Int
+  // "HH:mm" 24-hour, e.g. "09:00"/"18:00" — stored as strings rather than
+  // DateTime since there's no real calendar date here, only a recurring
+  // time-of-day window.
+  startTime String
+  endTime   String
+
+  createdAt DateTime @default(now())
+
+  @@index([vendorId])
 }

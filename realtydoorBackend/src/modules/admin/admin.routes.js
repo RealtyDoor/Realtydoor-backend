@@ -202,6 +202,10 @@ router.post('/vendors',        ctrl.createVendor);
 router.get('/vendors/:id',     ctrl.getVendor);
 router.patch('/vendors/:id',   ctrl.updateVendor);
 router.delete('/vendors/:id',  ctrl.deleteVendor);
+// 7.1 — recurring weekly availability.
+router.get('/vendors/:id/availability',             ctrl.listVendorAvailability);
+router.post('/vendors/:id/availability',            ctrl.addVendorAvailability);
+router.delete('/vendors/:id/availability/:slotId',  ctrl.deleteVendorAvailability);
 
 // Platform analytics (funnel + cohorts)
 router.get('/analytics', ctrl.getAnalytics);

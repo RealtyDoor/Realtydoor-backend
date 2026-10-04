@@ -7938,6 +7938,8 @@ Admin-managed vendor catalog (paginated). Vendors are dispatched on service tick
 | `category` | string | `PLUMBING` · `ELECTRICAL` · `PAINTING` · `GENERAL` · `CARPENTRY` · `OTHER` |
 | `city` | string | Filter by city |
 | `isActive` | boolean | `true` (default) or `false` |
+| `nearPropertyId` | string | Compute each vendor's `distanceMetres` from this property's coordinates |
+| `nearLat`, `nearLng` | number | Compute distance from an arbitrary point instead (ignored if `nearPropertyId` is also given and resolves) |
 | `page` | number | Default: `1` |
 | `limit` | number | Default: `20` |
 
@@ -7956,11 +7958,14 @@ Admin-managed vendor catalog (paginated). Vendors are dispatched on service tick
         "email": "ramesh@example.com",
         "category": "PLUMBING",
         "city": "Pune",
+        "latitude": 18.5204, "longitude": 73.8567,
         "notes": "Available 7 days, handles burst pipes.",
         "isActive": true,
         "createdAt": "2024-01-01T00:00:00.000Z",
         "jobsCount": 12,
-        "rating": 4.3
+        "rating": 4.3,
+        "availableSlots": [{ "id": "64slot...", "dayOfWeek": 1, "startTime": "09:00", "endTime": "18:00" }],
+        "distanceMetres": 3053
       }
     ],
     "pagination": { "total": 8, "page": 1, "limit": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
@@ -7973,20 +7978,65 @@ Admin-managed vendor catalog (paginated). Vendors are dispatched on service tick
 text, so there was nothing to aggregate against). `jobsCount` is every
 ticket ever dispatched to this vendor; `rating` averages `vendorRating`
 across whichever of those were actually rated (`null` if none have been).
-**`availableSlots` and `distance` from the same doc item are not built** —
-slots needs a scheduling-model decision (recurring weekly availability vs.
-ad hoc) and distance needs vendor coordinates, which don't exist on this
-model; both are product/design decisions, not something to guess at.
+
+**`availableSlots`** is the vendor's recurring weekly availability (see
+`.../availability` below) — a general "usually free these hours" window,
+distinct from `ServiceTicket.scheduledSlot` (a specific booked appointment
+for one ticket).
+
+**`distanceMetres`** is only computed when a reference point is given
+(`nearPropertyId` or `nearLat`/`nearLng`) — `null` otherwise, not a guess.
+Reuses `lib/mapLink.js`'s great-circle `distanceMetres`, the same utility
+Property's own location-mismatch check uses.
 
 ---
 
 ### GET /api/admin/vendors/:id
 
-Single vendor with the same `jobsCount`/`rating` as the list above.
+Single vendor with the same `jobsCount`/`rating`/`availableSlots`/`distanceMetres` as the list above.
 
 **Auth:** ADMIN
 
+**Query Parameters:** `nearPropertyId`, or `nearLat`/`nearLng` — same as the list endpoint.
+
 **Errors:** `404` vendor not found.
+
+---
+
+### GET /api/admin/vendors/:id/availability
+
+A vendor's recurring weekly availability windows.
+
+**Auth:** ADMIN
+
+**Response `200`:** `[{ "id": "64slot...", "dayOfWeek": 1, "startTime": "09:00", "endTime": "13:00" }, ...]`, ordered by day then start time.
+
+---
+
+### POST /api/admin/vendors/:id/availability
+
+Adds one recurring weekly window. No overlap check — a vendor having split
+hours in a day (e.g. `09:00–13:00` and `15:00–19:00`) is normal, not a
+duplicate.
+
+**Auth:** ADMIN
+
+**Request Body:** `{ "dayOfWeek": 1, "startTime": "09:00", "endTime": "18:00" }`
+
+`dayOfWeek` is `0` (Sunday) through `6` (Saturday), matching JS
+`Date#getDay()`. `startTime`/`endTime` are `"HH:mm"`, 24-hour.
+
+**Response `201`:** the created slot.
+
+**Errors:** `400` `endTime` not after `startTime`, or not `HH:mm` · `404` vendor not found.
+
+---
+
+### DELETE /api/admin/vendors/:id/availability/:slotId
+
+**Auth:** ADMIN
+
+**Errors:** `404` slot not found for this vendor.
 
 ---
 
@@ -8005,11 +8055,14 @@ Add a vendor to the catalog.
   "email":    "ramesh@example.com",
   "category": "PLUMBING",
   "city":     "Pune",
-  "notes":    "Available 7 days, handles burst pipes."
+  "notes":    "Available 7 days, handles burst pipes.",
+  "latitude":  18.5204,
+  "longitude": 73.8567
 }
 ```
 
-`name`, `phone`, and `category` are required. `category`: `PLUMBING` · `ELECTRICAL` · `PAINTING` · `GENERAL` · `CARPENTRY` · `OTHER`
+`name`, `phone`, and `category` are required. `category`: `PLUMBING` · `ELECTRICAL` · `PAINTING` · `GENERAL` · `CARPENTRY` · `OTHER`.
+`latitude`/`longitude` (7.1) are the vendor's base location, for the directory's `distanceMetres` — both optional, same `PATCH` support on update.
 
 **Response `201`:** `{ "success": true, "message": "Vendor added", "data": { "id": "64ven...", ... } }`
 
