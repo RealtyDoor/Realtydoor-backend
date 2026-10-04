@@ -915,6 +915,6 @@ module.exports = {
   getLeadTerms, setLeadTerms, prefillLeadTerms, lockLeadTerms, getLeadTermsHistory,
   invoiceLeadCommission, collectLeadCommission, disputeLeadCommission,
   resolveLinesWithPlatformResidual, resolveRateCardLines, assertStoredLinesSumTo100,
-  applyPartnerShareOverride, computeAmounts, derivedFields,
+  applyPartnerShareOverride, foldSelfListedPartnerLines, computeAmounts, derivedFields,
   PAYEE_ROLES, PARTNER_ROLES, ASSIGNED_PARTNER_ROLES,
 };

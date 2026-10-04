@@ -20,7 +20,7 @@
     "db:drop-legacy-phone-otp": "node scripts/dropLegacyPhoneOtpColumns.js",
     "db:backfill-property-views": "node scripts/backfillPropertyViewCounter.js",
     "db:create-escrow-lead-index": "node scripts/createEscrowLeadUniqueIndex.js",
-    "test": "jest --runInBand",
+    "test": "jest --runInBand --forceExit",
     "test:watch": "jest --watch"
   },
   "dependencies": {
