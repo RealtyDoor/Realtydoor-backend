@@ -29,8 +29,13 @@ const releaseEscrowSchema = z.object({
   // skipped the Razorpay transfer entirely while still marking the escrow
   // RELEASED, with no record of why no money moved through Razorpay.
   manualTransferConfirmed: z.boolean().optional(),
+  // backend-work-still-open.md #1 — platformFee is no longer an accepted
+  // field at all: it's always the calculated cost-recovery figure (see
+  // escrow.service.js's release()/getReleasePlan), never admin-typed.
+  // partnerShare can still be given explicitly (a deal can have a
+  // negotiated split), but it no longer has a required default either —
+  // omitting it means no partner payout is attempted this release.
   partnerShare:    z.number().positive().optional(),
-  platformFee:     z.number().positive().optional(),
   note:            z.string().max(500).optional(),
   // 2.9 — release conditions are enforced in the service. A deal settled out
   // of the normal sequence still has to be closable, so admin can override,

@@ -180,6 +180,20 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
 const GST_PCT_KEY = 'commission_gst_pct';
 const TDS_PCT_KEY = 'commission_tds_pct';
 
+// backend-work-still-open.md #1 — the platform's own cost-recovery retained
+// share (R) and the partner's payout share (Pi) OF THE HELD AMOUNT (B)
+// itself, a release-time split entirely separate from the commission
+// fee/GST/TDS entitlement above (which is a claim against the DEAL PRICE,
+// often bigger than B). Switchable like GST/TDS above, via the same
+// PlatformConfig mechanism (GET/PUT /admin/config/:key) — not hardcoded,
+// since these are business-decided rates, not fixed law. R itself is
+// never an admin-typed amount (see release() below); only the *rate* is
+// admin-configurable.
+const PLATFORM_FEE_PCT_KEY = 'escrow_platform_fee_pct';
+const PARTNER_SHARE_PCT_KEY = 'escrow_partner_share_pct';
+const DEFAULT_PLATFORM_FEE_PCT = 1;
+const DEFAULT_PARTNER_SHARE_PCT = 2;
+
 function round2(n) {
   return Math.round(n * 100) / 100;
 }
@@ -211,9 +225,11 @@ async function getReleasePlan(escrowId) {
   // GST and TDS default to 0 so nothing is ever silently withheld. Both are
   // statutory and rate-sensitive (TDS 194H on brokerage), so they stay
   // admin-configured rather than hardcoded. Pending business sign-off.
-  const [gstPct, tdsPct] = await Promise.all([
+  const [gstPct, tdsPct, platformFeePct, partnerSharePct] = await Promise.all([
     getConfigNumber(GST_PCT_KEY, 0),
     getConfigNumber(TDS_PCT_KEY, 0),
+    getConfigNumber(PLATFORM_FEE_PCT_KEY, DEFAULT_PLATFORM_FEE_PCT),
+    getConfigNumber(PARTNER_SHARE_PCT_KEY, DEFAULT_PARTNER_SHARE_PCT),
   ]);
 
   const dealPrice = lead.dealPriceAtLock ?? lead.property?.price ?? null;
@@ -237,6 +253,15 @@ async function getReleasePlan(escrowId) {
 
   const heldAmount = escrow.amount;
   const coversFee = feeEntitlement != null ? feeEntitlement <= heldAmount : null;
+
+  // backend-work-still-open.md #1 — R and Pi, calculated from the
+  // configured rates, not admin-typed (see release() below). headroom is
+  // what release() will refuse to let ΣPi + R exceed.
+  const platformFeeAmount = round2((heldAmount * platformFeePct) / 100);
+  // No assigned partner means nothing to pay out as a partner leg at all —
+  // partnerShareAmount is 0 in that case, not a figure with nowhere to go.
+  const partnerShareAmount = lead.assignedPartnerId ? round2((heldAmount * partnerSharePct) / 100) : 0;
+  const headroom = round2(heldAmount - platformFeeAmount - partnerShareAmount);
 
   // 2.9 — release conditions. `blocking` ones stop an automated release;
   // the rest are advisory so admin still sees them.
@@ -283,11 +308,20 @@ async function getReleasePlan(escrowId) {
     shortfall: feeEntitlement != null ? round2(Math.max(0, feeEntitlement - heldAmount)) : null,
     // R30 — projected net to the seller if released right now with the fee
     // taken in full out of the held escrow amount. A genuine projection, not
-    // the actual release()-time figures (admin's partnerShare/platformFee
-    // request can differ) — that's EscrowTransaction.netAmount, set only
-    // once release() actually happens.
+    // the actual release()-time figures (an explicit partnerShare override
+    // can differ) — that's EscrowTransaction.netAmount, set only once
+    // release() actually happens.
     netAmount: feeEntitlement != null ? round2(Math.max(0, heldAmount - feeEntitlement)) : null,
     deductions: { gstPct, tdsPct },
+    // backend-work-still-open.md #1 — the gateway cost-recovery split OF B
+    // itself (independent of the fee/GST/TDS entitlement above, which is a
+    // claim against the deal price). platformFeeAmount is what release()
+    // will actually retain; platformShareOfB is it expressed as a fraction
+    // of B for display — derived, never an input.
+    platformFeePct, partnerSharePct,
+    platformFeeAmount, partnerShareAmount,
+    platformShareOfB: heldAmount > 0 ? round2(platformFeeAmount / heldAmount) : null,
+    headroom,
     entitlements,
     conditions,
     unmetBlocking,
@@ -296,7 +330,7 @@ async function getReleasePlan(escrowId) {
 }
 
 async function release(escrowId, adminId, releaseData, ip) {
-  const { sellerDetails, partnerDetails, manualTransferConfirmed, partnerShare, platformFee, note } = releaseData ?? {};
+  const { sellerDetails, partnerDetails, manualTransferConfirmed, partnerShare: partnerShareOverride, note } = releaseData ?? {};
 
   const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
   if (!escrow) throw new ApiError(404, 'Escrow not found');
@@ -327,13 +361,26 @@ async function release(escrowId, adminId, releaseData, ip) {
     });
   }
 
+  // backend-work-still-open.md #1 — platformFee (R) is ALWAYS the
+  // calculated figure from plan; there is no admin input for it at all
+  // (the release schema no longer even accepts one). partnerShare (Pi) is
+  // shown on the plan for display/headroom purposes, but — deliberately —
+  // defaults to 0 here rather than plan.partnerShareAmount: whether a
+  // partner payout actually happens this release stays opt-in, exactly as
+  // before, so a partner who hasn't finished payout-account onboarding
+  // doesn't suddenly block every release of a lead assigned to them. Admin
+  // still pays the calculated Pi explicitly the same way as any other
+  // figure, by passing partnerShare (+ partnerDetails, if needed).
+  const platformFee = plan.platformFeeAmount;
+  const partnerShare = partnerShareOverride || 0;
+
   // The seller is paid the token advance net of whatever's held back for the
   // partner/platform — platformFee simply stays in the RazorpayX account
   // (no payout needed for it), and partnerShare is paid out below only if
   // partnerDetails was also given. Checked before the atomic claim so a bad
   // amount is rejected up front instead of claiming RELEASED and having to
   // roll it back for what's really a request-validation error.
-  const heldBack = (partnerShare || 0) + (platformFee || 0);
+  const heldBack = partnerShare + platformFee;
   if (heldBack >= escrow.amount) {
     throw new ApiError(400, 'partnerShare + platformFee must be less than the escrow amount');
   }
@@ -447,8 +494,8 @@ async function release(escrowId, adminId, releaseData, ip) {
   const parts = [];
   if (sellerPayoutId)  parts.push(`Seller payout ${sellerPayoutId}: ₹${sellerAmount.toLocaleString('en-IN')}`);
   if (partnerPayoutId) parts.push(`Partner payout ${partnerPayoutId}: ₹${partnerShare.toLocaleString('en-IN')}`);
-  if (partnerShare != null && !partnerPayoutId) parts.push(`Partner share: ₹${partnerShare}`);
-  if (platformFee   != null) parts.push(`Platform fee: ₹${platformFee}`);
+  if (partnerShare > 0 && !partnerPayoutId) parts.push(`Partner share: ₹${partnerShare}`);
+  parts.push(`Platform fee (${plan.platformFeePct}% of held amount, calculated): ₹${platformFee}`);
   // Only claim "no RazorpayX payout" when truly neither leg went through it —
   // manualTransferConfirmed covers the seller's share being paid outside
   // Razorpay, but partnerDetails can still trigger a real automated partner
@@ -471,14 +518,15 @@ async function release(escrowId, adminId, releaseData, ip) {
     adminId, action: 'ESCROW_RELEASED', targetType: 'EscrowTransaction', targetId: escrowId,
     before: plan.readyToRelease ? undefined : { unmetConditions: plan.unmetBlocking, overrideReason: releaseData?.overrideReason },
     after: {
-      status: 'RELEASED', sellerAmount, partnerShare, platformFee, note,
+      status: 'RELEASED', sellerAmount, partnerShare, platformFee,
+      platformFeePct: plan.platformFeePct, note,
       sellerPayoutId, partnerPayoutId,
       manualTransferConfirmed: !!manualTransferConfirmed && !sellerDetails,
     },
     ipAddress: ip,
   });
 
-  return updated;
+  return { ...updated, platformFeePct: plan.platformFeePct, platformFeeAmount: platformFee, partnerShareAmount: partnerShare };
 }
 
 async function refund(escrowId, adminId, ip) {

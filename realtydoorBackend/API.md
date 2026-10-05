@@ -6919,6 +6919,23 @@ Full partner profile drill-down, including bank/payout fields, up to 10 most rec
 
 Release a HELD escrow. `sellerDetails` gets a RazorpayX Payout for the escrow amount net of `partnerShare`/`platformFee` (direct bank transfer — no seller Razorpay onboarding required); `partnerDetails` additionally pays `partnerShare` out as a second payout. `platformFee` is never paid out anywhere — it's simply the portion held back in the RazorpayX account. Requires `HELD` status + captured payment.
 
+**backend-work-still-open.md #1 — `platformFee` (R) is no longer an
+accepted request field.** It is always the calculated cost-recovery
+figure — `heldAmount * platformFeePct / 100`, where `platformFeePct`
+comes from the `escrow_platform_fee_pct` platform-config key (default
+1, i.e. 1%; switchable via `GET/PUT /api/admin/config/:key`, same
+mechanism as GST/TDS below) — never an admin-typed rupee amount. Any
+`platformFee` sent in the request body is silently ignored (stripped by
+the request schema).
+
+`partnerShare` is unchanged — still an optional, explicit amount. It is
+**not** defaulted to the calculated Pi figure here: whether a partner
+payout is actually attempted this release stays opt-in, exactly as
+before, so a partner who hasn't finished payout-account onboarding
+never blocks releasing escrow for a lead assigned to them. `GET
+.../release-plan` below shows the calculated Pi for display/headroom
+purposes regardless of whether this release actually pays it.
+
 **Auth:** ADMIN
 
 **Request Body:**
@@ -6940,12 +6957,11 @@ Release a HELD escrow. `sellerDetails` gets a RazorpayX Payout for the escrow am
     "accountNumber": "60200xxxxxxxx"
   },
   "partnerShare": 5000,
-  "platformFee": 2000,
   "note": "Release approved."
 }
 ```
 
-Either `sellerDetails` (a real RazorpayX payout is made to that bank account, for `amount - partnerShare - platformFee`) **or** `manualTransferConfirmed: true` with a required `note` (the payout was made outside Razorpay — e.g. bank transfer) must be provided. Previously this was silently optional with no alternative, meaning an escrow could be marked `RELEASED` with no real transfer of any kind and no record of why. `partnerShare + platformFee` must be less than the escrow amount.
+Either `sellerDetails` (a real RazorpayX payout is made to that bank account, for `amount - partnerShare - platformFee`) **or** `manualTransferConfirmed: true` with a required `note` (the payout was made outside Razorpay — e.g. bank transfer) must be provided. Previously this was silently optional with no alternative, meaning an escrow could be marked `RELEASED` with no real transfer of any kind and no record of why. **`partnerShare + platformFee` must be less than the escrow amount (ΣPi + R > B is refused)** — now a real, meaningful gate since platformFee can no longer be typed down to dodge it.
 
 `partnerDetails` is optional and independent of `sellerDetails` — if omitted, `partnerShare` is still recorded on the escrow (held back from the seller's payout) but no automated payout is made for it, same as before; provide `partnerDetails` (with a positive `partnerShare`) to also pay the partner directly via RazorpayX.
 
@@ -6957,7 +6973,7 @@ The release is atomic: if two requests for the same escrow race, only one succee
 {
   "success": true,
   "message": "Escrow released",
-  "data": { "id": "64esc...", "status": "RELEASED", "releasedAt": "...", "adminNote": "...", "netAmount": 320000 }
+  "data": { "id": "64esc...", "status": "RELEASED", "releasedAt": "...", "adminNote": "...", "netAmount": 320000, "platformFeePct": 1, "platformFeeAmount": 5000, "partnerShareAmount": 5000 }
 }
 ```
 
@@ -6965,9 +6981,12 @@ The release is atomic: if two requests for the same escrow race, only one succee
 seller actually netted, stored on the escrow itself so the "released"
 screen doesn't have to re-derive it from `adminNote`'s free text. `null`
 until release happens — see `GET .../release-plan` below for the pre-release
-projection.
+projection. `platformFeePct`/`platformFeeAmount`/`partnerShareAmount` are
+not persisted on the escrow row itself — they're echoed back from this
+release's own calculation (and recorded in the audit log) for the
+response, not re-derivable from a later read of the escrow alone.
 
-**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race) · `400` neither `sellerDetails` nor `manualTransferConfirmed` provided.
+**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race) · `400` neither `sellerDetails` nor `manualTransferConfirmed` provided · `400` `partnerShare + platformFee >= escrow amount`.
 
 ---
 
@@ -6988,6 +7007,10 @@ fresh on every call, writes nothing.
   "shortfall": null,
   "netAmount": 320000,
   "deductions": { "gstPct": 0, "tdsPct": 0 },
+  "platformFeePct": 1, "partnerSharePct": 2,
+  "platformFeeAmount": 5000, "partnerShareAmount": 10000,
+  "platformShareOfB": 0.01,
+  "headroom": 485000,
   "entitlements": [{ "payeeRole": "CLOSING_AGENT", "payeeUserId": "...", "pctOfFee": 50, "gross": 90000, "gst": 0, "tds": 0, "net": 90000 }],
   "conditions": [{ "key": "ESCROW_HELD", "blocking": true, "ok": true, "detail": "status HELD, payment captured" }],
   "unmetBlocking": [],
@@ -6998,12 +7021,34 @@ fresh on every call, writes nothing.
 **R30 — `netAmount` here is a *projection*** (`heldAmount - feeEntitlement`,
 clamped at 0): what the seller would net if released right now with the
 fee taken in full out of the held escrow amount. It is **not** the same
-figure that ends up stored on the escrow at release — admin's actual
-`partnerShare`/`platformFee` on the release request can differ from
+figure that ends up stored on the escrow at release — an explicit
+`partnerShare` override on the release request can differ from
 `feeEntitlement`'s computed split. `shortfall` is non-null (and `coversFee`
 false) when the held amount can't cover the computed fee at all; business
 decides how that's settled, so it's surfaced rather than silently
 pro-rated.
+
+**backend-work-still-open.md #1 — a second, independent calculation on
+the same held amount (B), unrelated to `feeEntitlement`/`netAmount`
+above** (which claim against the *deal price*, routinely bigger than
+B). This one answers "how much of the held amount itself does the
+platform retain for payment-gateway cost recovery, and how much is
+reserved for the partner, before the seller is ever paid":
+- `platformFeeAmount` (R) = `heldAmount * platformFeePct / 100` —
+  always calculated, never an admin input (see `PATCH .../release`
+  above).
+- `partnerShareAmount` (Pi) = `heldAmount * partnerSharePct / 100` if
+  the lead has an assigned partner, else `0` — shown here for
+  display/headroom purposes; whether a release actually pays this
+  amount out is a separate, still-opt-in choice (see `PATCH
+  .../release`).
+- `platformShareOfB` = `platformFeeAmount / heldAmount` — R expressed
+  as a fraction of B, for display. Derived, not an input; at the
+  default rate this just equals `platformFeePct` itself.
+- `headroom` = `heldAmount - platformFeeAmount - partnerShareAmount` —
+  what's left over for the seller once both are accounted for.
+  `PATCH .../release` refuses outright if `partnerShare + platformFee`
+  (as actually requested) reaches or exceeds `heldAmount`.
 
 **Errors:** `404` escrow or its lead not found.
 

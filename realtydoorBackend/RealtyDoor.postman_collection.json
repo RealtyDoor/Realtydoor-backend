@@ -9884,7 +9884,8 @@
                     "{{escrowId}}",
                     "release-plan"
                   ]
-                }
+                },
+                "description": "backend-work-still-open.md #1: platformFeeAmount (R) and partnerShareAmount (Pi) are calculated from the escrow_platform_fee_pct/escrow_partner_share_pct platform-config rates (defaults 1%/2%) OF the held amount — independent of feeEntitlement/netAmount above, which claim against the deal price instead. headroom = heldAmount - platformFeeAmount - partnerShareAmount."
               },
               "response": [
                 {
@@ -9899,7 +9900,7 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"escrowId\":\"6a1a3213aa8de854e8acfad7\",\"leadRef\":\"RD-L-000123\",\"heldAmount\":500000,\"dealPrice\":9000000,\"feePct\":2,\"feeEntitlement\":180000,\"coversFee\":true,\"shortfall\":null,\"netAmount\":320000,\"deductions\":{\"gstPct\":0,\"tdsPct\":0},\"entitlements\":[{\"payeeRole\":\"CLOSING_AGENT\",\"payeeUserId\":\"6a1a3213aa8de854e8acfad8\",\"pctOfFee\":50,\"gross\":90000,\"gst\":0,\"tds\":0,\"net\":90000}],\"conditions\":[{\"key\":\"ESCROW_HELD\",\"blocking\":true,\"ok\":true,\"detail\":\"status HELD, payment captured\"}],\"unmetBlocking\":[],\"readyToRelease\":true}}"
+                  "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"escrowId\":\"6a1a3213aa8de854e8acfad7\",\"leadRef\":\"RD-L-000123\",\"heldAmount\":500000,\"dealPrice\":9000000,\"feePct\":2,\"feeEntitlement\":180000,\"coversFee\":true,\"shortfall\":null,\"netAmount\":320000,\"deductions\":{\"gstPct\":0,\"tdsPct\":0},\"platformFeePct\":1,\"partnerSharePct\":2,\"platformFeeAmount\":5000,\"partnerShareAmount\":10000,\"platformShareOfB\":0.01,\"headroom\":485000,\"entitlements\":[{\"payeeRole\":\"CLOSING_AGENT\",\"payeeUserId\":\"6a1a3213aa8de854e8acfad8\",\"pctOfFee\":50,\"gross\":90000,\"gst\":0,\"tds\":0,\"net\":90000}],\"conditions\":[{\"key\":\"ESCROW_HELD\",\"blocking\":true,\"ok\":true,\"detail\":\"status HELD, payment captured\"}],\"unmetBlocking\":[],\"readyToRelease\":true}}"
                 }
               ]
             },
@@ -9915,7 +9916,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"sellerDetails\": {\n    \"name\": \"Seller Name\",\n    \"email\": \"seller@example.com\",\n    \"phone\": \"+919800000000\",\n    \"ifsc\": \"HDFC0000123\",\n    \"accountNumber\": \"50100xxxxxxxx\"\n  },\n  \"partnerDetails\": {\n    \"name\": \"Partner Name\",\n    \"email\": \"partner@example.com\",\n    \"phone\": \"+919800000001\",\n    \"ifsc\": \"ICIC0000456\",\n    \"accountNumber\": \"60200xxxxxxxx\"\n  },\n  \"partnerShare\": 80000,\n  \"platformFee\": 20000,\n  \"note\": \"Allocation letter verified. Releasing payment to builder.\"\n}",
+                  "raw": "{\n  \"sellerDetails\": {\n    \"name\": \"Seller Name\",\n    \"email\": \"seller@example.com\",\n    \"phone\": \"+919800000000\",\n    \"ifsc\": \"HDFC0000123\",\n    \"accountNumber\": \"50100xxxxxxxx\"\n  },\n  \"partnerDetails\": {\n    \"name\": \"Partner Name\",\n    \"email\": \"partner@example.com\",\n    \"phone\": \"+919800000001\",\n    \"ifsc\": \"ICIC0000456\",\n    \"accountNumber\": \"60200xxxxxxxx\"\n  },\n  \"partnerShare\": 80000,\n  \"note\": \"Allocation letter verified. Releasing payment to builder.\"\n}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -9935,7 +9936,7 @@
                     "release"
                   ]
                 },
-                "description": "Either sellerDetails (a real RazorpayX payout to that bank account) or manualTransferConfirmed: true + a note (payout made outside Razorpay) is required. The release is atomic — a concurrent duplicate request gets 400 instead of triggering a second payout, and a failed RazorpayX call rolls the escrow back to HELD."
+                "description": "Either sellerDetails (a real RazorpayX payout to that bank account) or manualTransferConfirmed: true + a note (payout made outside Razorpay) is required. The release is atomic — a concurrent duplicate request gets 400 instead of triggering a second payout, and a failed RazorpayX call rolls the escrow back to HELD. backend-work-still-open.md #1: platformFee is no longer accepted here — it is always calculated (heldAmount * escrow_platform_fee_pct / 100, default 1%, switchable via platform config) and silently stripped if sent. partnerShare stays optional/opt-in; see GET .../release-plan for the calculated Pi used for display/headroom."
               },
               "response": [
                 {
@@ -9954,7 +9955,7 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":true,\"message\":\"Escrow released\",\"data\":{\"id\":\"66bbb111ccc222ddd333eee4\",\"status\":\"RELEASED\",\"releasedAt\":\"2026-05-19T12:00:00.000Z\"}}"
+                  "body": "{\"success\":true,\"message\":\"Escrow released\",\"data\":{\"id\":\"66bbb111ccc222ddd333eee4\",\"status\":\"RELEASED\",\"releasedAt\":\"2026-05-19T12:00:00.000Z\",\"netAmount\":420000,\"platformFeePct\":1,\"platformFeeAmount\":5000,\"partnerShareAmount\":80000}}"
                 },
                 {
                   "name": "400 – Cannot Release Refunded",
