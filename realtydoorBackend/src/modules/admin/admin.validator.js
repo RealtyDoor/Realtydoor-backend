@@ -290,6 +290,45 @@ const updateVideoTourSchema = z.object({
   { message: 'At least one field must be provided' },
 );
 
+// backend-work-still-open.md #7 — typed routing-rule CRUD (the handoff
+// doc's explicit storage-shape decision). entityType decides which
+// condition fields are meaningful and which target is required;
+// everything else is left loose (admin can over-specify, it's just
+// never checked against that entityType in practice).
+const routingRuleFields = {
+  entityType:      z.enum(['LEAD', 'TICKET']),
+  priority:        z.number().int().min(0).max(1000).optional(),
+  isActive:        z.boolean().optional(),
+  city:            z.string().max(100).optional(),
+  locality:        z.string().max(100).optional(),
+  source:          z.enum(['WEBSITE', 'PHONE', 'WALK_IN', 'REFERRAL', 'EMAIL', 'PARTNER', 'OTHER']).optional(),
+  propertyType:    z.enum(['FLAT', 'INDEPENDENT_HOUSE', 'VILLA', 'PLOT', 'COMMERCIAL_OFFICE', 'RETAIL_SHOP']).optional(),
+  category:        z.string().max(50).optional(),
+  targetPartnerId: objectId.optional(),
+  targetVendorId:  objectId.optional(),
+};
+
+const createRoutingRuleSchema = z.object(routingRuleFields).refine(
+  (d) => (d.entityType === 'LEAD' ? !!d.targetPartnerId && !d.targetVendorId : !!d.targetVendorId && !d.targetPartnerId),
+  { message: 'A LEAD rule needs targetPartnerId (and no targetVendorId); a TICKET rule needs targetVendorId (and no targetPartnerId)', path: ['targetPartnerId'] },
+);
+
+// entityType can't change on update — conditions/target/priority/isActive can.
+const updateRoutingRuleSchema = z.object({
+  priority:        z.number().int().min(0).max(1000).optional(),
+  isActive:        z.boolean().optional(),
+  city:            z.string().max(100).nullable().optional(),
+  locality:        z.string().max(100).nullable().optional(),
+  source:          z.enum(['WEBSITE', 'PHONE', 'WALK_IN', 'REFERRAL', 'EMAIL', 'PARTNER', 'OTHER']).nullable().optional(),
+  propertyType:    z.enum(['FLAT', 'INDEPENDENT_HOUSE', 'VILLA', 'PLOT', 'COMMERCIAL_OFFICE', 'RETAIL_SHOP']).nullable().optional(),
+  category:        z.string().max(50).nullable().optional(),
+  targetPartnerId: objectId.nullable().optional(),
+  targetVendorId:  objectId.nullable().optional(),
+}).refine(
+  (d) => Object.values(d).some((v) => v !== undefined),
+  { message: 'At least one field must be provided' },
+);
+
 module.exports = {
   assignLeadSchema,
   createLeadSchema,
@@ -320,4 +359,6 @@ module.exports = {
   updateVendorSchema,
   adminResolveDisputeSchema,
   moderateReviewSchema,
+  createRoutingRuleSchema,
+  updateRoutingRuleSchema,
 };

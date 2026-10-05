@@ -1,0 +1,33 @@
+// backend-work-still-open.md #7 — admin-decided shape: a typed endpoint,
+// not a generic config blob (the handoff doc flagged this as a decision
+// needed before building). Rules feed lead auto-assign
+// (admin.service.js's rankCandidatePartners) and ticket auto-dispatch
+// (dispatchTicketAutomatically) — the first active rule, in priority
+// order (lowest first), whose set conditions all match wins. Conditions
+// are deliberately sparse rather than a general rule engine; add fields
+// as real routing needs surface.
+model RoutingRule {
+  id         String  @id @default(auto()) @map("_id") @db.ObjectId
+  entityType String // "LEAD" | "TICKET"
+  isActive   Boolean @default(true)
+  priority   Int     @default(0)
+
+  // Conditions — every field that is set must match; an unset field
+  // matches anything. city/locality/source/propertyType apply to LEAD
+  // rules; category applies to TICKET rules.
+  city         String?
+  locality     String?
+  source       String?
+  propertyType String?
+  category     String?
+
+  // Target — exactly one is set, matching entityType.
+  targetPartnerId String? @db.ObjectId
+  targetVendorId  String? @db.ObjectId
+
+  createdByAdminId String   @db.ObjectId
+  createdAt         DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([entityType, isActive, priority])
+}

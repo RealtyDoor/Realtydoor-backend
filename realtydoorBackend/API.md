@@ -4249,6 +4249,17 @@ reuse `assignLead` internally — every guard that endpoint already enforces
 gate above) applies identically whether a human or the picker chose the
 partner. Neither endpoint writes `assignedPartnerId` directly.
 
+**Routing rules (backend-work-still-open.md #7) are tried first, ahead of
+everything below.** If an active `RoutingRule` (`GET/POST/PATCH/DELETE
+/api/admin/routing-rules`, documented after this section) matches the
+lead's city/locality/source/propertyType and names a `targetPartnerId`,
+that partner gets first refusal — even over a less-loaded candidate, and
+even if they have `leadAutoAccept: false` (a deliberate admin override,
+not the generic opt-in). They still have to be KYC-verified and not
+currently signalling overload (`leadPauseOverloaded`); if they fail
+`assignLead`'s own gates, this falls through to the eligibility/ranking
+below exactly as it would for any other candidate.
+
 **Eligibility, applied in this order — none of it skipped:**
 
 | Check | Why |
@@ -4340,6 +4351,103 @@ leads are considered. Omit both to sweep every unassigned lead in the system.
 independently; both lists are returned so nothing is silently dropped from a
 partial run.
 
+---
+
+## Routing rules (backend-work-still-open.md #7)
+
+Admin-named partner/vendor overrides for lead auto-assign and ticket
+auto-dispatch. A typed CRUD resource — the handoff doc explicitly flagged
+the storage shape as a decision needed before building, and a dedicated
+endpoint was chosen over a generic `/config/:key` blob.
+
+Each rule has an `entityType` (`LEAD` or `TICKET`), a `priority` (lower
+evaluated first), an `isActive` flag, a sparse set of conditions (every
+field that is *set* must match; an unset field matches anything), and
+exactly one target matching its `entityType`:
+
+| entityType | Condition fields | Target |
+| --- | --- | --- |
+| `LEAD` | `city`, `locality`, `source`, `propertyType` | `targetPartnerId` |
+| `TICKET` | `city`, `category` | `targetVendorId` |
+
+The first active rule (in priority order) whose every set condition
+matches wins. A rule with no conditions at all is a catch-all for its
+entityType.
+
+### GET /api/admin/routing-rules
+
+**Auth:** ADMIN
+
+**Query Parameters:** `page`, `limit`, `entityType` (`LEAD` · `TICKET`)
+
+**Response `200`:** paginated list of rules, ordered by `entityType` then `priority`.
+
+---
+
+### POST /api/admin/routing-rules
+
+**Auth:** ADMIN
+
+**Request Body:**
+
+```json
+{ "entityType": "LEAD", "city": "Pune", "priority": 0, "targetPartnerId": "64partner..." }
+```
+
+A `LEAD` rule must set `targetPartnerId` (and not `targetVendorId`); a
+`TICKET` rule must set `targetVendorId` (and not `targetPartnerId`) —
+enforced by the request schema, not left to be caught later.
+
+**Response `201`:** the created rule. **Errors:** `400` wrong target for
+the entityType, or validation failure · `404` the named partner/vendor
+doesn't exist.
+
+---
+
+### PATCH /api/admin/routing-rules/:id
+
+Update conditions, priority, isActive, or the target. `entityType` itself
+can't change — delete and recreate instead.
+
+**Auth:** ADMIN
+
+**Request Body:** any subset of the create fields except `entityType`.
+
+**Response `200`:** the updated rule. **Errors:** `400` the target
+doesn't match the rule's existing entityType · `404` rule or named
+partner/vendor not found.
+
+---
+
+### DELETE /api/admin/routing-rules/:id
+
+**Auth:** ADMIN
+
+**Response `200`:** `{ "id": "..." }`. **Errors:** `404` rule not found.
+
+---
+
+### POST /api/admin/tickets/:id/auto-dispatch
+
+Rule-driven alternative to naming a vendor manually via `PATCH
+.../tickets/:id/dispatch`. Looks up the first matching active `TICKET`
+rule by the ticket's `category` and (if it has a linked property) city,
+and dispatches to that rule's vendor — same underlying `dispatchTicket`
+function a manual dispatch uses, so it enforces the same gates (ticket
+not terminal, vendor active).
+
+Unlike lead auto-assign, there is **no ranked fallback pool** for
+vendors — no existing workload/coverage model to fall back to — so "no
+rule matches" is a plain refusal, not a partial pick.
+
+**Auth:** ADMIN
+
+**Request Body:** none.
+
+**Response `200`:** the dispatched ticket (same shape as manual dispatch).
+
+**Errors:** `400` no active rule matches this ticket's category/city, or
+the matched rule's vendor is not active · `404` ticket not found.
 
 ---
 

@@ -30,6 +30,12 @@ router.post('/leads',       ctrl.createLead);          // 6.4a — admin logs an
 // Auto-assign: static path, registered above /leads/:id so it is never
 // swallowed as a lead id.
 router.post('/leads/auto-assign', ctrl.autoAssignUnassignedLeads);
+// backend-work-still-open.md #7 — admin-named partner/vendor overrides,
+// consulted by leads' auto-assign above and tickets' auto-dispatch below.
+router.get('/routing-rules',      ctrl.listRoutingRules);
+router.post('/routing-rules',     ctrl.createRoutingRule);
+router.patch('/routing-rules/:id', ctrl.updateRoutingRule);
+router.delete('/routing-rules/:id', ctrl.deleteRoutingRule);
 router.get('/leads/:id',    ctrl.getLeadById);
 router.patch('/leads/:id/assign',        ctrl.assignLead);
 router.post('/leads/:id/auto-assign',    ctrl.autoAssignLead);
@@ -162,6 +168,9 @@ router.patch('/tickets/:id/link-deal',  ctrl.linkTicketToDeal);
 // read/reply on any ticket, not scoped to one raised by them.
 router.get('/tickets/:id/comments',     ctrl.getTicketComments);
 router.post('/tickets/:id/comments',    ctrl.addTicketComment);
+// backend-work-still-open.md #7 — rule-driven dispatch, an alternative to
+// manually naming a vendor via PATCH .../dispatch above.
+router.post('/tickets/:id/auto-dispatch', ctrl.dispatchTicketAutomatically);
 
 // Loan management
 router.get('/loan',               ctrl.getLoans);

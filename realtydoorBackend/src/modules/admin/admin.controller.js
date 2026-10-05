@@ -31,6 +31,8 @@ const {
   updateVendorSchema,
   adminResolveDisputeSchema,
   moderateReviewSchema,
+  createRoutingRuleSchema,
+  updateRoutingRuleSchema,
 } = require('./admin.validator');
 // backend-work-still-open.md #9 — same shape the user-side ticket comment
 // endpoint already validates against; reused rather than duplicated.
@@ -78,6 +80,42 @@ async function autoAssignUnassignedLeads(req, res, next) {
   try {
     const result = await service.autoAssignUnassignedLeads(req.query, req.user.id, req.ip);
     success(res, result, `${result.assignedCount} of ${result.totalConsidered} lead(s) assigned`);
+  } catch (err) { next(err); }
+}
+
+// backend-work-still-open.md #7
+async function listRoutingRules(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const { data, total } = await service.listRoutingRules(req.query, skip, limit);
+    success(res, paginate(data, total, page, limit));
+  } catch (err) { next(err); }
+}
+
+async function createRoutingRule(req, res, next) {
+  try {
+    const data = createRoutingRuleSchema.parse(req.body);
+    created(res, await service.createRoutingRule(data, req.user.id, req.ip), 'Routing rule created');
+  } catch (err) { next(err); }
+}
+
+async function updateRoutingRule(req, res, next) {
+  try {
+    const data = updateRoutingRuleSchema.parse(req.body);
+    success(res, await service.updateRoutingRule(req.params.id, data, req.user.id, req.ip), 'Routing rule updated');
+  } catch (err) { next(err); }
+}
+
+async function deleteRoutingRule(req, res, next) {
+  try {
+    success(res, await service.deleteRoutingRule(req.params.id, req.user.id, req.ip), 'Routing rule deleted');
+  } catch (err) { next(err); }
+}
+
+async function dispatchTicketAutomatically(req, res, next) {
+  try {
+    const result = await service.dispatchTicketAutomatically(req.params.id, req.user.id, req.ip);
+    success(res, result, `Dispatched to ${result.vendorName}`);
   } catch (err) { next(err); }
 }
 
@@ -680,6 +718,7 @@ async function deleteConfig(req, res, next) {
 
 module.exports = {
   getLeadById, getLeads, assignLead, autoAssignLead, autoAssignUnassignedLeads, createLead, confirmLead, rejectLead, overrideLeadOtp,
+  listRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule, dispatchTicketAutomatically,
   setPayoutAccountStatus, listPayoutAccounts,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   requestPropertyChanges,

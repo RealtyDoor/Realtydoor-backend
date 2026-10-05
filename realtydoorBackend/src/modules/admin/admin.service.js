@@ -441,8 +441,8 @@ async function assignLead(leadId, partnerId, adminId, ip) {
 
   // docs-backend-gaps-handoff.md #4 — pre-fill commission terms the moment a
   // lead becomes ASSIGNED here, same as createLead's own assign-at-creation
-  // path above. Still only a pre-fill; admin locks separately and
-  // deliberately.
+  // path above. Also locks them (backend-work-still-open.md #2) — see
+  // prefillCommissionTermsSafely.
   await prefillCommissionTermsSafely(leadId, adminId, ip);
 
   return updated;
@@ -464,6 +464,23 @@ const UNASSIGNABLE_LEAD_STATUSES = ['CLOSED', 'DROPPED'];
 // now should rank above one sitting on 10 open leads today.
 const ACTIVE_LEAD_STATUSES = { notIn: ['CLOSED', 'DROPPED'] };
 
+// backend-work-still-open.md #7 — the first active rule for this
+// entityType, in priority order (lowest first), whose every SET condition
+// matches `attrs`. An unset rule condition matches anything; a rule with
+// no conditions at all matches everything of that entityType (a
+// deliberate catch-all, same as leaving a filter blank).
+async function findMatchingRoutingRule(entityType, attrs) {
+  const rules = await prisma.routingRule.findMany({
+    where: { entityType, isActive: true },
+    orderBy: { priority: 'asc' },
+  });
+  const CONDITION_FIELDS = ['city', 'locality', 'source', 'propertyType', 'category'];
+  return rules.find((rule) => CONDITION_FIELDS.every((f) => {
+    if (rule[f] == null) return true;
+    return attrs[f] != null && String(attrs[f]).toLowerCase() === String(rule[f]).toLowerCase();
+  })) || null;
+}
+
 // Ranks eligible partners for one lead, most-preferred first. Returns an
 // empty array rather than throwing — "no eligible partner" is a normal
 // outcome for a locality nobody covers yet, not an error.
@@ -473,6 +490,15 @@ const ACTIVE_LEAD_STATUSES = { notIn: ['CLOSED', 'DROPPED'] };
 // is preferred over coverageAreas, which is preferred over no locality signal
 // at all, so a lead in an uncovered area is still assignable to SOMEONE rather
 // than silently unassignable.
+//
+// backend-work-still-open.md #7 — a matching LEAD routing rule is tried
+// FIRST, ahead of all three layers below: admin named this partner
+// deliberately for leads matching this rule, so they get first refusal
+// even over a less-loaded candidate. Still only a preference, not a
+// bypass — the named partner still has to be KYC-verified and not
+// currently signalling overload (leadPauseOverloaded), and if they fail
+// assignLead's own gates, autoAssignLead falls through to the rest of
+// this ranking exactly as it would for any other candidate.
 async function rankCandidatePartners(lead) {
   const base = {
     role: 'PARTNER', kycStatus: 'VERIFIED', deletedAt: { isSet: false },
@@ -494,6 +520,29 @@ async function rankCandidatePartners(lead) {
 
   const locality = lead.property?.locality;
   const city = lead.property?.city;
+
+  const routed = [];
+  const rule = await findMatchingRoutingRule('LEAD', {
+    city, locality, source: lead.source, propertyType: lead.property?.propertyType,
+  });
+  if (rule?.targetPartnerId) {
+    // Admin named this partner deliberately — leadAutoAccept (an opt-in for
+    // the generic ranking below) doesn't apply here, but a partner actively
+    // signalling overload is still skipped, same as everywhere else.
+    const routedPartner = await prisma.user.findFirst({
+      where: {
+        id: rule.targetPartnerId, role: 'PARTNER', kycStatus: 'VERIFIED',
+        deletedAt: { isSet: false }, leadPauseOverloaded: { not: true },
+      },
+      select: { id: true, name: true, companyName: true },
+    });
+    if (routedPartner) {
+      routed.push({
+        ...routedPartner,
+        activeLeads: await prisma.lead.count({ where: { assignedPartnerId: routedPartner.id, status: ACTIVE_LEAD_STATUSES } }),
+      });
+    }
+  }
 
   const pools = [];
   if (locality) {
@@ -517,9 +566,9 @@ async function rankCandidatePartners(lead) {
       activeLeads: await prisma.lead.count({ where: { assignedPartnerId: c.id, status: ACTIVE_LEAD_STATUSES } }),
     })));
     withLoad.sort((a, b) => a.activeLeads - b.activeLeads);
-    return withLoad;
+    return [...routed, ...withLoad.filter((c) => c.id !== routed[0]?.id)];
   }
-  return [];
+  return routed;
 }
 
 // Tries ranked candidates in order until one is actually assignable — a
@@ -529,7 +578,7 @@ async function rankCandidatePartners(lead) {
 async function autoAssignLead(leadId, adminId, ip) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
-    include: { property: { select: { locality: true, city: true } } },
+    include: { property: { select: { locality: true, city: true, propertyType: true } } },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (lead.assignedPartnerId) throw new ApiError(409, 'Lead is already assigned to a partner');
@@ -591,6 +640,95 @@ async function autoAssignUnassignedLeads(query, adminId, ip) {
   }
 
   return { totalConsidered: leads.length, assignedCount: assigned.length, failedCount: failed.length, assigned, failed };
+}
+
+// ─── ROUTING RULES (backend-work-still-open.md #7) ──────────────────────────
+
+async function listRoutingRules(filters, skip, limit) {
+  const where = {};
+  if (filters.entityType) where.entityType = filters.entityType;
+  const [data, total] = await Promise.all([
+    prisma.routingRule.findMany({ where, skip, take: limit, orderBy: [{ entityType: 'asc' }, { priority: 'asc' }] }),
+    prisma.routingRule.count({ where }),
+  ]);
+  return { data, total };
+}
+
+async function createRoutingRule(data, adminId, ip) {
+  if (data.targetPartnerId) {
+    const partner = await prisma.user.findFirst({ where: { id: data.targetPartnerId, role: 'PARTNER' } });
+    if (!partner) throw new ApiError(404, 'Target partner not found');
+  }
+  if (data.targetVendorId) {
+    const vendor = await prisma.vendor.findUnique({ where: { id: data.targetVendorId } });
+    if (!vendor) throw new ApiError(404, 'Target vendor not found');
+  }
+
+  const rule = await prisma.routingRule.create({ data: { ...data, createdByAdminId: adminId } });
+  await createAuditLog({
+    adminId, action: 'ROUTING_RULE_CREATED', targetType: 'RoutingRule', targetId: rule.id,
+    after: rule, ipAddress: ip,
+  });
+  return rule;
+}
+
+async function updateRoutingRule(id, data, adminId, ip) {
+  const existing = await prisma.routingRule.findUnique({ where: { id } });
+  if (!existing) throw new ApiError(404, 'Routing rule not found');
+
+  if (data.targetPartnerId && existing.entityType !== 'LEAD') {
+    throw new ApiError(400, 'targetPartnerId only applies to a LEAD rule');
+  }
+  if (data.targetVendorId && existing.entityType !== 'TICKET') {
+    throw new ApiError(400, 'targetVendorId only applies to a TICKET rule');
+  }
+
+  const rule = await prisma.routingRule.update({ where: { id }, data });
+  await createAuditLog({
+    adminId, action: 'ROUTING_RULE_UPDATED', targetType: 'RoutingRule', targetId: id,
+    before: existing, after: rule, ipAddress: ip,
+  });
+  return rule;
+}
+
+async function deleteRoutingRule(id, adminId, ip) {
+  const existing = await prisma.routingRule.findUnique({ where: { id } });
+  if (!existing) throw new ApiError(404, 'Routing rule not found');
+
+  await prisma.routingRule.delete({ where: { id } });
+  await createAuditLog({
+    adminId, action: 'ROUTING_RULE_DELETED', targetType: 'RoutingRule', targetId: id,
+    before: existing, ipAddress: ip,
+  });
+  return { id };
+}
+
+// Mirrors autoAssignLead's pattern for tickets: this file never writes
+// vendorId directly, it only decides WHO and leaves HOW to dispatchTicket
+// (which still enforces its own gates — ticket not terminal, vendor active).
+// Unlike leads, there is no ranked fallback pool for vendors (no existing
+// workload/coverage model for them) — purely rule-driven, so "no rule
+// matches" is a plain refusal rather than a partial pick.
+async function dispatchTicketAutomatically(ticketId, adminId, ip) {
+  const ticket = await prisma.serviceTicket.findUnique({
+    where: { id: ticketId },
+    include: { property: { select: { city: true } } },
+  });
+  if (!ticket) throw new ApiError(404, 'Ticket not found');
+
+  const rule = await findMatchingRoutingRule('TICKET', {
+    category: ticket.category, city: ticket.property?.city,
+  });
+  if (!rule?.targetVendorId) {
+    throw new ApiError(400, 'No routing rule matches this ticket. Dispatch a vendor manually from the directory instead.');
+  }
+
+  const vendor = await prisma.vendor.findUnique({ where: { id: rule.targetVendorId } });
+  if (!vendor?.isActive) {
+    throw new ApiError(400, 'The vendor named by the matching routing rule is not active. Dispatch a vendor manually instead.');
+  }
+
+  return dispatchTicket(ticketId, { vendorId: vendor.id }, adminId, ip);
 }
 
 // ─── PROPERTY APPROVAL ───────────────────────────────────────────────────────
@@ -1949,6 +2087,7 @@ module.exports = {
   requestPropertyChanges,
   getPendingKyc, verifyKyc, requestKycDocuments, kycRequestEffectiveStatus, reRunKycAutoVerification,
   autoAssignLead, autoAssignUnassignedLeads,
+  listRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule, dispatchTicketAutomatically,
   getRevenueSummary,
   getAuditLogs,
   getAllTickets, getTicketById, updateTicketStatus, getTicketStats,
