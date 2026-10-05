@@ -5679,34 +5679,62 @@ urgency, how hard the property is to move, what the seller wants. A rate
 card is only a **template** used to pre-fill those lines; editing or
 deleting a card never touches an already-locked lead.
 
-**Core rule (business decision, 2026-10-04): admin never enters the
-platform's cut.** Admin sets `LISTING_AGENT` / `CLOSING_AGENT` lines (as a
-`pct` of the fee) and, optionally, an `ADVISOR` line. The backend computes
-`PLATFORM`'s line itself, as **whatever's left over** — `100% − the lines
-admin actually set`. Any leftover above what it costs to run the deal is
-platform margin; it is never returned to the seller, and there is
-deliberately **no automatic check** that it covers Razorpay's real
-processing cost — admin is trusted to enter sensible percentages. Submitting
-a `PLATFORM` line yourself has no effect; it is silently dropped and
-recomputed.
+**Core rule (backend-gaps-frontend-integration.md #1, 2026-10-05 — reverses
+the earlier 826a73c decision): the platform's cut is cost recovery, not
+margin, and it is never admin-entered.** Admin sets every partner line
+(`LISTING_AGENT` / `CLOSING_AGENT` as a `pct` of the fee, optionally
+`ADVISOR`) — there is no `PLATFORM` payee line at all any more. The
+platform's retained amount, **R**, is computed independently, from the real
+Razorpay/RazorpayX charges this fee actually incurs:
+
+```
+B (the fee)      = dealPrice × feePct
+R (platform cut) = (collection charge + payout transfer charge) on B, + GST on both
+                    — unless GST is claimed as input credit, in which case it's excluded
+Pi (partner i)    = B × line.pct               (admin-set, per line)
+headroom          = B − R − ΣPi                  (returned on every read)
+seller gets         dealPrice − B               (derived — never affected by how B is split)
+```
+
+**Refused outright if ΣPi + R > B** — partner lines that would leave no
+room for the platform's real, calculated cost. There is no sum-to-100
+check any more: lines don't need to add up to anything in particular, they
+just need to fit inside the headroom once R is accounted for. A deal's
+unused headroom is just that — headroom, not platform income; margin is
+explicitly deferred, not built here.
+
+**R's rate is config-driven, switchable without a code change** (same
+mechanism as GST/TDS on the escrow side), all defaulting to 0 — a safe
+no-op — until the real schedule is supplied:
+
+| Config key | Meaning | Default |
+| --- | --- | --- |
+| `commission_gateway_collection_pct` | Razorpay collection charge, % of B | `0` |
+| `commission_gateway_payout_pct` | RazorpayX payout/transfer charge, % of B | `0` |
+| `commission_gateway_gst_pct` | GST %, applied to the two charges above | `0` |
+| `commission_gateway_gst_input_credit` | `"true"`/`"false"` — whether that GST is claimed as input credit (so excluded from R). Open with the accountant. | `"false"` |
+
+Edit via the existing generic config endpoint: `PUT /api/admin/config/:key`.
+
+**Platform-level pre-fill defaults, also config-driven, with no hardcoded
+fallback number at all** — "Admin sets every percentage" means nothing is
+ever silently guessed by code. If neither a rate card nor these exist,
+there's nothing to pre-fill:
+
+| Config key | Meaning |
+| --- | --- |
+| `default_fee_pct` | The brokerage fee %, used only when no rate card resolves |
+| `default_partner_share_pct` | The default `CLOSING_AGENT` pct in that same fallback case |
 
 **`ADVISOR` is paid a flat amount, not a percentage** (business decision,
-2026-10-04) — reflecting that an advisor's compensation is for services
-rendered, unrelated to the deal's size. Each advisor has a standard rate
-(`User.advisorStandardFeePaise`), used automatically when they're added to a
-lead with no amount specified; admin can override the amount for a specific
-deal. The flat amount is converted to its equivalent % of *that lead's* fee
-for storage, so the line still participates in the normal 100%-of-fee
-bookkeeping — but the API always shows you the real flat figure, never a
-rounded-back-out approximation of it.
-
-Arithmetic:
-
-```
-fee        = dealPrice × feePct
-each line  = fee × line.pct        (ADVISOR's pct is derived FROM its flat amount, not the reverse)
-seller gets  dealPrice − fee       (derived — never stored as a pct, never affected by how the fee is split)
-```
+2026-10-04, unaffected by the above) — reflecting that an advisor's
+compensation is for services rendered, unrelated to the deal's size. Each
+advisor has a standard rate (`User.advisorStandardFeePaise`), used
+automatically when they're added to a lead with no amount specified; admin
+can override the amount for a specific deal. The flat amount is converted
+to its equivalent % of *that lead's* fee for storage, so the line still
+participates in the normal ΣPi + R ≤ B check — but the API always shows
+you the real flat figure, never a rounded-back-out approximation of it.
 
 ---
 
@@ -5739,15 +5767,16 @@ Templates, filterable by `sellerType`, `city`, `propertyId`, `isActive`.
 Provide a `propertyId` or a `city` (property-level cards take precedence
 over city-level ones for the same `sellerType`). **`lines` accepts only
 `LISTING_AGENT` / `CLOSING_AGENT`** — `ADVISOR` is deal-specific and not
-knowable at template-design time, and `PLATFORM` is computed, never
-submitted (same rule as lead terms, below).
+knowable at template-design time, and there is no `PLATFORM` line at all
+(same rule as lead terms, above).
 
-**Response `201`:** the card, including the computed `PLATFORM` line —
-`CLOSING_AGENT: 45` above comes back with `PLATFORM: 55` alongside it.
+**Response `201`:** the card, with `lines` exactly as submitted — nothing
+appended.
 
 **Errors:**
 - `400` a `payeeRole` other than `LISTING_AGENT`/`CLOSING_AGENT`
-- `400` lines sum to over 100% ("leaves nothing for the platform")
+- `400` lines sum to over 100% of the fee (a template that obviously can't
+  fit, caught before it's ever applied to a real lead)
 - `400` neither `propertyId` nor `city` given
 
 ---
@@ -5765,9 +5794,9 @@ removing the row — leads that pre-filled from it reference that history.
 ### GET /api/admin/commission-overrides · POST ... · DELETE .../:id
 
 A **partner override** changes only the named partner's *total* share of
-the fee (`partnerSharePct`) — never the platform's cut as an input, never
-the seller's price. Scoped `ALL` (every property) or `SELECTED`
-(`propertyIds`). `validUntil` is optional (never expires if omitted).
+the fee (`partnerSharePct`) — never R, never the seller's price. Scoped
+`ALL` (every property) or `SELECTED` (`propertyIds`). `validUntil` is
+optional (never expires if omitted).
 
 **Auth:** ADMIN
 
@@ -5775,7 +5804,8 @@ Rescaling preserves the relative split between that partner's own
 `LISTING_AGENT`/`CLOSING_AGENT` lines. **An existing `ADVISOR` line on the
 lead is left untouched by an override** — the override is about the
 assigned partner's share, never a separate advisor's flat, deal-specific
-fee. Platform's line is recomputed as the residual afterward.
+fee. A smaller partner total just means a bigger headroom now — nothing
+absorbs the difference.
 
 ---
 
@@ -5792,14 +5822,24 @@ partner override applied. Writes nothing.
 ```json
 {
   "leadId": "...", "sellerType": "AGENT", "selfListed": false, "feePct": 2,
-  "lines": [{ "payeeRole": "CLOSING_AGENT", "pct": 45 }, { "payeeRole": "PLATFORM", "pct": 55 }],
-  "dealPrice": 7500000, "resolvedFrom": "CITY", "rateCardId": "...", "rateCardVersion": 3,
+  "lines": [{ "payeeRole": "CLOSING_AGENT", "pct": 45 }],
+  "dealPrice": 7500000, "feeAmount": 150000,
+  "platformRetained": 4425, "platformShareOfFee": 2.95, "headroom": 78075,
+  "resolvedFrom": "CITY", "rateCardId": "...", "rateCardVersion": 3,
   "referredByAdvisorId": null
 }
 ```
 
 `resolvedFrom` is `PROPERTY`, `CITY`, `PLATFORM_DEFAULT`, or
-`PARTNER_OVERRIDE` when an override applied on top.
+`PARTNER_OVERRIDE` when an override applied on top. `platformRetained` (R),
+`platformShareOfFee` (R/B, **derived, not an input**) and `headroom`
+(B − R − Σ`lines` amounts) are computed from the config rates above — shown
+here too, not just after saving, so admin sees whether these lines even fit
+before committing to them. All three are `null`/`0` when `feeAmount` isn't
+known yet (no deal price resolved). When `default_fee_pct`/
+`default_partner_share_pct` aren't configured and no rate card matches,
+`feePct` comes back `null` and `lines` comes back `[]` — nothing is
+guessed.
 
 **R29 — `referredByAdvisorId` is set when this lead's buyer phone number
 matches an `ACTIVE` advisor referral** (see **Advisor Referrals** below),
@@ -5819,15 +5859,18 @@ card/template rather than AGENT's.
 
 **If the lead is also currently *assigned* to that same self-listing
 partner**, the `LISTING_AGENT`/`CLOSING_AGENT` line that would otherwise
-default to them is dropped and folded into `PLATFORM` instead — paying them
-is always refused (`OWN_PROPERTY_COMMISSION`, 3.17), so the preview doesn't
-offer a line that could only ever be rejected:
+default to them is dropped outright — paying them is always refused
+(`OWN_PROPERTY_COMMISSION`, 3.17), so the preview doesn't offer a line that
+could only ever be rejected. Nothing absorbs the dropped share; `lines`
+just comes back empty (or `ADVISOR`-only, if a referral applies):
 
 ```json
 {
   "leadId": "...", "sellerType": "OWNER", "selfListed": true, "feePct": 2,
-  "lines": [{ "payeeRole": "PLATFORM", "pct": 100 }],
-  "dealPrice": 9000000, "resolvedFrom": "PLATFORM_DEFAULT", "rateCardId": null, "rateCardVersion": null
+  "lines": [],
+  "dealPrice": 9000000, "feeAmount": 180000,
+  "platformRetained": 5310, "platformShareOfFee": 2.95, "headroom": 174690,
+  "resolvedFrom": "PLATFORM_DEFAULT", "rateCardId": null, "rateCardVersion": null
 }
 ```
 
@@ -5844,7 +5887,7 @@ terms in one call.
 
 **Auth:** ADMIN
 
-**R21 — refused when the preview's only line was folded away** because the
+**R21 — refused when the preview's only line was dropped** because the
 lead is assigned to the property's own self-listing partner (see the preview
 endpoint above). Assign a different partner to close the deal first, then
 prefill or set terms manually.
@@ -5879,7 +5922,7 @@ Sets (or revises) a lead's negotiated lines directly.
 | --- | --- |
 | `LISTING_AGENT` / `CLOSING_AGENT` | `pct` only. Defaults `payeeUserId` to the lead's assigned partner if omitted. |
 | `ADVISOR` | Requires `payeeUserId` (always a different person — never defaults). At most one of `pct` / `flatAmountPaise`. **Give neither to use that advisor's standard rate** (`User.advisorStandardFeePaise`); explicit `flatAmountPaise` always overrides it for this deal only. |
-| `PLATFORM` | **Never submit this.** It is computed and silently dropped if present. |
+| `PLATFORM` | **Does not exist as a payee role.** There is nothing to submit for it. |
 
 **Before lock**, calling this again replaces the current version in place.
 **After lock**, it writes a new version (`commissionVersion + 1`); the old
@@ -5890,33 +5933,37 @@ version's rows are kept as history, not edited.
 ```json
 {
   "id": "...", "feePct": 2, "dealPriceAtLock": 7500000, "commissionVersion": 1,
+  "platformCommissionPct": 2.95, "commissionAmountPaise": 442500,
   "locked": false,
   "lines": [
     { "payeeRole": "CLOSING_AGENT", "pct": 50, "payeeUserId": "6a...", "flatAmountPaise": null },
-    { "payeeRole": "ADVISOR", "pct": 6.67, "payeeUserId": "6a...", "flatAmountPaise": 5000000 },
-    { "payeeRole": "PLATFORM", "pct": 43.33, "payeeUserId": null, "flatAmountPaise": null }
+    { "payeeRole": "ADVISOR", "pct": 6.67, "payeeUserId": "6a...", "flatAmountPaise": 5000000 }
   ],
   "amounts": {
     "dealPrice": 7500000, "feeAmount": 150000, "sellerNet": 7350000,
+    "platformRetained": 4425, "platformShareOfFee": 2.95,
+    "partnerTotal": 125000, "headroom": 20575,
     "byPayee": [
       { "payeeRole": "CLOSING_AGENT", "pct": 50, "amount": 75000, "flatAmountPaise": null },
-      { "payeeRole": "ADVISOR", "pct": 6.67, "amount": 50000, "flatAmountPaise": 5000000 },
-      { "payeeRole": "PLATFORM", "pct": 43.33, "amount": 65000, "flatAmountPaise": null }
+      { "payeeRole": "ADVISOR", "pct": 6.67, "amount": 50000, "flatAmountPaise": 5000000 }
     ]
   }
 }
 ```
 
-`byPayee[].amount` for `ADVISOR` is always the exact flat figure
-(`flatAmountPaise / 100`), never a rounded recomputation from `pct` — read
-`flatAmountPaise` directly if you need the paise-exact value without a
-division.
+`platformCommissionPct` is R/B (`amounts.platformShareOfFee`, the same
+number) — **derived, never an input** — snapshotted at the moment terms
+are set/revised, from whatever the gateway-cost config rates are at that
+instant. `commissionAmountPaise` is R itself, in paise. `amounts.headroom`
+is `feeAmount − platformRetained − partnerTotal`; `byPayee[].amount` for
+`ADVISOR` is always the exact flat figure (`flatAmountPaise / 100`), never a
+rounded recomputation from `pct`.
 
 **Errors:**
 - `400` a role other than `LISTING_AGENT`/`CLOSING_AGENT`/`ADVISOR`, or a duplicate role
 - `400` `LISTING_AGENT`/`CLOSING_AGENT` missing `pct`, or given a `flatAmountPaise`
 - `400` `ADVISOR` missing `payeeUserId`, or given both `pct` and `flatAmountPaise`
-- `400` lines sum to over 100% of the fee
+- `400` **ΣPi + R > B** — partner shares plus the platform's calculated cost-recovery amount exceed the fee itself (`LINES_EXCEED_HEADROOM`)
 - `400` an `ADVISOR` flat amount with no fee amount known yet (set `feePct` and a deal price first), or exceeding the fee itself
 - `400` the named advisor has no standard rate on file and none was given for this deal (`ADVISOR_RATE_REQUIRED`)
 - `400` a partner would be paid commission on a property they themselves own (3.17)

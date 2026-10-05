@@ -2,48 +2,86 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { createAuditLog } = require('../../lib/auditLog');
 const { createNotification } = require('../../lib/notifications');
-const { getConfigNumber } = require('../config/config.service');
+const { getConfigNumber, getConfigValue } = require('../config/config.service');
 const { isSelfListedByAgent } = require('../listings/integrity.service');
 const { getActiveReferralForPhone } = require('../referrals/referral.service');
 const { buildCommissionReceiptPdf } = require('../../lib/pdfReceipt');
 const { s3Upload } = require('../../lib/fileUpload');
 
-// Platform default, the last fallback when no card matches. Admin-controlled
-// via platform config, consistent with the 2%-is-admin-controlled decision.
+// backend-gaps-frontend-integration.md #1 — reverses the 826a73c leftover-
+// margin decision. The platform-default fee/share pre-fill is still
+// config-controlled (an admin decision, just made once at platform level
+// instead of per lead), but there is deliberately no hardcoded JS number
+// fallback any more: "Admin sets every percentage" means nothing is ever
+// silently guessed by code. If neither a rate card nor this config key
+// exists, there's nothing to pre-fill and admin must enter terms by hand.
 const DEFAULT_FEE_PCT_KEY = 'default_fee_pct';
-const DEFAULT_FEE_PCT = 2;
 const DEFAULT_PARTNER_SHARE_PCT_KEY = 'default_partner_share_pct';
-const DEFAULT_PARTNER_SHARE_PCT = 50;
 
-const PAYEE_ROLES = ['PLATFORM', 'LISTING_AGENT', 'CLOSING_AGENT', 'ADVISOR'];
+// backend-gaps-frontend-integration.md #1, section 19 — R, the platform's
+// cost-recovery retained amount, calculated from the real payment-gateway
+// charges actually incurred on this fee (NOT a business margin, and NOT
+// admin-entered). All four switchable via platform config — same mechanism
+// as escrow.service.js's GST/TDS/fee-rate keys — and all default to 0 (a
+// safe no-op) until the real Razorpay/RazorpayX schedule is supplied.
+const GATEWAY_COLLECTION_PCT_KEY = 'commission_gateway_collection_pct';
+const GATEWAY_PAYOUT_PCT_KEY = 'commission_gateway_payout_pct';
+const GATEWAY_GST_PCT_KEY = 'commission_gateway_gst_pct';
+// Open with the accountant (confirm): whether GST paid on gateway charges is
+// claimed back as input credit. 'true' = it is (so it's not a real cost and
+// is excluded from R); 'false' (default) = it is not, so it's added to R.
+const GATEWAY_GST_INPUT_CREDIT_KEY = 'commission_gateway_gst_input_credit';
+
+const PAYEE_ROLES = ['LISTING_AGENT', 'CLOSING_AGENT', 'ADVISOR'];
 const PARTNER_ROLES = ['LISTING_AGENT', 'CLOSING_AGENT', 'ADVISOR'];
 // LISTING_AGENT/CLOSING_AGENT default their payeeUserId to the lead's
 // assigned partner when not given explicitly. ADVISOR never does — an
 // advisor is always a different person, so it must always be named.
 const ASSIGNED_PARTNER_ROLES = ['LISTING_AGENT', 'CLOSING_AGENT'];
 
-// Float arithmetic can't hit 100 exactly (33.33 * 3), so compare on a cent of
-// a percent. Tighter than any real negotiation needs, loose enough that
-// thirds work.
+// Float/rupee arithmetic can't land on an exact boundary, so compare with a
+// cent of slack rather than requiring bit-for-bit equality.
 const PCT_EPSILON = 0.01;
+const RUPEE_EPSILON = 0.01;
 
-// 2026-10-04 decision: PLATFORM's cut is never admin-entered. Admin sets the
-// other lines (LISTING_AGENT/CLOSING_AGENT by %, ADVISOR by a flat amount or
-// %), and this appends PLATFORM as whatever's left — including any leftover
-// above what the business's earlier written cost-recovery formula called the
-// "floor". That leftover is platform margin, not something that reverts to
-// the seller, and there is deliberately no automatic check that it covers
-// any real payment-gateway cost (admin is trusted to enter sensible numbers;
-// a prior version of this plan would have required Razorpay's exact fee
-// schedule to build that check — explicitly dropped).
+async function getGatewayRates() {
+  const [collectionPct, payoutPct, gstPct, inputCreditRaw] = await Promise.all([
+    getConfigNumber(GATEWAY_COLLECTION_PCT_KEY, 0),
+    getConfigNumber(GATEWAY_PAYOUT_PCT_KEY, 0),
+    getConfigNumber(GATEWAY_GST_PCT_KEY, 0),
+    getConfigValue(GATEWAY_GST_INPUT_CREDIT_KEY, 'false'),
+  ]);
+  return { collectionPct, payoutPct, gstPct, inputCreditClaimed: inputCreditRaw === 'true' };
+}
+
+// R = (collection charge + payout transfer charge) + GST on both — unless
+// GST is claimed as input credit, in which case it's recoverable and so not
+// a real cost, and R excludes it. feeAmount is B; pass null when it isn't
+// known yet (price/feePct not set) and R comes back 0 (nothing to compute
+// against yet, not a false "no cost" claim).
+function computePlatformRetained(feeAmount, rates) {
+  if (!feeAmount) return { retainedAmount: 0, platformPctOfFee: 0 };
+  const rawCost = round2((feeAmount * (rates.collectionPct + rates.payoutPct)) / 100);
+  const gst = round2((rawCost * rates.gstPct) / 100);
+  const retainedAmount = rates.inputCreditClaimed ? rawCost : round2(rawCost + gst);
+  const platformPctOfFee = round2((retainedAmount / feeAmount) * 100);
+  return { retainedAmount, platformPctOfFee };
+}
+
+// backend-gaps-frontend-integration.md #1 — PLATFORM is no longer a
+// commission LINE at all: its share is R, a gateway-cost figure computed
+// independently of what admin enters here (see computePlatformRetained
+// above), not a residual of these lines reaching 100%. This only resolves
+// and validates the PARTNER lines actually submitted — the ΣPi + R > B
+// refusal happens in setLeadTerms, once R is known.
 //
 // feeAmount (rupees) is required to convert an ADVISOR flat amount into its
 // equivalent % of the fee — pass null when it isn't known yet (e.g. a rate
 // card template, which never carries an ADVISOR line at all, or a lead whose
 // price isn't set yet) and a flat-amount ADVISOR line will be refused with a
 // clear reason instead of silently producing a wrong percentage.
-function resolveLinesWithPlatformResidual(inputLines, feeAmount) {
-  const submitted = (inputLines || []).filter((l) => l.payeeRole !== 'PLATFORM');
+function resolvePartnerLines(inputLines, feeAmount) {
+  const submitted = inputLines || [];
   if (!submitted.length) {
     throw new ApiError(400, 'At least one commission line is required', { code: 'NO_COMMISSION_LINES' });
   }
@@ -78,26 +116,17 @@ function resolveLinesWithPlatformResidual(inputLines, feeAmount) {
     }
   }
 
-  const nonPlatformSum = resolved.reduce((s, l) => s + l.pct, 0);
-  if (nonPlatformSum > 100 + PCT_EPSILON) {
-    throw new ApiError(400,
-      `These lines sum to ${nonPlatformSum.toFixed(2)}% of the fee, which leaves nothing for the platform. `
-      + 'Reduce one or more shares so the total is under 100%.',
-      { code: 'LINES_EXCEED_FEE', sum: nonPlatformSum });
-  }
-
-  resolved.push({
-    payeeRole: 'PLATFORM', pct: round2(Math.max(0, 100 - nonPlatformSum)),
-    flatAmountPaise: null, payeeUserId: null,
-  });
   return resolved;
 }
 
-// Rate card templates are simpler: no ADVISOR (deal-specific, not knowable at
-// template-design time — see the schema comment), no flat amounts, nothing to
-// convert. Still appends a computed PLATFORM line for the same reason.
+// Rate card templates: no ADVISOR (deal-specific, not knowable at
+// template-design time — see the schema comment), no flat amounts, nothing
+// to convert, and no PLATFORM line — a template only ever holds partner
+// defaults now. Still bounded at 100%: a template whose partner lines alone
+// already exceed the whole fee is nonsensical regardless of what R turns
+// out to be for any specific lead it's later applied to.
 function resolveRateCardLines(inputLines) {
-  const submitted = (inputLines || []).filter((l) => l.payeeRole !== 'PLATFORM');
+  const submitted = inputLines || [];
   if (!submitted.length) {
     throw new ApiError(400, 'At least one commission line is required', { code: 'NO_COMMISSION_LINES' });
   }
@@ -118,22 +147,23 @@ function resolveRateCardLines(inputLines) {
   const sum = submitted.reduce((s, l) => s + l.pct, 0);
   if (sum > 100 + PCT_EPSILON) {
     throw new ApiError(400,
-      `These lines sum to ${sum.toFixed(2)}% of the fee, which leaves nothing for the platform.`,
+      `These lines sum to ${sum.toFixed(2)}% of the fee, which leaves nothing for the platform's cost recovery.`,
       { code: 'LINES_EXCEED_FEE', sum });
   }
-  return [...submitted, { payeeRole: 'PLATFORM', pct: round2(Math.max(0, 100 - sum)) }];
+  return submitted;
 }
 
-// Safety net at lock time only — the lines being locked were already
-// resolved by setLeadTerms (which always appends a correct PLATFORM residual),
-// so this should never actually fail. It exists to catch a future bug in that
-// resolution rather than to validate fresh admin input.
-function assertStoredLinesSumTo100(lines) {
-  const sum = lines.reduce((s, l) => s + l.pct, 0);
-  if (Math.abs(sum - 100) > PCT_EPSILON) {
-    throw new ApiError(400, `Stored commission lines sum to ${sum.toFixed(2)}%, not 100% — this is a bug, not an input error`, {
-      code: 'LINES_MUST_SUM_TO_100', sum,
-    });
+// Safety net at lock time only — the lines being locked already passed this
+// exact check in setLeadTerms, so it should never actually fail. It exists
+// to catch a future bug in that check rather than to validate fresh admin
+// input a second time.
+function assertStoredLinesFitHeadroom(lines, feeAmount, retainedAmount) {
+  if (feeAmount == null) return;
+  const partnerTotal = lines.reduce((s, l) => s + (l.flatAmountPaise != null ? l.flatAmountPaise / 100 : round2((feeAmount * l.pct) / 100)), 0);
+  if (round2(partnerTotal + retainedAmount) > feeAmount + RUPEE_EPSILON) {
+    throw new ApiError(400,
+      `Stored lines (₹${round2(partnerTotal)}) plus the platform's retained amount (₹${retainedAmount}) exceed the fee (₹${feeAmount}) — this is a bug, not an input error`,
+      { code: 'LINES_EXCEED_HEADROOM', partnerTotal, retainedAmount, feeAmount });
   }
 }
 
@@ -227,20 +257,23 @@ async function previewTermsForLead(leadId) {
     propertyId: lead.propertyId, city: lead.property?.city || lead.city, sellerType,
   });
 
+  // backend-gaps-frontend-integration.md #1 — no hardcoded JS fallback
+  // number: "Admin sets every percentage" means null (not a guessed 2%/50%)
+  // when neither a rate card nor this platform-level config exists.
   const [defaultFeePct, defaultPartnerShare] = await Promise.all([
-    getConfigNumber(DEFAULT_FEE_PCT_KEY, DEFAULT_FEE_PCT),
-    getConfigNumber(DEFAULT_PARTNER_SHARE_PCT_KEY, DEFAULT_PARTNER_SHARE_PCT),
+    getConfigNumber(DEFAULT_FEE_PCT_KEY, null),
+    getConfigNumber(DEFAULT_PARTNER_SHARE_PCT_KEY, null),
   ]);
 
   let feePct = card?.feePct ?? defaultFeePct;
   let lines = card?.lines?.length
     ? card.lines.map((l) => ({ payeeRole: l.payeeRole, pct: l.pct }))
-    // Platform default shape: split the fee between the platform and the
-    // closing agent, using the admin-set partner share.
-    : [
-        { payeeRole: 'PLATFORM', pct: 100 - defaultPartnerShare },
-        { payeeRole: 'CLOSING_AGENT', pct: defaultPartnerShare },
-      ];
+    // Platform default shape: just the closing agent's share — no PLATFORM
+    // line (see resolvePartnerLines above). Empty when no default is
+    // configured either; there's nothing to pre-fill, not a guess.
+    : defaultPartnerShare != null
+      ? [{ payeeRole: 'CLOSING_AGENT', pct: defaultPartnerShare }]
+      : [];
 
   // R21 — the template's LISTING_AGENT/CLOSING_AGENT line assumes whoever
   // ends up assigned is a genuine third party. When the lead has in fact
@@ -268,6 +301,17 @@ async function previewTermsForLead(leadId) {
     lines = [...lines, { payeeRole: 'ADVISOR', payeeUserId: referral.advisorId }];
   }
 
+  // backend-gaps-frontend-integration.md #1 — show the real headroom in the
+  // preview too, not just after saving: admin should see whether these
+  // lines even fit before committing to them.
+  const dealPrice = lead.property?.price ?? null;
+  const feeAmount = dealPrice && feePct ? round2((dealPrice * feePct) / 100) : null;
+  const rates = await getGatewayRates();
+  const { retainedAmount, platformPctOfFee } = computePlatformRetained(feeAmount, rates);
+  const partnerTotal = feeAmount != null
+    ? round2(lines.reduce((s, l) => s + (l.flatAmountPaise != null ? l.flatAmountPaise / 100 : round2((feeAmount * (l.pct || 0)) / 100)), 0))
+    : null;
+
   return {
     leadId,
     sellerType,
@@ -275,15 +319,22 @@ async function previewTermsForLead(leadId) {
     referredByAdvisorId: referral?.advisorId ?? null,
     feePct,
     lines,
-    dealPrice: lead.property?.price ?? null,
+    dealPrice,
+    feeAmount,
+    platformRetained: retainedAmount,
+    platformShareOfFee: platformPctOfFee,
+    headroom: feeAmount != null ? round2(feeAmount - retainedAmount - partnerTotal) : null,
     resolvedFrom: override ? 'PARTNER_OVERRIDE' : source,
     rateCardId: card?.id ?? null,
     rateCardVersion: card?.version ?? null,
   };
 }
 
-// Rescale the ASSIGNED PARTNER's slices to a new total share, leaving the
-// platform's cut adjusted so the whole thing still sums to 100.
+// Rescale the ASSIGNED PARTNER's slices to a new total share. Unlike the
+// pre-826a73c version, there is no PLATFORM line to recompute any more — R
+// is independent of these lines entirely (see computePlatformRetained). A
+// smaller partner total just means a bigger headroom, not a bigger
+// platform cut.
 //
 // ADVISOR is deliberately excluded from the rescaling pool: a partner-share
 // override changes what the assigned listing/closing partner is paid, never
@@ -308,27 +359,18 @@ function applyPartnerShareOverride(lines, partnerSharePct) {
     out.push({ payeeRole: 'CLOSING_AGENT', pct: round2(partnerSharePct) });
   }
   if (advisorLine) out.push(advisorLine);
-
-  const platformPct = round2(100 - out.reduce((s, l) => s + l.pct, 0));
-  if (platformPct > 0) out.unshift({ payeeRole: 'PLATFORM', pct: platformPct });
   return out;
 }
 
-// R21 — folds LISTING_AGENT/CLOSING_AGENT lines into PLATFORM. ADVISOR is
-// left untouched, same reasoning as applyPartnerShareOverride above: an
-// advisor's flat, deal-specific fee has nothing to do with whether the
-// listing/closing partner happens to be the owner.
+// R21 — removes LISTING_AGENT/CLOSING_AGENT lines outright when the
+// assignee is the property's own self-listing partner (3.17 would refuse
+// them anyway). Unlike the pre-826a73c version, nothing absorbs their
+// share — it isn't "platform margin", it's just unallocated headroom now.
+// ADVISOR is left untouched, same reasoning as applyPartnerShareOverride
+// above: an advisor's flat, deal-specific fee has nothing to do with
+// whether the listing/closing partner happens to be the owner.
 function foldSelfListedPartnerLines(lines) {
-  const partnerPct = lines
-    .filter((l) => ASSIGNED_PARTNER_ROLES.includes(l.payeeRole))
-    .reduce((s, l) => s + l.pct, 0);
-  if (partnerPct === 0) return lines;
-
-  const out = lines.filter((l) => !ASSIGNED_PARTNER_ROLES.includes(l.payeeRole));
-  const platformLine = out.find((l) => l.payeeRole === 'PLATFORM');
-  if (platformLine) platformLine.pct = round2(platformLine.pct + partnerPct);
-  else out.unshift({ payeeRole: 'PLATFORM', pct: round2(partnerPct) });
-  return out;
+  return lines.filter((l) => !ASSIGNED_PARTNER_ROLES.includes(l.payeeRole));
 }
 
 function round2(n) {
@@ -360,25 +402,39 @@ async function getLeadTerms(leadId) {
   return { ...lead, lines, locked: !!lead.commissionLockedAt, amounts: computeAmounts(lead, lines) };
 }
 
-// fee = price * feePct; each line = fee * pct. Seller residual is derived.
+// fee = price * feePct; each partner line = fee * pct. Seller residual is
+// derived. backend-gaps-frontend-integration.md #1 — platformRetained (R)
+// comes from the lead's own stored snapshot (platformCommissionPct/
+// commissionAmountPaise), not from a line; headroom (B - R - ΣPi) is
+// returned here so every read of a lead's terms shows it, not just the
+// moment it's set.
 function computeAmounts(lead, lines) {
   const price = lead.dealPriceAtLock;
   if (!price || !lead.feePct) return null;
   const feeAmount = round2((price * lead.feePct) / 100);
+  const byPayee = lines.map((l) => ({
+    payeeRole: l.payeeRole,
+    payeeUserId: l.payeeUserId ?? null,
+    pct: l.pct,
+    // ADVISOR's stored flatAmountPaise is the figure that was actually
+    // agreed — shown exactly, rather than recomputed from pct and risking
+    // a paise of rounding drift on display.
+    amount: l.flatAmountPaise != null ? round2(l.flatAmountPaise / 100) : round2((feeAmount * l.pct) / 100),
+    flatAmountPaise: l.flatAmountPaise ?? null,
+  }));
+  const partnerTotal = round2(byPayee.reduce((s, l) => s + l.amount, 0));
+  // platformCommissionPct is % of the FEE (R/B), by definition, since
+  // computePlatformRetained is the only thing that ever writes it now.
+  const platformRetained = lead.commissionAmountPaise != null ? round2(lead.commissionAmountPaise / 100) : 0;
   return {
     dealPrice: price,
     feeAmount,
     sellerNet: round2(price - feeAmount),
-    byPayee: lines.map((l) => ({
-      payeeRole: l.payeeRole,
-      payeeUserId: l.payeeUserId ?? null,
-      pct: l.pct,
-      // ADVISOR's stored flatAmountPaise is the figure that was actually
-      // agreed — shown exactly, rather than recomputed from pct and risking
-      // a paise of rounding drift on display.
-      amount: l.flatAmountPaise != null ? round2(l.flatAmountPaise / 100) : round2((feeAmount * l.pct) / 100),
-      flatAmountPaise: l.flatAmountPaise ?? null,
-    })),
+    platformRetained,
+    platformShareOfFee: lead.platformCommissionPct ?? 0,
+    partnerTotal,
+    headroom: round2(feeAmount - platformRetained - partnerTotal),
+    byPayee,
   };
 }
 
@@ -386,9 +442,10 @@ function computeAmounts(lead, lines) {
 // current version in place; after lock it writes a NEW version, since the old
 // one is the record of what was already agreed.
 //
-// `lines` never includes PLATFORM — resolveLinesWithPlatformResidual appends
-// it, computed, below. An ADVISOR line may omit both pct and flatAmountPaise;
-// when it does, their standard rate (User.advisorStandardFeePaise) is used.
+// `lines` never includes PLATFORM — its share (R) is computed independently
+// by computePlatformRetained below, never submitted. An ADVISOR line may
+// omit both pct and flatAmountPaise; when it does, their standard rate
+// (User.advisorStandardFeePaise) is used.
 async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId, ip) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
@@ -408,8 +465,8 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
 
   // A line that names neither pct nor flatAmountPaise is only legal for
   // ADVISOR, and only when that advisor has a standard rate on file — filled
-  // in here, before the lines are resolved, so resolveLinesWithPlatformResidual
-  // never has to know about user profiles.
+  // in here, before the lines are resolved, so resolvePartnerLines never
+  // has to know about user profiles.
   const linesWithAdvisorDefault = await Promise.all((lines || []).map(async (l) => {
     if (l.payeeRole !== 'ADVISOR' || l.pct != null || l.flatAmountPaise != null) return l;
     const advisor = await prisma.user.findUnique({ where: { id: l.payeeUserId }, select: { advisorStandardFeePaise: true, name: true } });
@@ -422,7 +479,23 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
     return { ...l, flatAmountPaise: advisor.advisorStandardFeePaise };
   }));
 
-  const resolvedLines = resolveLinesWithPlatformResidual(linesWithAdvisorDefault, feeAmount);
+  const resolvedLines = resolvePartnerLines(linesWithAdvisorDefault, feeAmount);
+
+  // backend-gaps-frontend-integration.md #1 — R, calculated from the real
+  // gateway rates, never admin-entered. Refuse outright if the partner
+  // lines plus R would exceed the fee itself — ΣPi + R > B.
+  const rates = await getGatewayRates();
+  const { retainedAmount, platformPctOfFee } = computePlatformRetained(feeAmount, rates);
+  if (feeAmount != null) {
+    const partnerTotal = round2(resolvedLines.reduce((s, l) => s + (l.flatAmountPaise != null ? l.flatAmountPaise / 100 : round2((feeAmount * l.pct) / 100)), 0));
+    if (round2(partnerTotal + retainedAmount) > feeAmount + RUPEE_EPSILON) {
+      throw new ApiError(400,
+        `Partner shares (₹${partnerTotal}) plus the platform's retained cost-recovery amount `
+        + `(₹${retainedAmount}) exceed the brokerage fee itself (₹${feeAmount}). Reduce one or more shares.`,
+        { code: 'LINES_EXCEED_HEADROOM', partnerTotal, retainedAmount, feeAmount,
+          headroom: round2(feeAmount - retainedAmount - partnerTotal) });
+    }
+  }
 
   const wasLocked = !!lead.commissionLockedAt;
   const version = wasLocked ? lead.commissionVersion + 1 : lead.commissionVersion;
@@ -455,7 +528,12 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
         feePct: effectiveFeePct,
         ...(effectivePrice != null && { dealPriceAtLock: effectivePrice }),
         commissionVersion: version,
-        ...derivedFields(effectiveFeePct, resolvedLines, effectivePrice),
+        // backend-gaps-frontend-integration.md #1 — platformCommissionPct is
+        // now R/B (platformPctOfFee), stored as a snapshot of the gateway
+        // rates at the moment terms were set/revised, same as the rest of
+        // this record. commissionAmountPaise is R itself, in paise.
+        platformCommissionPct: platformPctOfFee,
+        ...(feeAmount != null && { commissionAmountPaise: Math.round(retainedAmount * 100) }),
       },
     }),
   ]);
@@ -464,24 +542,11 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
     adminId, action: wasLocked ? 'COMMISSION_REVISED' : 'COMMISSION_TERMS_SET',
     targetType: 'Lead', targetId: leadId,
     before: { version: lead.commissionVersion, feePct: lead.feePct },
-    after: { version, feePct: effectiveFeePct, lines: resolvedLines, note: note ?? null },
+    after: { version, feePct: effectiveFeePct, lines: resolvedLines, retainedAmount, note: note ?? null },
     ipAddress: ip,
   });
 
   return getLeadTerms(leadId);
-}
-
-// platformCommissionPct and commissionAmountPaise are derived so netAmount and
-// the finance views keep working off the agreed lines.
-function derivedFields(feePct, lines, dealPrice) {
-  const platformPctOfFee = lines.find((l) => l.payeeRole === 'PLATFORM')?.pct ?? 0;
-  // As a % of deal price, which is what platformCommissionPct has always meant.
-  const platformCommissionPct = round2((feePct * platformPctOfFee) / 100);
-  const out = { platformCommissionPct };
-  if (dealPrice != null) {
-    out.commissionAmountPaise = Math.round(dealPrice * (platformCommissionPct / 100) * 100);
-  }
-  return out;
 }
 
 // 3.17 — refuse to pay a partner commission on their own listing.
@@ -524,7 +589,7 @@ async function prefillLeadTerms(leadId, adminId, ip) {
   // decision" state, not a bug — surfaced here with the actual cause instead
   // of letting it fall through to setLeadTerms' generic "at least one line
   // is required", which doesn't say why there's no line to begin with.
-  if (preview.selfListed && !preview.lines.some((l) => l.payeeRole !== 'PLATFORM')) {
+  if (preview.selfListed && !preview.lines.length) {
     throw new ApiError(400,
       "This lead is assigned to the property's own self-listing partner, who cannot earn commission on their "
       + 'own listing. Assign a different partner to close this deal, then set commission terms.',
@@ -554,7 +619,7 @@ async function lockLeadTerms(leadId, adminId, ip) {
   if (!terms.lines.length) {
     throw new ApiError(400, 'Set the commission terms before locking', { code: 'NO_COMMISSION_LINES' });
   }
-  assertStoredLinesSumTo100(terms.lines);
+  assertStoredLinesFitHeadroom(terms.lines, terms.amounts?.feeAmount ?? null, terms.amounts?.platformRetained ?? 0);
 
   const locked = await prisma.lead.update({
     where: { id: leadId },
@@ -975,7 +1040,8 @@ module.exports = {
   getLeadTerms, setLeadTerms, prefillLeadTerms, lockLeadTerms, getLeadTermsHistory,
   invoiceLeadCommission, collectLeadCommission, disputeLeadCommission,
   listFeesDue, sendFeeReminder,
-  resolveLinesWithPlatformResidual, resolveRateCardLines, assertStoredLinesSumTo100,
-  applyPartnerShareOverride, foldSelfListedPartnerLines, computeAmounts, derivedFields,
+  resolvePartnerLines, resolveRateCardLines, assertStoredLinesFitHeadroom,
+  applyPartnerShareOverride, foldSelfListedPartnerLines, computeAmounts,
+  getGatewayRates, computePlatformRetained,
   PAYEE_ROLES, PARTNER_ROLES, ASSIGNED_PARTNER_ROLES,
 };

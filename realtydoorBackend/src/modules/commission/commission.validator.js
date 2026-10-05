@@ -1,13 +1,14 @@
 const { z } = require('zod');
 const { objectId } = require('../../utils/validators');
 
-const PAYEE_ROLES = ['PLATFORM', 'LISTING_AGENT', 'CLOSING_AGENT', 'ADVISOR'];
+const PAYEE_ROLES = ['LISTING_AGENT', 'CLOSING_AGENT', 'ADVISOR'];
 const SELLER_TYPES = ['AGENT', 'BUILDER', 'ADVISOR', 'OWNER'];
 
-// PLATFORM is never submitted — its share is computed by the service as
-// whatever's left after the lines below (2026-10-04 decision). Rate card
-// templates only take LISTING_AGENT/CLOSING_AGENT: ADVISOR is deal-specific
-// and not knowable at template-design time (see commission.prisma).
+// backend-gaps-frontend-integration.md #1 (2026-10-05) — PLATFORM is not a
+// commission line at all any more; its share (R) is computed from real
+// gateway costs, independent of what's submitted here. Rate card templates
+// only take LISTING_AGENT/CLOSING_AGENT: ADVISOR is deal-specific and not
+// knowable at template-design time (see commission.prisma).
 const lineSchema = z.object({
   payeeRole: z.enum(['LISTING_AGENT', 'CLOSING_AGENT']),
   pct:       z.number().positive().max(100),

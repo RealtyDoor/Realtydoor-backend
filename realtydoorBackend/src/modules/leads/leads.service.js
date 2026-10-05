@@ -246,6 +246,13 @@ const PARTNER_LEAD_ESCROW_SELECT = {
 // closed under an older rate keeps that rate, falling back to the current
 // platform_commission_pct config. null when there's no escrow yet — the
 // partner UI has nothing to show a net for until money is held.
+//
+// backend-gaps-frontend-integration.md #1 (2026-10-05) — platformCommissionPct
+// now means R/B, the platform's gateway-cost-recovery share of the
+// BROKERAGE FEE, not of the escrow amount applied here. This projection was
+// already mixing the two before that change (applying a deal-price-relative
+// rate to the escrow's token-advance amount); unchanged here deliberately —
+// flagged, not fixed, since reconciling it is outside this fix's scope.
 function netAmountFor(lead, fallbackPct) {
   const escrow = lead.escrowTransactions?.[0];
   if (!escrow || typeof escrow.amount !== 'number') return null;

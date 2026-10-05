@@ -7,25 +7,30 @@
 // used to PRE-FILL those lines.
 //
 // Arithmetic, all three flows (builder / admin-listed / owner):
-//   fee        = dealPrice * feePct          (taken from the deal)
-//   each line  = fee * line.pct              (lines sum to exactly 100)
-//   seller gets  dealPrice - fee             (derived, never stored as a pct)
+//   fee (B)       = dealPrice * feePct        (taken from the deal)
+//   each line Pi  = fee * line.pct            (admin-set, % of B)
+//   platform R    = gateway cost on this fee  (calculated, never admin-entered —
+//                    see commission.service.js's computePlatformRetained)
+//   headroom      = B - R - ΣPi               (refused if negative: ΣPi + R > B)
+//   seller gets     dealPrice - fee           (derived, never stored as a pct)
 // The partner's take is the sum of their lines, so the partner is paid FROM the
 // fee and is never an extra deduction on top of it.
 //
-// PLATFORM is never admin-entered (2026-10-04 decision). Admin sets
-// LISTING_AGENT / CLOSING_AGENT (and optionally ADVISOR), and the service
-// computes PLATFORM as whatever's left — any leftover between the partner
-// cuts and 100% of the fee is the platform's margin, not something that
-// reverts to the seller. There is deliberately no automatic check that this
-// covers Razorpay's actual processing cost (business decision, 2026-10-04):
-// admin is trusted to enter sensible numbers.
+// backend-gaps-frontend-integration.md #1 (2026-10-05) reverses the earlier
+// 826a73c decision: PLATFORM is no longer a commission LINE at all, so the
+// enum below no longer has a PLATFORM value. Its share, R, is pure cost
+// recovery — the real Razorpay/RazorpayX charges on this fee plus GST,
+// switchable for input-credit treatment — never a residual of the other
+// lines reaching 100%, and never something admin types in directly. Margin
+// (retaining more than the real gateway cost) is explicitly deferred, not
+// built here. A deal's unused headroom is just that — headroom — not
+// platform income.
 //
 // ADVISOR is the one role usually paid a flat amount, not a %, per deal
-// (2026-10-04 decision) — see LeadCommissionLine.flatAmountPaise.
+// (2026-10-04 decision, unaffected by the above) — see
+// LeadCommissionLine.flatAmountPaise.
 
 enum CommissionPayeeRole {
-  PLATFORM
   LISTING_AGENT
   CLOSING_AGENT
   ADVISOR
@@ -137,22 +142,22 @@ model LeadCommissionLine {
   leadId    String              @db.ObjectId
   lead      Lead                @relation(fields: [leadId], references: [id], onDelete: Cascade)
   payeeRole CommissionPayeeRole
-  // Which partner this line pays. Null only for PLATFORM — every other role
-  // always has one (ADVISOR never defaults to the assigned partner; see
-  // commission.service.js::setLeadTerms).
+  // Which partner this line pays. ADVISOR never defaults to the assigned
+  // partner; see commission.service.js::setLeadTerms.
   payeeUserId String?           @db.ObjectId
-  // % of the lead's fee. All lines of a version, INCLUDING the PLATFORM line,
-  // sum to exactly 100 — but PLATFORM's pct is computed by the service as
-  // whatever's left over, never admin-entered (business decision, 2026-10-04):
-  // the platform's cut is the residual after every other line is paid, not a
-  // percentage someone types in.
+  // % of the lead's fee (B), admin-set per line — Pi. There is no PLATFORM
+  // line and these do NOT sum to 100: the platform's share (R, gateway cost
+  // recovery) is computed independently and never stored as a line here
+  // (backend-gaps-frontend-integration.md #1, 2026-10-05, reverses the
+  // earlier 826a73c residual/sum-to-100 model). ΣPi + R must not exceed B —
+  // enforced at setLeadTerms/lockLeadTerms, not by a sum check on these rows.
   pct       Float
   // ADVISOR is normally paid a flat admin-set amount per deal, not a % of the
   // fee (business decision, 2026-10-04) — reflects their standard rate
   // (User.advisorStandardFeePaise) unless overridden for this deal. Stored
   // alongside the equivalent `pct` (computed at the fee amount agreed for
-  // THIS lead) so the line still participates in the normal 100%-of-fee
-  // bookkeeping without rounding drift creeping into the displayed amount —
+  // THIS lead) so the line still participates in the normal ΣPi + R <= B
+  // check without rounding drift creeping into the displayed amount —
   // reading `flatAmountPaise` back, where set, is always exact; `pct` is the
   // derived figure. Null for every other role.
   flatAmountPaise Int?

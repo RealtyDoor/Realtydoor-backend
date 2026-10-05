@@ -179,11 +179,12 @@ model User {
   bankAccountNo          String?
   bankIfsc               String?
   bankHolderName         String?
-  // Vestigial. Route onboarding was evaluated and rejected in favour of
-  // RazorpayX Payouts (direct bank transfer, no linked-account onboarding) —
-  // see escrow.prisma. Kept only so old rows aren't silently dropped; nothing
-  // reads it. The RazorpayX ids below are the live ones.
-  razorpayRouteAccountId String?
+  // backend-gaps-frontend-integration.md #2 (2026-10-05) — razorpayRouteAccountId
+  // removed outright. Route onboarding was evaluated and rejected in favour
+  // of RazorpayX Payouts (direct bank transfer, no linked-account
+  // onboarding) — see escrow.prisma. Nothing read it, and the one legacy
+  // row that had a value was unmigrated seed placeholder data, not a real
+  // account. razorpayContactId/razorpayFundAccountId below are the live ids.
   bankLinkedAt           DateTime?
 
   // R8 — billing details, for the commission invoice this partner is issued.
