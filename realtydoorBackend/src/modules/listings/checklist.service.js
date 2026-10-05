@@ -117,10 +117,15 @@ async function getChecklist(propertyId, requirePartnerId = null) {
   ]);
 
   const byType = Object.fromEntries(docs.map((d) => [d.documentType, d]));
+  // backend-work-still-open.md #12 — verify/reject (PATCH
+  // .../checklist-documents/:docId/verify|reject) take the underlying
+  // PropertyDocument row's id, which was never actually returned here.
+  // null when nothing's been uploaded yet (MISSING) — there is no row id
+  // to act on until there is.
   const items = (persona.documents || []).map(({ type, label }) => {
     const doc = byType[type];
     return {
-      type, label,
+      id: doc?.id ?? null, type, label,
       status: doc ? doc.status : 'MISSING',
       fileUrl: doc?.fileUrl ?? null,
       uploadedAt: doc?.uploadedAt ?? null,
@@ -131,9 +136,12 @@ async function getChecklist(propertyId, requirePartnerId = null) {
   // Loan NOC folded in from Property directly, conditional on isMortgaged.
   // null (not recorded) and false (confirmed not mortgaged) are both "nothing
   // required here" — the distinction matters to the mortgage field itself,
-  // not to this checklist.
+  // not to this checklist. No PropertyDocument row backs this one at all —
+  // id stays null; it's verified/rejected through the property's own
+  // loanNocStatus field, not the checklist-documents endpoint.
   const loanNocItem = property.isMortgaged
     ? {
+        id: null,
         type: 'LOAN_NOC',
         label: 'Loan NOC',
         status: property.loanNocStatus || 'MISSING',
@@ -155,7 +163,7 @@ async function getChecklist(propertyId, requirePartnerId = null) {
   const resolvedConditionalDocs = conditionalDocTypes.map(({ type, label }) => {
     const doc = byType[type];
     return {
-      type, label,
+      id: doc?.id ?? null, type, label,
       status: doc ? doc.status : 'MISSING',
       fileUrl: doc?.fileUrl ?? null,
       uploadedAt: doc?.uploadedAt ?? null,

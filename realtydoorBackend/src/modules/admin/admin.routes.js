@@ -129,6 +129,11 @@ router.post('/escrow/:id/freeze',   escrowCtrl.freezeEscrow);
 router.post('/escrow/:id/unfreeze', escrowCtrl.unfreezeEscrow);
 router.get('/escrow', escrowCtrl.getAllEscrow);
 router.get('/escrow/stats', escrowCtrl.getEscrowStats);
+// backend-work-still-open.md #5 — owner success fees (R26) that are
+// INVOICED but not yet COLLECTED. Lives in commission.service.js (the
+// underlying state is Lead.commissionStatus), routed here per the spec.
+router.get('/escrow/fees-due',            requirePermission('FINANCE'), commissionCtrl.listFeesDue);
+router.post('/escrow/fees-due/:id/remind', requirePermission('FINANCE'), commissionCtrl.sendFeeReminder);
 // 2.8/2.9 — split entitlements + release conditions, before releasing.
 router.get('/escrow/:id/release-plan', escrowCtrl.getReleasePlan);
 
@@ -153,6 +158,10 @@ router.patch('/tickets/:id/dispatch',   ctrl.dispatchTicket);
 router.patch('/tickets/:id/resolve',    ctrl.resolveTicket);
 // 7.8
 router.patch('/tickets/:id/link-deal',  ctrl.linkTicketToDeal);
+// backend-work-still-open.md #9 — same thread the user sees; admin can
+// read/reply on any ticket, not scoped to one raised by them.
+router.get('/tickets/:id/comments',     ctrl.getTicketComments);
+router.post('/tickets/:id/comments',    ctrl.addTicketComment);
 
 // Loan management
 router.get('/loan',               ctrl.getLoans);

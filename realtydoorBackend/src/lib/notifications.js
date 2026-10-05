@@ -46,6 +46,7 @@ const CATEGORY_BY_TYPE = {
   TICKET_VENDOR_DISPATCHED: 'SERVICES',
   TICKET_VENDOR_REASSIGNED: 'SERVICES',
   TICKET_RESOLVED: 'SERVICES',
+  TICKET_ADMIN_REPLY: 'SERVICES',
   LOAN_STATUS_UPDATE: 'SYSTEM',
   ANNOUNCEMENT: 'SYSTEM',
   // R32 — a partner's own earnings on a deal, distinct from ESCROW (whether
@@ -56,6 +57,7 @@ const CATEGORY_BY_TYPE = {
   // R26 — the owner's success-fee payment lifecycle.
   COMMISSION_INVOICED: 'FEES',
   COMMISSION_COLLECTED: 'FEES',
+  COMMISSION_FEE_REMINDER: 'FEES',
   // R28 — the builder's brokerage-invoice payment lifecycle.
   BUILDER_INVOICE_ISSUED: 'FEES',
   BUILDER_INVOICE_COLLECTED: 'FEES',

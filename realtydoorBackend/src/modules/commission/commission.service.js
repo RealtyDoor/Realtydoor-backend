@@ -200,7 +200,7 @@ async function previewTermsForLead(leadId) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
     select: {
-      id: true, assignedPartnerId: true, propertyId: true, buyerPhone: true,
+      id: true, assignedPartnerId: true, propertyId: true, buyerPhone: true, city: true,
       property: { select: { id: true, city: true, price: true, partnerId: true, partner: { select: { partnerSubType: true } } } },
     },
   });
@@ -220,8 +220,11 @@ async function previewTermsForLead(leadId) {
   const listingSubType = lead.property?.partner?.partnerSubType || 'AGENT';
   const selfListed = listingSubType === 'AGENT' && !!lead.propertyId && await isSelfListedByAgent(lead.propertyId);
   const sellerType = selfListed ? 'OWNER' : listingSubType;
+  // backend-work-still-open.md #3 — a free-text (propertyInterest-only)
+  // lead has no property to pull a city from; lead.city is the only source
+  // then. A real listing's own city always wins when there is one.
   const { card, source } = await resolveRateCard({
-    propertyId: lead.propertyId, city: lead.property?.city, sellerType,
+    propertyId: lead.propertyId, city: lead.property?.city || lead.city, sellerType,
   });
 
   const [defaultFeePct, defaultPartnerShare] = await Promise.all([
@@ -708,6 +711,63 @@ async function disputeLeadCommission(leadId, reason, adminId, ip) {
   return getLeadTerms(leadId);
 }
 
+// backend-work-still-open.md #5 — the escrow fee-due page: owner success
+// fees (R26) that have been INVOICED but not yet COLLECTED. Lives here
+// (not escrow.service.js) since the underlying state is Lead.commissionStatus,
+// not anything on EscrowTransaction — the admin route path is
+// GET /admin/escrow/fees-due per the spec, but what it actually reads is
+// this module's own data.
+async function listFeesDue(skip, limit) {
+  const where = { commissionStatus: 'INVOICED' };
+  const [rows, total] = await Promise.all([
+    prisma.lead.findMany({
+      where, skip, take: limit, orderBy: { invoicedAt: 'asc' },
+      select: {
+        id: true, refCode: true, buyerName: true, commissionStatus: true,
+        feePct: true, dealPriceAtLock: true, commissionAmountPaise: true,
+        invoiceUrl: true, invoicedAt: true,
+        property: { select: { id: true, title: true, partnerId: true, partner: { select: { name: true, companyName: true } } } },
+        feeReminders: { orderBy: { createdAt: 'desc' }, select: { id: true, sentByAdminId: true, createdAt: true } },
+      },
+    }),
+    prisma.lead.count({ where }),
+  ]);
+  return { data: rows, total };
+}
+
+async function sendFeeReminder(leadId, adminId, ip) {
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: { commissionStatus: true, invoiceUrl: true, property: { select: { title: true, partnerId: true } } },
+  });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.commissionStatus !== 'INVOICED') {
+    throw new ApiError(400, `Cannot send a fee reminder for commission status ${lead.commissionStatus}, not INVOICED`, {
+      code: 'INVALID_COMMISSION_STATUS',
+    });
+  }
+  if (!lead.property?.partnerId) {
+    throw new ApiError(400, 'No one to remind — this lead has no resolvable property owner');
+  }
+
+  const reminder = await prisma.feeReminder.create({ data: { leadId, sentByAdminId: adminId } });
+
+  await createNotification({
+    userId: lead.property.partnerId,
+    title: 'Success fee payment reminder',
+    message: `Your success fee for "${lead.property.title}" is still due.`,
+    type: 'COMMISSION_FEE_REMINDER',
+    linkUrl: lead.invoiceUrl || '/partner/finance',
+  });
+
+  await createAuditLog({
+    adminId, action: 'FEE_REMINDER_SENT', targetType: 'Lead', targetId: leadId,
+    after: { reminderId: reminder.id }, ipAddress: ip,
+  });
+
+  return reminder;
+}
+
 // 3.13 — every version ever written, newest first.
 async function getLeadTermsHistory(leadId) {
   const lines = await prisma.leadCommissionLine.findMany({
@@ -914,6 +974,7 @@ module.exports = {
   resolveRateCard, resolveOverride, previewTermsForLead,
   getLeadTerms, setLeadTerms, prefillLeadTerms, lockLeadTerms, getLeadTermsHistory,
   invoiceLeadCommission, collectLeadCommission, disputeLeadCommission,
+  listFeesDue, sendFeeReminder,
   resolveLinesWithPlatformResidual, resolveRateCardLines, assertStoredLinesSumTo100,
   applyPartnerShareOverride, foldSelfListedPartnerLines, computeAmounts, derivedFields,
   PAYEE_ROLES, PARTNER_ROLES, ASSIGNED_PARTNER_ROLES,

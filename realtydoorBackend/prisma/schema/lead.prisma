@@ -19,6 +19,12 @@ model Lead {
   propertyId        String?    @db.ObjectId
   property          Property?  @relation(fields: [propertyId], references: [id])
   propertyInterest  String? // free text, only when propertyId is null
+  // backend-work-still-open.md #3 — a free-text (propertyInterest-only)
+  // lead has no property to pull a city from, so rate-card resolution
+  // (commission.service.js's resolveRateCard) could never find a city-level
+  // card for it. Required by the admin lead-creation validator whenever
+  // propertyId is absent, rather than guessed by parsing propertyInterest.
+  city              String?
   budget            String?
   source            LeadSource @default(WEBSITE)
   status            LeadStatus @default(UNASSIGNED)
@@ -143,6 +149,9 @@ model Lead {
   escrowTransactions EscrowTransaction[]
   // 7.8 — post-purchase ServiceTickets traced back to this deal.
   serviceTickets     ServiceTicket[]
+  // backend-work-still-open.md #5 — reminder history for the owner
+  // success-fee (R26) when it's INVOICED but not yet COLLECTED.
+  feeReminders       FeeReminder[]
 
   @@index([assignedPartnerId])
   @@index([buyerId])

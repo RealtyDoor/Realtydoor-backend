@@ -4053,6 +4053,7 @@ All leads (paginated). Filter by status and partner.
         "createdAt": "2024-01-15T10:00:00.000Z",
         "property": { "title": "3 BHK Flat in Baner", "slug": "...", "city": "Pune" },
         "assignedPartner": { "name": "Rajdeep Kumar", "email": "rajdeep@example.com" },
+        "addedByPartner": { "name": "Rajdeep Kumar", "companyName": "RealtyPro Solutions" },
         "buyer": {
           "id": "64user...", "refCode": "RD-U-000045", "name": "Suresh Mehta",
           "email": "suresh@example.com", "phone": "+919876543210",
@@ -4067,7 +4068,7 @@ All leads (paginated). Filter by status and partner.
 }
 ```
 
-`buyer` (full identity, unlike every buyer- or partner-facing endpoint) and `inquiryCount` (total leads this buyer has ever submitted, across all statuses — a quick abuse signal against the per-buyer limits on `POST /api/leads`) are admin-only additions. `buyer` is `null` for legacy leads with no linked account (see `scripts/backfillLeadBuyerId.js`).
+`buyer` (full identity, unlike every buyer- or partner-facing endpoint) and `inquiryCount` (total leads this buyer has ever submitted, across all statuses — a quick abuse signal against the per-buyer limits on `POST /api/leads`) are admin-only additions. `buyer` is `null` for legacy leads with no linked account (see `scripts/backfillLeadBuyerId.js`). `addedByPartner` (`name`/`companyName` only) is `null` unless this lead came in via the partner self-sourced path (`POST /api/leads/partner`) — the admin list previously showed this column blank with no way to tell who submitted it.
 
 ---
 
@@ -4155,6 +4156,7 @@ Admin logs a lead that arrived off-platform (phone call, walk-in, referral).
   "source": "PHONE",
   "propertyId": "64abc...",
   "propertyInterest": "3BHK in Whitefield, not listed yet",
+  "city": "Bengaluru",
   "budget": "1-1.2Cr",
   "note": "Called the office, wants a callback this week.",
   "partnerId": "64partner...",
@@ -4164,6 +4166,8 @@ Admin logs a lead that arrived off-platform (phone call, walk-in, referral).
 
 `source` is one of `PHONE` · `WALK_IN` · `REFERRAL` · `EMAIL` · `OTHER`. **Either `propertyId` or `propertyInterest` is required** — `propertyId` for a live listing, `propertyInterest` as free text when the property isn't on the platform (in which case `propertyId` comes back `null`, so treat `property` as nullable in responses). `buyerEmail`, `budget`, `note` and `partnerId` are optional.
 
+**`city` is required when `propertyId` is not given** — a free-text lead still needs a city for the commission rate-card lookup (`property → city → platform default`) to have anything to resolve against. Ignored (stored as `null`) when `propertyId` is given, since the property's own city is used instead.
+
 **`consent` is required and must be the literal boolean `true`** (docs-backend-gaps-handoff.md #4) — not merely truthy, a checkbox that was actually checked. Admin is attesting consent on behalf of a buyer who never interacted with the platform directly, the same reason the partner self-sourced path (`POST /api/leads/partner`) requires it too. Recorded as `buyerConsentAt` on the lead (a timestamp, not a bare boolean — it is the evidentiary record of *when*, same convention as `User.kycConsentAt`). Not required on a buyer's own `POST /api/leads` submission — they are the one submitting, so there is no third party attesting on their behalf.
 
 **Duplicate check, when `propertyId` is given:** refuses with `409` if this
@@ -4172,7 +4176,7 @@ property — the same rule `POST /api/leads/partner` already enforced, now
 applied here too. Only runs when a real listing is named; a
 `propertyInterest`-only lead has nothing to deduplicate against.
 
-Passing `partnerId` assigns the lead immediately (`status: ASSIGNED`) and notifies that partner; the partner must be KYC-verified, same gate as `/assign`. **It also pre-fills the lead's commission terms** from the rate-card chain (`property → city → platform default`), the same pre-fill `POST .../commission/prefill` performs — terms are populated but stay unlocked and editable; admin still locks separately and deliberately. A pre-fill failure (most commonly 3.17 — the partner owns this listing) is logged and swallowed, never undoing the assignment that already succeeded; check `GET .../commission` afterward if you need to confirm it took.
+Passing `partnerId` assigns the lead immediately (`status: ASSIGNED`) and notifies that partner; the partner must be KYC-verified, same gate as `/assign`. **It also pre-fills and locks the lead's commission terms** from the rate-card chain (`property → city → platform default`), the same pre-fill `POST .../commission/prefill` performs, immediately followed by the same lock `POST .../commission/lock` performs. This is a deliberate reversal of the earlier "pre-fill only, admin locks separately" behavior — terms are now locked the moment a lead is assigned. A pre-fill or lock failure (most commonly 3.17 — the partner owns this listing, or no rate card resolves at all) is logged and swallowed, never undoing the assignment that already succeeded; check `GET .../commission` afterward if you need to confirm it took, and finish manually via the prefill/lock endpoints if not.
 
 Without `partnerId` the lead lands as `UNASSIGNED`. Repeat buyers are linked via `relatedLeadId` exactly as in `POST /api/leads/partner`. `buyerId` stays `null` — nobody authenticated. Writes an audit log.
 
@@ -4228,11 +4232,11 @@ Assign lead to a KYC-verified partner.
 
 Also sends the buyer an in-app `LEAD_ASSIGNED` notification (`linkUrl: /user/inquiries/:leadId`) naming the partner by `companyName`/`name` only — the partner's phone is never included, in the message or anywhere else the buyer can see. The buyer's own lead detail (`GET /api/user/leads/:id`) likewise never exposes `assignedPartner.phone`; the frontend's "Contact agent" action should dial the shared number from `GET /api/config/public`'s `telecaller_phone` instead.
 
-**Also pre-fills commission terms**, same as `POST /api/admin/leads` with a
-`partnerId` above — populated and editable, not locked; a pre-fill failure
-is logged and swallowed rather than undoing the assignment. `POST
-/api/admin/leads/:id/auto-assign` and the batch form both call this function
-internally, so they get the same pre-fill for free.
+**Also pre-fills and locks commission terms**, same as `POST /api/admin/leads` with a
+`partnerId` above — populated and locked, not left editable; a pre-fill or
+lock failure is logged and swallowed rather than undoing the assignment.
+`POST /api/admin/leads/:id/auto-assign` and the batch form both call this
+function internally, so they get the same pre-fill-and-lock for free.
 
 **Errors:** `404` lead not found · `400` partner not found or not KYC verified.
 
@@ -4978,10 +4982,10 @@ upload)
     "available": true,
     "reason": null,
     "items": [
-      { "type": "SALE_DEED", "label": "Sale deed", "status": "APPROVED", "fileUrl": "https://...", "uploadedAt": "2026-10-04T...", "rejectionNote": null },
-      { "type": "ENCUMBRANCE_CERTIFICATE", "label": "Encumbrance certificate", "status": "PENDING_REVIEW", "fileUrl": "https://...", "uploadedAt": "2026-10-04T...", "rejectionNote": null },
-      { "type": "KHATA", "label": "Khata", "status": "MISSING", "fileUrl": null, "uploadedAt": null, "rejectionNote": null },
-      { "type": "SOCIETY_NOC", "label": "Society NOC", "status": "MISSING", "fileUrl": null, "uploadedAt": null, "rejectionNote": null }
+      { "id": "6ad1...", "type": "SALE_DEED", "label": "Sale deed", "status": "APPROVED", "fileUrl": "https://...", "uploadedAt": "2026-10-04T...", "rejectionNote": null },
+      { "id": "6ad2...", "type": "ENCUMBRANCE_CERTIFICATE", "label": "Encumbrance certificate", "status": "PENDING_REVIEW", "fileUrl": "https://...", "uploadedAt": "2026-10-04T...", "rejectionNote": null },
+      { "id": null, "type": "KHATA", "label": "Khata", "status": "MISSING", "fileUrl": null, "uploadedAt": null, "rejectionNote": null },
+      { "id": null, "type": "SOCIETY_NOC", "label": "Society NOC", "status": "MISSING", "fileUrl": null, "uploadedAt": null, "rejectionNote": null }
     ],
     "missingCount": 2,
     "ready": false,
@@ -4995,11 +4999,15 @@ upload)
 
 `items[].status` is one of `MISSING`, `PENDING_REVIEW`, `APPROVED`, `REJECTED`
 — `MISSING` is not a `DocumentStatus` enum value, it means no row exists yet.
+`items[].id` is the backing `PropertyDocument` row's ID, or `null` when
+`status` is `MISSING` (there's no row yet to reference) — needed by the
+frontend for any direct document action (e.g. admin approve/reject) that
+targets a specific document rather than a `(propertyId, type)` pair.
 A `LOAN_NOC` item appears **only when `Property.isMortgaged` is true** (its
 `status` reads from `Property.loanNocStatus` directly, not from a
-`PropertyDocument` row). `ready` is `true` only when nothing is `MISSING` or
-`REJECTED`; it is `null` for a persona with `available: false`, since
-"ready" has no meaning there yet.
+`PropertyDocument` row, so its `id` is always `null`). `ready` is `true`
+only when nothing is `MISSING` or `REJECTED`; it is `null` for a persona
+with `available: false`, since "ready" has no meaning there yet.
 
 **Response, AGENT persona:**
 
@@ -6442,13 +6450,16 @@ masking (`bankAccountNo`/`panNumber` tail-masked) as the partner's own
         "razorpayContactId": "cont_...", "razorpayFundAccountId": "fa_...",
         "bankName": "HDFC Bank", "bankIfsc": "HDFC0000634",
         "bankHolderName": "Ravi Kumar", "bankAccountNo": "XXXXXXXXXX6280",
-        "bankLinkedAt": "2026-08-30T09:00:00.000Z", "panNumber": "XXXXXX234C"
+        "bankLinkedAt": "2026-08-30T09:00:00.000Z", "panNumber": "XXXXXX234C",
+        "balanceHeld": 250000
       }
     ],
     "pagination": { "page": 1, "limit": 20, "total": 16, "pages": 1 }
   }
 }
 ```
+
+`balanceHeld` (₹) is the sum of this partner's `HELD` escrow transactions — how much is currently sitting in escrow waiting to be released to them, the same figure `GET /api/partner/finance` computes for a partner's own view. Computed from `Lead.assignedPartnerId` (there's no direct partner FK on `EscrowTransaction`), batched per page rather than per row.
 
 ---
 ### GET /api/admin/kyc
@@ -6630,12 +6641,21 @@ Full KYC record for a specific partner including uploaded document URLs.
     "kycDocumentUrls": ["https://cdn.realtydoor.in/kyc/pan.pdf", "https://cdn.realtydoor.in/kyc/aadhar.pdf"],
     "kycRejectionNote": null,
     "kycVerifiedAt": null,
+    "kycRequestedDocuments": [],
+    "kycRequestedNote": null,
+    "kycRequestedAt": null,
+    "kycRequestedDueAt": null,
     "partnerSubType": "AGENT",
     "companyName": "RealtyPro Solutions",
+    "panNumber": "ABCDE1234F", "panVerificationStatus": "NOT_CONFIGURED", "panVerifiedName": null, "panVerifiedAt": null,
+    "gstin": null, "gstinVerificationStatus": "NOT_CONFIGURED", "gstinVerifiedName": null, "gstinVerifiedAt": null,
+    "reraNumber": null, "reraVerificationStatus": "NOT_CONFIGURED", "reraVerifiedName": null, "reraVerifiedAt": null,
     "createdAt": "2024-01-01T00:00:00.000Z"
   }
 }
 ```
+
+`kycRequestedDocuments`/`kycRequestedNote`/`kycRequestedAt`/`kycRequestedDueAt` (see `POST .../request-documents` above) and the PAN/GSTIN/RERA automated-check fields (5.x) were already on the list view (`GET /api/admin/kyc`) but missing from this detail endpoint — now included here too.
 
 **Errors:** `404` user not found.
 
@@ -6706,9 +6726,11 @@ All audit log entries (paginated, newest first).
 
 ### GET /api/admin/partners
 
-Performance metrics for all KYC-verified partners.
+Performance metrics for all KYC-verified partners (paginated).
 
 **Auth:** ADMIN
+
+**Query Parameters:** `page`, `limit`
 
 **Response `200`:**
 
@@ -6716,18 +6738,22 @@ Performance metrics for all KYC-verified partners.
 {
   "success": true,
   "message": "Success",
-  "data": [
-    {
-      "id": "64user...",
-      "name": "Rajdeep Kumar",
-      "companyName": "RealtyPro Solutions",
-      "partnerSubType": "AGENT",
-      "totalLeads": 12,
-      "closedLeads": 3,
-      "totalListings": 8,
-      "activeListings": 6
-    }
-  ]
+  "data": {
+    "data": [
+      {
+        "id": "64user...",
+        "name": "Rajdeep Kumar",
+        "companyName": "RealtyPro Solutions",
+        "partnerSubType": "AGENT",
+        "isSuspended": false,
+        "totalLeads": 12,
+        "closedLeads": 3,
+        "totalListings": 8,
+        "activeListings": 6
+      }
+    ],
+    "pagination": { "total": 16, "page": 1, "limit": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
+  }
 }
 ```
 
@@ -6735,7 +6761,7 @@ Performance metrics for all KYC-verified partners.
 
 ### GET /api/admin/partners/:id
 
-Full partner profile drill-down including all leads and listings.
+Full partner profile drill-down, including bank/payout fields, up to 10 most recent leads and listings each, and lead/listing counts.
 
 **Auth:** ADMIN
 
@@ -6749,19 +6775,33 @@ Full partner profile drill-down including all leads and listings.
     "id": "64user...",
     "name": "Rajdeep Kumar",
     "email": "rajdeep@example.com",
+    "phone": "+919876543210",
     "companyName": "RealtyPro Solutions",
     "partnerSubType": "AGENT",
+    "bio": "...", "profileImageUrl": "...", "websiteUrl": "...",
     "kycStatus": "VERIFIED",
-    "kycVerifiedAt": "2024-02-01T00:00:00.000Z",
-    "totalLeads": 12,
-    "closedLeads": 3,
-    "totalListings": 8,
-    "activeListings": 6,
-    "escrowHeld": 150000,
-    "createdAt": "2024-01-01T00:00:00.000Z"
+    "kycRejectionNote": null, "kycVerifiedAt": "2024-02-01T00:00:00.000Z", "kycConsentAt": "...",
+    "isPremiumPartner": false, "premiumValidUntil": null,
+    "reraNumber": "...", "gstin": "...", "coverageAreas": ["Pune", "Mumbai"], "address": "...",
+    "partnerTermsVersion": "1.0", "partnerTermsAcceptedAt": "...",
+    "payoutAccountStatus": "ACTIVE", "payoutAccountNote": null, "payoutValidatedAt": "...",
+    "razorpayContactId": "cont_...", "razorpayFundAccountId": "fa_...",
+    "bankName": "HDFC Bank", "bankIfsc": "HDFC0000634", "bankHolderName": "Ravi Kumar",
+    "bankAccountNo": "XXXXXXXXXX6280", "bankLinkedAt": "...", "panNumber": "XXXXXX234C",
+    "isSuspended": false, "suspendedAt": null, "suspendReason": null,
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "assignedLeads": [
+      { "id": "64lead...", "status": "CLOSED", "buyerName": "Suresh Mehta", "createdAt": "...", "property": { "title": "...", "slug": "..." } }
+    ],
+    "properties": [
+      { "id": "64prop...", "title": "...", "slug": "...", "publishStatus": "APPROVED", "price": 8500000, "city": "Pune", "createdAt": "..." }
+    ],
+    "metrics": { "totalLeads": 12, "closedLeads": 3, "droppedLeads": 1, "totalListings": 8, "activeListings": 6 }
   }
 }
 ```
+
+`bankAccountNo`/`panNumber` are tail-masked (same `maskPayout` helper `GET /api/admin/payout-accounts` uses, reused rather than a second copy of the masking rule). `assignedLeads`/`properties` are capped at 10, newest first — not the full history.
 
 **Errors:** `404` partner not found.
 
@@ -7002,6 +7042,65 @@ Real aggregate figures over the whole table — not sampled from whichever page 
 ```
 
 `avgHoldDays` is the average of `releasedAt - createdAt` (in days) across all `RELEASED` transactions. `heldSum`/`heldCount` include `HELD_PAYOUT_FAILED` — that money hasn't left the account either, it's just stuck on a failed payout attempt; `payoutFailedCount` is what surfaces that it needs attention. The `*ThisMonth` figures are calendar-month-to-date.
+
+---
+
+### GET /api/admin/escrow/fees-due
+
+Owner success fees (R26) that have been invoiced but not yet collected — the "chase these for payment" list.
+
+**Auth:** ADMIN
+
+**Query Parameters:** `page`, `limit` — standard pagination.
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "items": [
+      {
+        "id": "64lead...",
+        "refCode": "RD-0042",
+        "buyerName": "Asha Rao",
+        "commissionStatus": "INVOICED",
+        "feePct": 2.5,
+        "dealPriceAtLock": 8500000,
+        "commissionAmountPaise": 21250000,
+        "invoiceUrl": "https://...",
+        "invoicedAt": "...",
+        "property": { "id": "64prop...", "title": "...", "partnerId": "64ptr...", "partner": { "name": "...", "companyName": "..." } },
+        "feeReminders": [{ "id": "64rem...", "sentByAdminId": "64adm...", "createdAt": "..." }]
+      }
+    ],
+    "total": 1, "page": 1, "limit": 20
+  }
+}
+```
+
+Ordered oldest-invoiced-first. `feeReminders` is the full reminder history for that lead, newest first — not just whether one was ever sent.
+
+---
+
+### POST /api/admin/escrow/fees-due/:id/remind
+
+Send a payment reminder to the property owner for a lead's invoiced success fee. `:id` is the lead ID.
+
+**Auth:** ADMIN
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "Reminder sent",
+  "data": { "id": "64rem...", "leadId": "64lead...", "sentByAdminId": "64adm...", "createdAt": "..." }
+}
+```
+
+Notifies the property owner (category `FEES`). **Errors:** `404` lead not found · `400` commission status isn't `INVOICED` (nothing to chase) or the lead has no resolvable property owner.
 
 ---
 
@@ -7330,6 +7429,50 @@ A user can also set this at raise time (`POST /api/user/tickets`'s optional
 **Request Body:** `{ "leadId": "64lead..." }`
 
 **Errors:** `404` ticket or lead not found.
+
+---
+
+### GET /api/admin/tickets/:id/comments
+
+Admin side of the same comment thread the user sees on `GET /api/user/tickets/:id/comments` — one thread, two sides, not a parallel admin-only thread. No ownership scope: admin can read any ticket's thread.
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    { "id": "64cmt...", "ticketId": "64tkt...", "authorId": "64usr...", "authorRole": "USER", "text": "Any update on this?", "photos": [], "createdAt": "..." }
+  ]
+}
+```
+
+**Errors:** `404` ticket not found.
+
+---
+
+### POST /api/admin/tickets/:id/comments
+
+Reply on a ticket's thread as admin.
+
+**Auth:** ADMIN
+
+**Request Body:** same shape as the user-facing version — `{ "text": "...", "photos": [] }`.
+
+**Response `201`:**
+
+```json
+{
+  "success": true,
+  "message": "Comment posted",
+  "data": { "id": "64cmt...", "ticketId": "64tkt...", "authorId": "64adm...", "authorRole": "ADMIN", "text": "...", "photos": [], "createdAt": "..." }
+}
+```
+
+Notifies the ticket's owner (category `SERVICES`). **Errors:** `404` ticket not found.
 
 ---
 

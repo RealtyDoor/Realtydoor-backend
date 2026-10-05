@@ -32,6 +32,9 @@ const {
   adminResolveDisputeSchema,
   moderateReviewSchema,
 } = require('./admin.validator');
+// backend-work-still-open.md #9 — same shape the user-side ticket comment
+// endpoint already validates against; reused rather than duplicated.
+const { ticketCommentSchema } = require('../users/users.validator');
 const disputeService = require('../disputes/disputes.service');
 const reviewService  = require('../reviews/reviews.service');
 const configService  = require('../config/config.service');
@@ -376,6 +379,22 @@ async function linkTicketToDeal(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// backend-work-still-open.md #9
+async function getTicketComments(req, res, next) {
+  try {
+    const comments = await service.getAdminTicketComments(req.params.id);
+    success(res, comments);
+  } catch (err) { next(err); }
+}
+
+async function addTicketComment(req, res, next) {
+  try {
+    const data = ticketCommentSchema.parse(req.body);
+    const comment = await service.addAdminTicketComment(req.params.id, req.user.id, data);
+    created(res, comment, 'Comment posted');
+  } catch (err) { next(err); }
+}
+
 async function getPropertyById(req, res, next) {
   try {
     const property = await service.getPropertyByIdAdmin(req.params.id);
@@ -668,7 +687,7 @@ module.exports = {
   getPendingKyc, verifyKyc, autoVerifyKyc,
   getRevenue, getAuditLogs, getPartnerMetrics,
   getTickets, getTicket, updateTicket, getTicketStats,
-  dispatchTicket, resolveTicket, linkTicketToDeal,
+  dispatchTicket, resolveTicket, linkTicketToDeal, getTicketComments, addTicketComment,
   getLoans, updateLoanStatus, getLoanBankStats,
   getUsers, changeUserRole, getUserById, suspendUser,
   listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,

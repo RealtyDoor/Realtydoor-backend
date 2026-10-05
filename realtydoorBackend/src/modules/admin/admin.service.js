@@ -84,6 +84,11 @@ async function getAllLeads(filters, skip, limit) {
       include: {
         property: { select: { title: true, slug: true, city: true } },
         assignedPartner: { select: { name: true, email: true } },
+        // backend-work-still-open.md #4 — the partner-added leads page
+        // needs to show who added each one, distinct from assignedPartner
+        // (who it's currently assigned to — often the same partner, but
+        // not always, e.g. once admin reassigns it).
+        addedByPartner: { select: { name: true, companyName: true } },
         buyer: ADMIN_LEAD_BUYER_INCLUDE,
       },
     }),
@@ -153,6 +158,10 @@ async function createLead(data, adminId, ip) {
       budget: data.budget,
       propertyId: data.propertyId ?? null,
       propertyInterest: data.propertyInterest,
+      // backend-work-still-open.md #3 — only meaningful (and only required
+      // by the validator) when there's no propertyId; a real listing's own
+      // city is always used instead once one exists.
+      city: data.propertyId ? null : data.city,
       source: data.source,
       addedByAdminId: adminId,
       // The validator only accepts the literal boolean true, so by the time
@@ -182,26 +191,41 @@ async function createLead(data, adminId, ip) {
     ipAddress: ip,
   });
 
-  // docs-backend-gaps-handoff.md #4 — "the lock fires on assignment, not on
-  // creation". Taken as: pre-fill (not lock) happens the moment a lead
-  // becomes ASSIGNED, here or in assignLead below, so terms are populated and
-  // ready by the time anyone looks — admin still locks deliberately,
-  // separately, since pre-filled terms are meant to stay editable until then.
-  // Only possible with a real property to resolve a rate card against; an
-  // admin-logged lead can be propertyInterest-only. A pre-fill failure must
-  // never undo an assignment that already succeeded.
-  if (partner && lead.propertyId) {
+  // docs-backend-gaps-handoff.md #4 / backend-work-still-open.md #2 — terms
+  // are now pre-filled AND locked the moment a lead becomes ASSIGNED, here
+  // or in assignLead below (see prefillCommissionTermsSafely). Previously
+  // gated on lead.propertyId — a real listing to resolve a rate card
+  // against — but #3's lead.city now gives a free-text-only lead a city to
+  // look up a rate card by too, so that gate is gone; resolveRateCard
+  // falls through to the platform default if neither ever resolves a card,
+  // same as it always has. A pre-fill/lock failure must never undo an
+  // assignment that already succeeded.
+  if (partner) {
     await prefillCommissionTermsSafely(lead.id, adminId, ip);
   }
 
   return lead;
 }
 
+// backend-work-still-open.md #2 — reverses the earlier "pre-fill only,
+// admin locks separately and deliberately" decision: terms are now locked
+// the moment a lead is assigned, not left editable. Still entirely
+// best-effort — a pre-fill or lock failure (e.g. no rate card resolves, or
+// the resolved lines don't clear setLeadTerms' own validation) must never
+// undo an assignment that already succeeded; it's logged for admin to
+// finish manually via the existing prefill/lock endpoints instead.
 async function prefillCommissionTermsSafely(leadId, adminId, ip) {
+  const commissionService = require('../commission/commission.service');
   try {
-    await require('../commission/commission.service').prefillLeadTerms(leadId, adminId, ip);
+    await commissionService.prefillLeadTerms(leadId, adminId, ip);
   } catch (err) {
     logger.error('[prefillCommissionTermsSafely] pre-fill failed', { leadId, error: err.message });
+    return;
+  }
+  try {
+    await commissionService.lockLeadTerms(leadId, adminId, ip);
+  } catch (err) {
+    logger.error('[prefillCommissionTermsSafely] auto-lock failed', { leadId, error: err.message });
   }
 }
 
@@ -389,9 +413,16 @@ async function assignLead(leadId, partnerId, adminId, ip) {
     ipAddress: ip,
   });
 
+  // backend-work-still-open.md #3 — a free-text (propertyInterest-only)
+  // lead has no property relation at all; this unconditionally read
+  // lead.property.title, which threw as soon as such a lead could reach
+  // this function (previously it couldn't get this far with a resolvable
+  // rate card, but assignLead itself never actually required a property).
+  const propertyLabel = lead.property?.title || lead.propertyInterest || 'their inquiry';
+
   // Partner: WhatsApp + email
   sendLeadAssignedNotice(partner.phone, partner.name).catch(() => {});
-  sendLeadAssigned(partner.email, { buyerName: lead.buyerName, propertyTitle: lead.property.title }).catch(() => {});
+  sendLeadAssigned(partner.email, { buyerName: lead.buyerName, propertyTitle: propertyLabel }).catch(() => {});
 
   // Buyer: in-app notification (if registered) + email. Never the partner's
   // phone — "Contact agent" always dials the shared telecaller number
@@ -401,12 +432,12 @@ async function assignLead(leadId, partnerId, adminId, ip) {
     await createNotification({
       userId: lead.buyerId,
       title: 'Your Inquiry is Being Processed',
-      message: `Your inquiry ${lead.refCode} for "${lead.property.title}" has been assigned to ${partner.companyName || partner.name}. Use Contact agent to reach our team.`,
+      message: `Your inquiry ${lead.refCode} for "${propertyLabel}" has been assigned to ${partner.companyName || partner.name}. Use Contact agent to reach our team.`,
       type: 'LEAD_ASSIGNED',
       linkUrl: `/user/inquiries/${leadId}`,
     });
   }
-  sendLeadInquiryConfirmed(lead.buyerEmail, lead.property.title).catch(() => {});
+  sendLeadInquiryConfirmed(lead.buyerEmail, propertyLabel).catch(() => {});
 
   // docs-backend-gaps-handoff.md #4 — pre-fill commission terms the moment a
   // lead becomes ASSIGNED here, same as createLead's own assign-at-creation
@@ -1542,6 +1573,35 @@ async function linkTicketToDeal(ticketId, leadId, adminId, ip) {
   return updated;
 }
 
+// backend-work-still-open.md #9 — the admin side of the same thread the
+// user already sees, not a separate admin-only one. No userId scope (admin
+// can read/reply on any ticket); the user-facing
+// GET/POST /user/tickets/:id/comments stay USER-only, unchanged.
+async function getAdminTicketComments(ticketId) {
+  const ticket = await prisma.serviceTicket.findUnique({ where: { id: ticketId } });
+  if (!ticket) throw new ApiError(404, 'Ticket not found');
+  return prisma.ticketComment.findMany({ where: { ticketId }, orderBy: { createdAt: 'asc' } });
+}
+
+async function addAdminTicketComment(ticketId, adminId, { text, photos }) {
+  const ticket = await prisma.serviceTicket.findUnique({ where: { id: ticketId } });
+  if (!ticket) throw new ApiError(404, 'Ticket not found');
+
+  const comment = await prisma.ticketComment.create({
+    data: { ticketId, authorId: adminId, authorRole: 'ADMIN', text, photos: photos || [] },
+  });
+
+  await createNotification({
+    userId: ticket.userId,
+    title: 'New reply on your ticket',
+    message: `${text.slice(0, 150)}${text.length > 150 ? '…' : ''}`,
+    type: 'TICKET_ADMIN_REPLY',
+    linkUrl: `/user/tickets/${ticketId}`,
+  });
+
+  return comment;
+}
+
 // ─── AUDIT LOGS ──────────────────────────────────────────────────────────────
 
 async function getAuditLogs(filters, skip, limit) {
@@ -1564,14 +1624,6 @@ async function getAuditLogs(filters, skip, limit) {
 }
 
 // ─── PARTNER DRILL-DOWN ───────────────────────────────────────────────────────
-
-// Account number and PAN are masked before returning — an admin partner page
-// doesn't need the full values, and this payload is easy to copy out.
-function maskPartnerPayout(p) {
-  if (!p) return p;
-  const tail = (v, keep = 4) => (v ? `${'X'.repeat(Math.max(0, String(v).length - keep))}${String(v).slice(-keep)}` : v);
-  return { ...p, bankAccountNo: tail(p.bankAccountNo), panNumber: tail(p.panNumber) };
-}
 
 async function getPartnerById(partnerId) {
   const partner = await prisma.user.findFirst({
@@ -1620,7 +1672,11 @@ async function getPartnerById(partnerId) {
   ]);
 
   return {
-    ...maskPartnerPayout(partner),
+    // Account number and PAN are masked before returning — an admin
+    // partner page doesn't need the full values, and this payload is easy
+    // to copy out. Reuses partners.service.js's maskPayout rather than a
+    // second, separately-maintained copy of the same masking logic.
+    ...partnerService.maskPayout(partner),
     metrics: { totalLeads, closedLeads, droppedLeads, totalListings, activeListings },
   };
 }
@@ -1666,6 +1722,10 @@ async function getPartnerMetrics(skip, limit) {
       skip, take: limit,
       select: {
         id: true, name: true, companyName: true, partnerSubType: true,
+        // backend-work-still-open.md #12 — the suspend/unsuspend button on
+        // this list needs to know the current state to render correctly;
+        // it was never selected here.
+        isSuspended: true,
         assignedLeads: { select: { status: true } },
         properties:    { select: { publishStatus: true } },
       },
@@ -1676,6 +1736,7 @@ async function getPartnerMetrics(skip, limit) {
 
   const data = partners.map((p) => ({
     id: p.id, name: p.name, companyName: p.companyName, partnerSubType: p.partnerSubType,
+    isSuspended: p.isSuspended,
     totalLeads:    p.assignedLeads.length,
     closedLeads:   p.assignedLeads.filter((l) => l.status === 'CLOSED').length,
     totalListings: p.properties.length,
@@ -1745,6 +1806,10 @@ async function getKycByUserId(userId) {
       id: true, name: true, email: true, companyName: true, partnerSubType: true,
       kycStatus: true, kycDocumentUrls: true, kycRejectionNote: true, kycVerifiedAt: true,
       createdAt: true,
+      // backend-work-still-open.md #12 — the admin screen shows what was
+      // requested, and by when, while a document request is still open;
+      // selected on the list (getPendingKyc) but never here on the detail.
+      kycRequestedDocuments: true, kycRequestedNote: true, kycRequestedAt: true, kycRequestedDueAt: true,
       panNumber: true, panVerificationStatus: true, panVerifiedName: true, panVerifiedAt: true,
       gstin: true, gstinVerificationStatus: true, gstinVerifiedName: true, gstinVerifiedAt: true,
       reraNumber: true, reraVerificationStatus: true, reraVerifiedName: true, reraVerifiedAt: true,
@@ -1887,7 +1952,7 @@ module.exports = {
   getRevenueSummary,
   getAuditLogs,
   getAllTickets, getTicketById, updateTicketStatus, getTicketStats,
-  dispatchTicket, resolveTicket, linkTicketToDeal,
+  dispatchTicket, resolveTicket, linkTicketToDeal, getAdminTicketComments, addAdminTicketComment,
   getAllLoans, updateLoanStatus, getLoanBankStats,
   getAllUsers, changeUserRole, suspendUser,
   listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,

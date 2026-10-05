@@ -1,0 +1,17 @@
+// ─── FEE REMINDER ─────────────────────────────────────────────────────────────
+// backend-work-still-open.md #5 — reminder history for a Lead's owner
+// success-fee (R26, commission.prisma) while it's INVOICED but not yet
+// COLLECTED. A separate model rather than a field on Lead: a fee can
+// reasonably be reminded more than once, and "when was each reminder sent,
+// by whom" is itself the thing the admin screen needs to show, not just
+// the latest one.
+
+model FeeReminder {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  leadId        String   @db.ObjectId
+  lead          Lead     @relation(fields: [leadId], references: [id])
+  sentByAdminId String   @db.ObjectId
+  createdAt     DateTime @default(now())
+
+  @@index([leadId])
+}

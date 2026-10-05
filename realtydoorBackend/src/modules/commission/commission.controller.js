@@ -120,6 +120,22 @@ async function disputeLeadCommission(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// backend-work-still-open.md #5
+async function listFeesDue(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const { data, total } = await service.listFeesDue(skip, limit);
+    success(res, paginate(data, total, page, limit));
+  } catch (err) { next(err); }
+}
+
+async function sendFeeReminder(req, res, next) {
+  try {
+    const reminder = await service.sendFeeReminder(req.params.id, req.user.id, req.ip);
+    created(res, reminder, 'Reminder sent');
+  } catch (err) { next(err); }
+}
+
 // ─── B12.2 (partner) ─────────────────────────────────────────────────────────
 
 async function myRateCards(req, res, next) {
@@ -133,5 +149,6 @@ module.exports = {
   listOverrides, createOverride, revokeOverride,
   previewLeadTerms, getLeadTerms, prefillLeadTerms, setLeadTerms, lockLeadTerms, leadTermsHistory,
   invoiceLeadCommission, collectLeadCommission, disputeLeadCommission,
+  listFeesDue, sendFeeReminder,
   myRateCards,
 };

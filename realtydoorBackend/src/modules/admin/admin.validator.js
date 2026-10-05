@@ -14,6 +14,11 @@ const createLeadSchema = z.object({
   source:           z.enum(['PHONE', 'WALK_IN', 'REFERRAL', 'EMAIL', 'OTHER']),
   propertyId:       objectId.optional(),
   propertyInterest: z.string().max(300).optional(),
+  // backend-work-still-open.md #3 — required when propertyId is absent, so
+  // commission.service.js's rate-card resolution has a city to look up a
+  // city-level card against. Accepted but unused when propertyId IS given
+  // (the real listing's own city always wins there).
+  city:             z.string().min(2).max(100).optional(),
   budget:           z.string().max(100).optional(),
   note:             z.string().max(1000).optional(),
   partnerId:        objectId.optional(),
@@ -25,6 +30,9 @@ const createLeadSchema = z.object({
 }).refine((d) => d.propertyId || d.propertyInterest, {
   message: 'Provide either propertyId (a live listing) or propertyInterest (free text)',
   path: ['propertyId'],
+}).refine((d) => d.propertyId || d.city, {
+  message: 'city is required when propertyId is not given, so a rate card can be looked up',
+  path: ['city'],
 });
 
 const confirmLeadSchema = z.object({

@@ -390,7 +390,30 @@ async function listPayoutAccounts(filters, skip, limit) {
     }),
     prisma.user.count({ where }),
   ]);
-  return { data: rows.map(maskPayout), total };
+
+  // backend-work-still-open.md #6 — "balance held for that partner": the sum
+  // of their own escrowHeld, same figure getFinanceSummary already computes
+  // for a partner's own view, but batched for this page rather than one
+  // query per row. EscrowTransaction has no direct partner FK (only via
+  // lead.assignedPartnerId), so this can't be a groupBy — fetched once for
+  // the whole page and reduced in JS instead.
+  const partnerIds = rows.map((r) => r.id);
+  const heldEscrows = partnerIds.length
+    ? await prisma.escrowTransaction.findMany({
+        where: { status: 'HELD', lead: { assignedPartnerId: { in: partnerIds } } },
+        select: { amount: true, lead: { select: { assignedPartnerId: true } } },
+      })
+    : [];
+  const heldByPartnerId = new Map();
+  for (const e of heldEscrows) {
+    const pid = e.lead.assignedPartnerId;
+    heldByPartnerId.set(pid, (heldByPartnerId.get(pid) || 0) + e.amount);
+  }
+
+  return {
+    data: rows.map((r) => ({ ...maskPayout(r), balanceHeld: heldByPartnerId.get(r.id) || 0 })),
+    total,
+  };
 }
 
 async function createPayoutAccount(partnerId, data) {
@@ -613,7 +636,7 @@ module.exports = {
   getFinanceSummary, getRatings, listMyPayouts,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount, getBilling, updateBilling,
-  getPayoutAccount, createPayoutAccount, setPayoutAccountStatus, listPayoutAccounts,
+  getPayoutAccount, createPayoutAccount, setPayoutAccountStatus, listPayoutAccounts, maskPayout,
   getSupportTickets, getSupportTicketById, createSupportTicket,
   getPartnerAnalytics,
 };
