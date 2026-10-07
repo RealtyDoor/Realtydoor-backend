@@ -379,7 +379,15 @@ async function assignLead(leadId, partnerId, adminId, ip) {
     include: { property: { select: { title: true } } },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
-  if (lead.assignedPartnerId) throw new ApiError(409, 'Lead is already assigned to a partner');
+  // Dev feedback, 2026-10-07 — admin can reassign an already-assigned lead
+  // to a different partner (the original partner went unresponsive, the
+  // area shifted, etc.); this was previously a hard 409 with no escape
+  // hatch at all. Reassigning to the SAME partner is still refused — it's
+  // a no-op the UI shouldn't be sending, not a real reassignment.
+  const isReassign = !!lead.assignedPartnerId && lead.assignedPartnerId !== partnerId;
+  if (lead.assignedPartnerId === partnerId) {
+    throw new ApiError(409, 'Lead is already assigned to this partner');
+  }
   if (['CLOSED', 'DROPPED'].includes(lead.status)) {
     throw new ApiError(400, `Cannot assign a ${lead.status.toLowerCase()} lead`);
   }
@@ -394,22 +402,34 @@ async function assignLead(leadId, partnerId, adminId, ip) {
   const gateReason = await dataAckService.checkLeadDataHandlingGate(partnerId);
   if (gateReason) throw new ApiError(400, gateReason);
 
+  const previousPartnerId = lead.assignedPartnerId;
   const updated = await prisma.lead.update({
     where: { id: leadId },
     data: { assignedPartnerId: partnerId, status: 'ASSIGNED', assignedAt: new Date() },
   });
 
+  if (isReassign && previousPartnerId) {
+    await createNotification({
+      userId: previousPartnerId,
+      title: 'Lead reassigned',
+      message: `${lead.refCode || 'A lead'} has been reassigned to another partner.`,
+      type: 'LEAD_ASSIGNED',
+      linkUrl: `/partner/leads`,
+    });
+  }
+
   await createNotification({
     userId: partnerId,
-    title: 'New Lead Assigned',
-    message: `A new buyer lead has been assigned to you.`,
+    title: isReassign ? 'Lead Reassigned To You' : 'New Lead Assigned',
+    message: isReassign ? 'A lead has been reassigned to you.' : 'A new buyer lead has been assigned to you.',
     type: 'LEAD_ASSIGNED',
     linkUrl: `/partner/leads/${leadId}`,
   });
 
   await createAuditLog({
-    adminId, action: 'LEAD_ASSIGNED', targetType: 'Lead', targetId: leadId,
-    before: { status: lead.status }, after: { status: 'ASSIGNED', assignedPartnerId: partnerId },
+    adminId, action: isReassign ? 'LEAD_REASSIGNED' : 'LEAD_ASSIGNED', targetType: 'Lead', targetId: leadId,
+    before: { status: lead.status, assignedPartnerId: previousPartnerId },
+    after: { status: 'ASSIGNED', assignedPartnerId: partnerId },
     ipAddress: ip,
   });
 
@@ -442,7 +462,12 @@ async function assignLead(leadId, partnerId, adminId, ip) {
   // docs-backend-gaps-handoff.md #4 — pre-fill commission terms the moment a
   // lead becomes ASSIGNED here, same as createLead's own assign-at-creation
   // path above. Also locks them (backend-work-still-open.md #2) — see
-  // prefillCommissionTermsSafely.
+  // prefillCommissionTermsSafely. On a reassign where terms are already
+  // locked to the PREVIOUS partner, prefillLeadTerms refuses
+  // (COMMISSION_LOCKED) and that failure is logged and swallowed same as
+  // any other pre-fill failure — the reassignment itself still succeeds,
+  // and admin revises the now-stale terms by hand via the existing
+  // set-terms endpoint (writes a new version, same as any post-lock edit).
   await prefillCommissionTermsSafely(leadId, adminId, ip);
 
   return updated;
@@ -1892,14 +1917,24 @@ async function adminListDocuments(filters, skip, limit) {
   if (filters.status) where.status = filters.status;
   if (filters.documentType) where.documentType = filters.documentType;
 
-  const [data, total] = await Promise.all([
-    prisma.userDocument.findMany({
-      where, skip, take: limit,
-      orderBy: { uploadedAt: 'desc' },
-      include: { user: { select: { name: true, email: true, phone: true } } },
-    }),
+  // UserDocument.user is a required relation, but a row can still outlive
+  // the user it points to (e.g. a since-deleted account) — Mongo has no FK
+  // enforcement. include: { user } makes Prisma throw on the whole page the
+  // moment one such row is in it ("Field user is required to return data,
+  // got null instead"), not just that row — reported as GET
+  // /admin/documents 500ing once an orphaned row aged into the default
+  // page size. Loaded separately instead, so one dangling row degrades to
+  // user: null on just that row, not a 500 for the whole list.
+  const [docs, total] = await Promise.all([
+    prisma.userDocument.findMany({ where, skip, take: limit, orderBy: { uploadedAt: 'desc' } }),
     prisma.userDocument.count({ where }),
   ]);
+  const userIds = [...new Set(docs.map((d) => d.userId))];
+  const users = userIds.length
+    ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true, phone: true } })
+    : [];
+  const byId = new Map(users.map((u) => [u.id, { name: u.name, email: u.email, phone: u.phone }]));
+  const data = docs.map((d) => ({ ...d, user: byId.get(d.userId) ?? null }));
   return { data, total };
 }
 

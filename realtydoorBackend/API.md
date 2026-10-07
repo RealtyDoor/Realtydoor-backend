@@ -4214,7 +4214,8 @@ Admin rejects a partner-added lead outright. Sets `status: DROPPED` with the rea
 
 ### PATCH /api/admin/leads/:id/assign
 
-Assign lead to a KYC-verified partner.
+Assign a lead to a KYC-verified partner — or **reassign** it, if it's
+already assigned to someone else.
 
 **Auth:** ADMIN
 
@@ -4230,15 +4231,31 @@ Assign lead to a KYC-verified partner.
 }
 ```
 
+**Reassignment (2026-10-07):** passing a `partnerId` different from the
+lead's current `assignedPartnerId` reassigns it — the previous partner is
+notified (`LEAD_ASSIGNED`, "Lead reassigned") and the new one is notified
+as usual, and the audit log action is `LEAD_REASSIGNED` (`before`/`after`
+both carry `assignedPartnerId`) instead of `LEAD_ASSIGNED`. Passing the
+**same** `partnerId` the lead is already assigned to is refused — a no-op
+the UI shouldn't be sending, not a real reassignment.
+
 Also sends the buyer an in-app `LEAD_ASSIGNED` notification (`linkUrl: /user/inquiries/:leadId`) naming the partner by `companyName`/`name` only — the partner's phone is never included, in the message or anywhere else the buyer can see. The buyer's own lead detail (`GET /api/user/leads/:id`) likewise never exposes `assignedPartner.phone`; the frontend's "Contact agent" action should dial the shared number from `GET /api/config/public`'s `telecaller_phone` instead.
 
 **Also pre-fills and locks commission terms**, same as `POST /api/admin/leads` with a
 `partnerId` above — populated and locked, not left editable; a pre-fill or
 lock failure is logged and swallowed rather than undoing the assignment.
-`POST /api/admin/leads/:id/auto-assign` and the batch form both call this
-function internally, so they get the same pre-fill-and-lock for free.
+**On a reassign where terms are already locked to the previous partner**,
+the pre-fill refuses (`COMMISSION_LOCKED`) and that failure is swallowed
+the same way — the reassignment itself still succeeds, but the now-stale
+terms (still naming the previous partner) are left for admin to revise by
+hand via `PUT .../commission` (writes a new version, same as any
+post-lock edit). `POST /api/admin/leads/:id/auto-assign` and the batch
+form both call this function internally, so they get the same
+pre-fill-and-lock for free — but auto-assign itself still refuses an
+already-assigned lead outright (reassignment is a deliberate admin
+action, not something the auto-picker does).
 
-**Errors:** `404` lead not found · `400` partner not found or not KYC verified.
+**Errors:** `404` lead not found · `400` partner not found or not KYC verified · `409` already assigned to this same partner.
 
 ---
 ## Auto-assign leads
@@ -8156,6 +8173,16 @@ All user documents (paginated). Filter by status or userId.
   }
 }
 ```
+
+**Fixed 2026-10-07 — this used to 500 once an orphaned row aged onto a
+page.** `UserDocument.user` is a required relation, but Mongo doesn't
+enforce it — a row can outlive the account it points to (e.g. a deleted
+user). The previous implementation used `include: { user }`, and Prisma
+throws on the whole query the moment one such row is in the result set
+("Field user is required to return data, got `null` instead"), not just
+that row. Users are now loaded separately and merged in; a row whose user
+no longer exists comes back with `"user": null` instead of breaking the
+page.
 
 ---
 
