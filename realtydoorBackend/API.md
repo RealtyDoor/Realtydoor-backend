@@ -1183,13 +1183,23 @@ Single lead detail. Full property record included.
     "isOtpVerified": false,
     "siteVisitScheduledAt": null,
     "visitNotes": null,
+    "partnerNotes": null,
     "visitPhotoUrls": [],
     "closureDocumentUrls": [],
+    "closingPrice": null,
     "property": { ... },
-    "createdAt": "2024-01-15T10:00:00.000Z"
+    "createdAt": "2024-01-15T10:00:00.000Z",
+    "updatedAt": "2024-01-15T10:00:00.000Z"
   }
 }
 ```
+
+**Added 2026-10-07 — `partnerNotes`, `closingPrice`, `updatedAt` were
+already in the real response but missing from this example.**
+`partnerNotes` is the partner's own free-text notes on the lead (distinct
+from admin-internal `adminNotes`, which is never included here regardless
+of OTP state). `closingPrice` is set once the partner marks the deal
+closed (`PATCH .../close`); `null` until then.
 
 `buyerPhone` and `buyerEmail` are both unmasked once `isOtpVerified` is `true`, masked before that.  
 **Errors:** `404` not found or not assigned to this partner.
@@ -3730,6 +3740,8 @@ Public point-lookup for a city + locality pair. Both params are required. Return
     "id": "64loc...",
     "city": "Pune",
     "locality": "Baner",
+    "citySlug": "pune",
+    "localitySlug": "baner",
     "avgPricePerSqftPaise": 2500000,
     "minPricePerSqftPaise": 2200000,
     "maxPricePerSqftPaise": 2800000,
@@ -3737,11 +3749,42 @@ Public point-lookup for a city + locality pair. Both params are required. Return
     "priceChangeLastMonthPct": 8.5,
     "nearbyInfra": ["Metro", "Highway"],
     "subtitle": "Prime residential locality...",
+    "localityScore": null,
+    "marketStage": null,
+    "rentalDemand": null,
+    "infrastructureStrength": null,
+    "bestFor": [],
+    "medianPricePaise": null,
+    "medianPricePropertyType": null,
+    "avgRentYieldPct": null,
+    "priceTrends": null,
+    "propertyMix": null,
+    "microMarkets": null,
+    "keyInfrastructure": null,
+    "connectivity": null,
+    "infrastructureProjects": null,
+    "prosAndCons": null,
+    "investmentScore": null,
+    "buyVsRent": null,
+    "faqs": null,
     "dataAsOfDate": "2024-01-15T00:00:00.000Z",
+    "updatedByAdminId": "64admin...",
+    "createdAt": "2024-01-01T00:00:00.000Z",
     "updatedAt": "2024-01-15T00:00:00.000Z"
   }
 }
 ```
+
+**Corrected 2026-10-07 — this is now the actual full record** (the
+endpoint returns the raw `LocalityInsight` row with no field selection,
+so every field on the Prisma model comes through). The example previously
+showed only the core price-panel fields; everything from `localityScore`
+down through `faqs` is the admin-curated market-intelligence section
+(`/admin/cms/locality-insights`), all `null` until an admin fills it in
+for that city/locality. `priceTrends`/`propertyMix`/`microMarkets`/
+`keyInfrastructure`/`connectivity`/`infrastructureProjects`/
+`prosAndCons`/`investmentScore`/`buyVsRent`/`faqs` are free-form JSON —
+see `prisma/schema/locality.prisma` for each one's expected inner shape.
 
 Money fields are in **paise** (₹1 = 100 paise). `dataAsOfDate`/`updatedAt` reflect the last admin refresh (monthly cadence).
 

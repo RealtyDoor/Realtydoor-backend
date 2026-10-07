@@ -29,20 +29,28 @@ async function getMyDisputes(userId) {
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
 
+// Dev feedback, 2026-10-07 — Dispute.user is a required relation, but a
+// dispute can outlive the user it was filed by (Mongo has no FK
+// enforcement). include: { user } made admin.service.js's
+// adminListDocuments throw on a whole page over exactly this shape; same
+// risk here even though nothing's actually orphaned today. User loaded
+// separately so one dangling row degrades to user: null, not a 500.
 async function adminListDisputes(filters, skip, limit) {
   const where = {};
   if (filters.status) where.status = filters.status;
   if (filters.type)   where.type   = filters.type;
   if (filters.userId) where.userId = filters.userId;
 
-  const [data, total] = await Promise.all([
-    prisma.dispute.findMany({
-      where, skip, take: limit,
-      orderBy: { createdAt: 'desc' },
-      include: { user: { select: { id: true, name: true, email: true, phone: true } } },
-    }),
+  const [disputes, total] = await Promise.all([
+    prisma.dispute.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
     prisma.dispute.count({ where }),
   ]);
+  const userIds = [...new Set(disputes.map((d) => d.userId))];
+  const users = userIds.length
+    ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true, phone: true } })
+    : [];
+  const byId = new Map(users.map((u) => [u.id, u]));
+  const data = disputes.map((d) => ({ ...d, user: byId.get(d.userId) ?? null }));
   return { data, total };
 }
 

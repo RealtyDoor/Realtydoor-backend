@@ -45,11 +45,17 @@ const COMMISSION_INTERNAL_LEAD_FIELDS = [
 // Internal-only fields a buyer never needs: admin/partner free-text notes,
 // OTP attempt bookkeeping, and the full commission/drop-request workflow
 // state. siteVisitOTP is deliberately kept — the buyer is the one who reads
-// it out to the partner at the site-visit gate.
+// it out to the partner at the site-visit gate. contactRevealedByPartnerId
+// completes the contact-reveal audit trail alongside contactRevealedIp
+// above — a raw partner user id with no purpose on the buyer's own read of
+// their own lead (not added to COMMISSION_INTERNAL_LEAD_FIELDS/shared with
+// the partner sanitizer: it's usually the partner's OWN id, harmless for
+// them to see back).
 const BUYER_HIDDEN_LEAD_FIELDS = [
   'adminNotes', 'partnerNotes', 'visitNotes', 'otpAttempts',
   ...COMMISSION_INTERNAL_LEAD_FIELDS,
   'dropRequestedByPartner', 'dropRequestNote', 'dropRequestedAt', 'droppedReason', 'droppedAt', 'droppedByAdminId',
+  'contactRevealedByPartnerId',
 ];
 
 function sanitizeLeadForBuyer(lead) {
