@@ -48,7 +48,13 @@ function flattenBuyerInquiryCount(lead) {
   // 6.9 — the lead monitor's stalled column was computed client-side from row
   // age over a 50-row sample; this is the real per-lead value.
   const stalled = stalledInfoFor(lead);
-  if (!lead.buyer) return { ...lead, ...stalled };
+  // Dev feedback, 2026-10-07 — inquiryCount was silently absent from the
+  // response shape whenever a lead has no linked buyer account (admin-
+  // created/free-text leads, legacy pre-buyerId rows — a majority of real
+  // rows, not an edge case), which an API consumer reasonably reads as a
+  // missing field rather than "zero, there's no buyer to count for."
+  // Always present now, 0 when there's nothing to count.
+  if (!lead.buyer) return { ...lead, inquiryCount: 0, ...stalled };
   const { _count, ...buyer } = lead.buyer;
   return { ...lead, buyer, inquiryCount: _count?.buyerLeads ?? 0, ...stalled };
 }

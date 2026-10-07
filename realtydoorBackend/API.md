@@ -1655,22 +1655,35 @@ All properties the user has saved.
   "message": "Success",
   "data": [
     {
-      "id": "64fav...",
-      "propertyId": "64prop...",
-      "createdAt": "2024-01-12T00:00:00.000Z",
-      "property": {
-        "title": "3 BHK Flat in Baner",
-        "slug": "3-bhk-flat-in-baner-...",
-        "city": "Pune",
-        "price": 8500000,
-        "images": ["https://cdn.realtydoor.in/prop1.jpg"],
-        "facing": "East",
-        "furnishing": "Semi-Furnished"
-      }
+      "id": "64prop...",
+      "title": "3 BHK Flat in Baner",
+      "slug": "3-bhk-flat-in-baner-...",
+      "price": 8500000,
+      "monthlyRent": null,
+      "propertyType": "FLAT",
+      "listingType": "SALE",
+      "bhk": 3,
+      "locality": "Baner",
+      "city": "Pune",
+      "images": ["https://cdn.realtydoor.in/prop1.jpg"],
+      "coverImageIndex": 0,
+      "isVerified": true,
+      "publishStatus": "APPROVED",
+      "facing": "East",
+      "furnishing": "Semi-Furnished",
+      "favoritedAt": "2024-01-12T00:00:00.000Z"
     }
   ]
 }
 ```
+
+**Corrected 2026-10-07 — previously documented a nested shape
+(`{id, propertyId, createdAt, property: {...}}`) that doesn't match the
+real response.** Each row is the **property's own fields flattened to the
+top level** (`id` here is the *property's* id, not a favorite-row id —
+there's no separate favorite id in the response at all) plus
+`favoritedAt` (when it was saved, not `createdAt`). There is no nested
+`property` key and no `propertyId` field.
 
 ---
 

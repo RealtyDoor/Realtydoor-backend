@@ -26,13 +26,29 @@ function startOfTodayIST() {
   return new Date(istMidnightAsUtc - IST_OFFSET_MS);
 }
 
+// Dev feedback, 2026-10-07 — shared by both the buyer- and partner-facing
+// sanitizers below. These are the lead's commission/owner-invoice bookkeeping
+// (the assigned partner's OWN commission view is a separate, deliberately
+// narrow endpoint — commission.service.js's getPartnerRateCards, "the
+// platform's cut is not their business") and the contact-reveal audit trail
+// (contactRevealedIp — security metadata, not something either a buyer or a
+// partner has any reason to see). Neither sanitizer hid any of this before;
+// sanitizeLeadForPartner in particular let every one of these straight
+// through, undermining getPartnerRateCards' whole point of showing a partner
+// only their own slice.
+const COMMISSION_INTERNAL_LEAD_FIELDS = [
+  'feePct', 'dealPriceAtLock', 'commissionLockedAt', 'commissionVersion', 'rateCardId', 'rateCardVersion',
+  'platformCommissionPct', 'commissionAmountPaise', 'commissionStatus', 'invoiceUrl', 'invoicedAt', 'collectedAt',
+  'contactRevealedIp',
+];
+
 // Internal-only fields a buyer never needs: admin/partner free-text notes,
 // OTP attempt bookkeeping, and the full commission/drop-request workflow
 // state. siteVisitOTP is deliberately kept — the buyer is the one who reads
 // it out to the partner at the site-visit gate.
 const BUYER_HIDDEN_LEAD_FIELDS = [
   'adminNotes', 'partnerNotes', 'visitNotes', 'otpAttempts',
-  'platformCommissionPct', 'commissionAmountPaise', 'commissionStatus', 'invoiceUrl', 'invoicedAt', 'collectedAt',
+  ...COMMISSION_INTERNAL_LEAD_FIELDS,
   'dropRequestedByPartner', 'dropRequestNote', 'dropRequestedAt', 'droppedReason', 'droppedAt', 'droppedByAdminId',
 ];
 
@@ -200,7 +216,7 @@ async function partnerAddLead(partnerId, data) {
 // never existed.
 function sanitizeLeadForPartner(lead) {
   const { buyer, ...rest } = lead;
-  return {
+  const clean = {
     ...rest,
     buyerPhone: formatContact(lead.buyerPhone, lead.isOtpVerified, maskPhone),
     buyerEmail: formatContact(lead.buyerEmail, lead.isOtpVerified, maskEmail),
@@ -209,6 +225,11 @@ function sanitizeLeadForPartner(lead) {
     siteVisitOTP: undefined, // never expose OTP in response
     adminNotes: undefined, // admin-internal, never expose to partner
   };
+  // Dev feedback, 2026-10-07 — see COMMISSION_INTERNAL_LEAD_FIELDS above.
+  // This assigned partner's own commission view is getPartnerRateCards, not
+  // the raw lead record.
+  for (const field of COMMISSION_INTERNAL_LEAD_FIELDS) delete clean[field];
+  return clean;
 }
 
 const PARTNER_LEAD_BUYER_SELECT = { select: { refCode: true, phoneVerified: true } };
