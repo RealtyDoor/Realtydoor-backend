@@ -86,7 +86,7 @@ async function createOrder(leadId, buyerId, amountInRupees) {
   // used elsewhere (e.g. an ADVISOR flat amount needing a known fee).
   const dealPrice = lead.dealPriceAtLock ?? lead.property?.price ?? null;
   if (dealPrice) {
-    const maxPct = await getConfigNumber('escrow_max_pct_of_price', DEFAULT_MAX_ESCROW_PCT);
+    const maxPct = await getConfigNumber('escrow_max_token_pct', DEFAULT_MAX_ESCROW_PCT);
     const maxAmount = round2((dealPrice * maxPct) / 100);
     if (amountInRupees > maxAmount) {
       throw new ApiError(400, `Maximum escrow amount is ₹${maxAmount.toLocaleString('en-IN')} (${maxPct}% of the deal price)`);

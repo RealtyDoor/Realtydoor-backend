@@ -79,12 +79,17 @@ async function sendEscrowPaymentFailed(email) {
   });
 }
 
-async function sendLoanStatusUpdate(email, status, note) {
+async function sendLoanStatusUpdate(email, status, note, loanId) {
   const readableStatus = status.replace(/_/g, ' ');
+  // Dev feedback, 2026-10-08 (L5) — "Log in to your dashboard" named no
+  // actual page; same /dashboard/loan stale-route problem as the
+  // in-app notification, just pointed to nothing clickable at all.
+  const path = status === 'SANCTIONED' && loanId ? `/user/loans/sanctioned?id=${loanId}` : '/user/loans';
+  const link = `${process.env.FRONTEND_URL}${path}`;
   return send({
     to: email,
     subject: `Loan Application Update — ${readableStatus}`,
-    html: `<p>Your loan application status has been updated to <strong>${readableStatus}</strong>.${note ? ` Admin note: <em>${note}</em>.` : ''} Log in to your dashboard for full details.</p>`,
+    html: `<p>Your loan application status has been updated to <strong>${readableStatus}</strong>.${note ? ` Admin note: <em>${note}</em>.` : ''} <a href="${link}">View your loan application</a> for full details.</p>`,
   });
 }
 

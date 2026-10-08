@@ -15,15 +15,20 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 const SEEDS = [
+  // P3 — public: the frontend's token-amount form reads this (and
+  // escrow_min_amount_rupees, made public separately in prisma/seed.js)
+  // from GET /config/public instead of hardcoding 50000/10%.
   {
-    key: 'escrow_max_pct_of_price',
+    key: 'escrow_max_token_pct',
     value: '10',
-    description: 'Maximum escrow (token advance) amount, as a % of the deal price (dealPriceAtLock, else the listing price). Dev feedback 2026-10-08.',
+    description: 'Maximum token advance, as a % of the deal/listing price',
+    isPublic: true,
   },
   {
     key: 'escrow_refund_protection_fee_pct',
     value: '0',
     description: '"Refund protection fee" shown at checkout, as a % of the escrow amount. Default 0 — genuinely free today, not a placeholder. Dev feedback 2026-10-08.',
+    isPublic: false,
   },
 ];
 
@@ -34,7 +39,7 @@ async function run() {
       console.log(`Skipped ${seed.key} — already exists (value: ${existing.value})`);
       continue;
     }
-    await prisma.platformConfig.create({ data: { ...seed, isPublic: false } });
+    await prisma.platformConfig.create({ data: seed });
     console.log(`Created ${seed.key} = ${seed.value}`);
   }
 }

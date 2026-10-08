@@ -58,26 +58,27 @@ const ticketCommentSchema = z.object({
 
 // Dev feedback, 2026-10-08 — tenureMonths and submittedDocIds already exist
 // on the model but were never accepted here, so the form's tenure slider
-// and document-sharing step had nowhere to land. consent is required (and
-// must be the literal boolean true) only when documents are actually being
-// submitted — same "required to attest sharing a THIRD PARTY'S/one's OWN
-// sensitive documents" reasoning as Lead's buyerConsentAt elsewhere in
-// this codebase. consentVersion is optional, not required like
-// partners.validator.js's acceptTermsSchema.version — a lighter-weight
-// flow than formal partner terms acceptance; accepted and stored when the
-// frontend sends one, not required to pass consent when it doesn't yet.
+// and document-sharing step had nowhere to land. Field names/requiredness
+// here match the frontend's actual ShareConsentScreen payload exactly
+// (documentSharingConsent, required on every submission — the frontend
+// only allows submitting after the checkbox is ticked, so this mirrors
+// that, not a looser "only when documents are attached" rule).
+// documentSharingConsentVersion is optional — the frontend doesn't send
+// one yet, but it's accepted and stored the moment it does, same
+// two-field shape as partners.validator.js's acceptTermsSchema.version.
+// tenureMonths here is the REQUEST field name only — createLoanApplication
+// stores it as tenureMonthsRequested, since admin sets a (possibly
+// different) sanctioned tenureMonths later via updateLoanStatusSchema and
+// the two must not collide.
 const createLoanSchema = z.object({
   propertyId: objectId.optional(),
   preferredBank: z.string().max(100).optional(),
   loanAmountRequestedPaise: z.number().int().positive().optional(),
   tenureMonths: z.number().int().positive().max(480).optional(),
   submittedDocIds: z.array(objectId).max(20).optional(),
-  consent: z.boolean().optional(),
-  consentVersion: z.string().min(1).max(40).optional(),
-}).refine(
-  (d) => !d.submittedDocIds?.length || d.consent === true,
-  { message: 'Consent is required to submit documents with this application', path: ['consent'] },
-);
+  documentSharingConsent: z.literal(true, { errorMap: () => ({ message: 'Document-sharing consent is required to submit a loan application' }) }),
+  documentSharingConsentVersion: z.string().min(1).max(40).optional(),
+});
 
 const notificationPreferencesSchema = z.object({
   push:           z.boolean().optional(),

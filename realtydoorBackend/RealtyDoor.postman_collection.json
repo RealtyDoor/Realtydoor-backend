@@ -3103,7 +3103,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"propertyId\": \"{{propertyId}}\",\n  \"preferredBank\": \"HDFC Bank\",\n  \"loanAmountRequestedPaise\": 7000000,\n  \"tenureMonths\": 240,\n  \"submittedDocIds\": [\n    \"{{userDocumentId}}\"\n  ],\n  \"consent\": true,\n  \"consentVersion\": \"v1\"\n}",
+              "raw": "{\n  \"propertyId\": \"{{propertyId}}\",\n  \"preferredBank\": \"HDFC Bank\",\n  \"loanAmountRequestedPaise\": 8400000000,\n  \"tenureMonths\": 240,\n  \"submittedDocIds\": [\n    \"{{userDocumentId}}\"\n  ],\n  \"documentSharingConsent\": true,\n  \"documentSharingConsentVersion\": \"v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3139,7 +3139,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"message\":\"Loan application submitted\",\"data\":{\"id\":\"669eee555fff666aaa777bbb\",\"propertyId\":\"664abc123def456789012345\",\"preferredBank\":\"HDFC Bank\",\"loanAmountRequestedPaise\":4000000,\"status\":\"DOCUMENTS_PENDING\",\"createdAt\":\"2026-05-27T09:00:00.000Z\",\"tenureMonths\":240,\"submittedDocIds\":[\"{{userDocumentId}}\"],\"consentAt\":\"2026-10-08T10:00:00.000Z\",\"consentVersion\":\"v1\",\"statusHistory\":[]}}"
+              "body": "{\"success\":true,\"message\":\"Loan application submitted\",\"data\":{\"id\":\"669eee555fff666aaa777bbb\",\"propertyId\":\"664abc123def456789012345\",\"preferredBank\":\"HDFC Bank\",\"loanAmountRequestedPaise\":8400000000,\"status\":\"DOCUMENTS_PENDING\",\"createdAt\":\"2026-05-27T09:00:00.000Z\",\"submittedDocIds\":[\"{{userDocumentId}}\"],\"statusHistory\":[{\"status\":\"DOCUMENTS_PENDING\",\"at\":\"2026-10-08T10:00:00.000Z\",\"note\":null}],\"tenureMonthsRequested\":240,\"documentSharingConsentAt\":\"2026-10-08T10:00:00.000Z\",\"documentSharingConsentVersion\":\"v1\"}}"
             },
             {
               "name": "403 – Phone Not Verified",
@@ -11722,7 +11722,7 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":true,\"message\":\"Loan status updated\",\"data\":{\"id\":\"669eee555fff666aaa777bbb\",\"status\":\"SANCTIONED\",\"adminNote\":\"Sanctioned by HDFC Bank at 8.5% for 240 months.\",\"interestRatePct\":8.5,\"tenureMonths\":240,\"emiPaise\":3450000,\"sanctionLetterUrl\":\"https://realtydoor-bucket.s3.ap-south-1.amazonaws.com/loans/sanction-669eee.pdf\",\"sanctionedAt\":\"2026-05-27T11:00:00.000Z\",\"updatedAt\":\"2026-05-27T11:00:00.000Z\",\"statusHistory\":[\"{\\\"status\\\":\\\"SANCTIONED\\\",\\\"at\\\":\\\"2026-10-08T10:00:00.000Z\\\",\\\"note\\\":\\\"Sanctioned by HDFC Bank at 8.5% for 240 months.\\\"}\"]}}"
+                  "body": "{\"success\":true,\"message\":\"Loan status updated\",\"data\":{\"id\":\"669eee555fff666aaa777bbb\",\"status\":\"SANCTIONED\",\"adminNote\":\"Sanctioned by HDFC Bank at 8.5% for 240 months.\",\"interestRatePct\":8.5,\"tenureMonths\":240,\"emiPaise\":3450000,\"sanctionLetterUrl\":\"https://realtydoor-bucket.s3.ap-south-1.amazonaws.com/loans/sanction-669eee.pdf\",\"sanctionedAt\":\"2026-05-27T11:00:00.000Z\",\"updatedAt\":\"2026-05-27T11:00:00.000Z\",\"statusHistory\":[{\"status\":\"DOCUMENTS_VERIFIED\",\"at\":\"2026-10-01T10:00:00.000Z\",\"note\":\"All docs checked out\"},{\"status\":\"SANCTIONED\",\"at\":\"2026-10-08T10:00:00.000Z\",\"note\":\"Sanctioned by HDFC Bank at 8.5% for 240 months.\"}],\"tenureMonthsRequested\":240}}"
                 }
               ]
             },

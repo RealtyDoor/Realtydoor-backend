@@ -567,6 +567,10 @@ async function main() {
 
   // ── 7. Loan Applications ──────────────────────────────────────────────────
 
+  // Dev feedback, 2026-10-08 (L4) — statusHistory is Json[] of
+  // {status, at, note}, not bare status strings; these fixtures were
+  // never updated when that type changed.
+  const loanHistoryEntry = (status, at, note = null) => ({ status, at: at.toISOString(), note });
   const loanDefs = [
     {
       userId: user.id, propertyId: propBaner.id,
@@ -574,14 +578,20 @@ async function main() {
       loanAmountRequestedPaise: 680000000, // ₹68 lakh (paise)
       status: 'AWAITING_SANCTION',
       adminNote: 'Documents verified. Sent to HDFC on 2024-01-20.',
-      statusHistory: ['DOCUMENTS_PENDING', 'DOCUMENTS_SUBMITTED', 'DOCUMENTS_VERIFIED', 'SENT_TO_BANK', 'AWAITING_SANCTION'],
+      statusHistory: [
+        loanHistoryEntry('DOCUMENTS_PENDING', new Date('2024-01-15T00:00:00Z')),
+        loanHistoryEntry('DOCUMENTS_SUBMITTED', new Date('2024-01-17T00:00:00Z')),
+        loanHistoryEntry('DOCUMENTS_VERIFIED', new Date('2024-01-19T00:00:00Z')),
+        loanHistoryEntry('SENT_TO_BANK', new Date('2024-01-20T00:00:00Z')),
+        loanHistoryEntry('AWAITING_SANCTION', new Date('2024-01-20T00:00:00Z'), 'Documents verified. Sent to HDFC on 2024-01-20.'),
+      ],
     },
     {
       userId: user2.id, propertyId: propKothrud.id,
       preferredBank: 'SBI',
       loanAmountRequestedPaise: 220000000, // ₹22 lakh (paise)
       status: 'DOCUMENTS_PENDING',
-      statusHistory: ['DOCUMENTS_PENDING'],
+      statusHistory: [loanHistoryEntry('DOCUMENTS_PENDING', new Date('2024-02-01T00:00:00Z'))],
     },
   ];
 
@@ -1345,7 +1355,11 @@ async function main() {
     // escrow.service.js reads rupees, so the paise key was a dead second
     // source of truth for the same threshold. Value matches the code default,
     // so this is plumbing only, no change to the business rule.
-    { key: 'escrow_min_amount_rupees', value: '50000',                                                          description: 'Minimum token advance in rupees',                isPublic: false, updatedByAdminId: admin.id },
+    // Dev feedback, 2026-10-08 (P3) — public now: the frontend's token-
+    // amount form needs its own floor/ceiling instead of hardcoding
+    // 50000/10%, and GET /config/public is the only read path it has.
+    { key: 'escrow_min_amount_rupees', value: '50000',                                                          description: 'Minimum token advance in rupees',                isPublic: true, updatedByAdminId: admin.id },
+    { key: 'escrow_max_token_pct', value: '10',                                                                description: 'Maximum token advance, as a % of the deal/listing price', isPublic: true, updatedByAdminId: admin.id },
     { key: 'escrow_refund_window_hours', value: '48',                                                           description: 'Hours after escrow is HELD that a buyer self-cancel still auto-refunds', isPublic: false, updatedByAdminId: admin.id },
     { key: 'escrow_auto_escalate_days', value: '14',                                                            description: 'Days a HELD escrow may sit before the daily job notifies admins', isPublic: false, updatedByAdminId: admin.id },
     { key: 'razorpay_webhook_secret', value: 'whsec_seed_placeholder',                                          description: 'Razorpay webhook HMAC signing secret',           isPublic: false, updatedByAdminId: admin.id },

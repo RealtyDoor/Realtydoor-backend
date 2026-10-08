@@ -2053,25 +2053,32 @@ Submit a home loan application.
 {
   "propertyId": "64abc...",
   "preferredBank": "HDFC Bank",
-  "loanAmountRequestedPaise": 7000000,
+  "loanAmountRequestedPaise": 8400000000,
   "tenureMonths": 240,
   "submittedDocIds": ["64doc1...", "64doc2..."],
-  "consent": true,
-  "consentVersion": "v1"
+  "documentSharingConsent": true,
+  "documentSharingConsentVersion": "v1"
 }
 ```
 
-All fields are optional, **except `consent` (must be the literal boolean
-`true`) when `submittedDocIds` is non-empty** — attesting the user
-consents to sharing those documents with the lender; nothing to consent
-to on an application with no documents attached. `submittedDocIds` must
-be document ids the user already owns (`POST /api/user/documents`) —
-checked, not just trusted; a document belonging to someone else is
-refused outright. `loanAmountRequestedPaise` is in paise (₹1 = 100 paise).
+All fields are optional **except `documentSharingConsent`, which is
+required on every submission** (must be the literal boolean `true`) —
+the frontend only lets the user submit after ticking the consent
+checkbox, so this is enforced here too, not just when documents happen
+to be attached. `submittedDocIds` must be document ids the user already
+owns (`POST /api/user/documents`) — checked, not just trusted; a
+document belonging to someone else is refused outright.
+`documentSharingConsentVersion` is optional, accepted and stored when
+given. `loanAmountRequestedPaise` is in paise (₹1 = 100 paise).
 
-**Added 2026-10-08 — `tenureMonths`, `submittedDocIds`, `consent`,
-`consentVersion` were already on the model but none of them were ever
-accepted here.**
+**Corrected 2026-10-08 — field names/requiredness now match the
+frontend's actual request exactly** (`documentSharingConsent`, not
+`consent`; required unconditionally, not only when `submittedDocIds` is
+non-empty). `tenureMonths` here is the request field name only — stored
+internally as `tenureMonthsRequested`, a separate column from the
+`tenureMonths` admin sets at sanction time (`PATCH
+/admin/loan/:id/status`), so a sanctioned tenure never overwrites the
+record of what was originally requested.
 
 **Response `201`:**
 
@@ -2084,21 +2091,31 @@ accepted here.**
     "userId": "64user...",
     "propertyId": "64abc...",
     "preferredBank": "HDFC Bank",
-    "loanAmountRequestedPaise": 7000000,
-    "tenureMonths": 240,
+    "loanAmountRequestedPaise": 8400000000,
+    "tenureMonthsRequested": 240,
     "submittedDocIds": ["64doc1...", "64doc2..."],
-    "consentAt": "2024-01-15T00:00:00.000Z",
-    "consentVersion": "v1",
+    "documentSharingConsentAt": "2024-01-15T00:00:00.000Z",
+    "documentSharingConsentVersion": "v1",
     "status": "DOCUMENTS_PENDING",
-    "statusHistory": [],
+    "statusHistory": [
+      { "status": "DOCUMENTS_PENDING", "at": "2024-01-15T00:00:00.000Z", "note": null }
+    ],
     "createdAt": "2024-01-15T00:00:00.000Z"
   }
 }
 ```
 
-`consentAt`/`consentVersion` are `null` when no documents were submitted — nothing was consented to.
+`loanAmountRequestedPaise`/`sanctionedAmountPaise`/`emiPaise` are
+**`Float`, not `Int`, as of 2026-10-08** — a real home loan routinely
+exceeds the ~₹2.14 crore ceiling a 32-bit `Int` can hold in paise,
+which would have overflowed or silently truncated. Still plain JSON
+numbers in paise, nothing about reading them changes, just the range.
 
-**Errors:** `400` `submittedDocIds` given without `consent: true` · `400` one or more submitted document ids don't belong to the caller.
+`statusHistory` is seeded with a first `DOCUMENTS_PENDING` entry the
+moment the application is created — see `PATCH .../status` below for
+its full shape and how it grows.
+
+**Errors:** `400` `documentSharingConsent` not `true` · `400` one or more submitted document ids don't belong to the caller.
 
 ---
 
@@ -2119,9 +2136,13 @@ All loan applications for the authenticated user.
       "id": "64loan...",
       "status": "DOCUMENTS_SUBMITTED",
       "preferredBank": "HDFC Bank",
-      "loanAmountRequestedPaise": 7000000,
+      "loanAmountRequestedPaise": 8400000000,
+      "tenureMonthsRequested": 240,
       "sanctionedAmountPaise": null,
       "adminNote": null,
+      "statusHistory": [
+        { "status": "DOCUMENTS_PENDING", "at": "2024-01-15T00:00:00.000Z", "note": null }
+      ],
       "createdAt": "2024-01-15T00:00:00.000Z",
       "property": { "title": "3 BHK Flat in Baner", "slug": "...", "city": "Pune" }
     }
@@ -3279,7 +3300,7 @@ Create a Razorpay escrow order (token advance). `leadId` must belong to the auth
 { "leadId": "64lead...", "amount": 50000 }
 ```
 
-`amount` in ₹. **Capped at a % of the deal's own price** (`escrow_max_pct_of_price` config, default 10) — `dealPriceAtLock` when commission terms are already set, else the live listing price. Skipped (not refused) when neither is known yet (a free-text lead with no resolvable price).
+`amount` in ₹. **Capped at a % of the deal's own price** (`escrow_max_token_pct` config, default 10) — `dealPriceAtLock` when commission terms are already set, else the live listing price. Skipped (not refused) when neither is known yet (a free-text lead with no resolvable price). **`escrow_max_token_pct` and `escrow_min_amount_rupees` are both public** (`GET /api/config/public`, 2026-10-08) — the frontend reads its floor/ceiling from there instead of hardcoding `50000`/`10%`.
 
 **Response `201`:**
 
@@ -4066,12 +4087,14 @@ Returns all platform configuration keys that have `isPublic: true`. No authentic
     "support_email": "support@realtydoor.in",
     "rera_disclaimer": "RERA registrations vary by state. Verify before investing.",
     "platform_name": "RealtyDoor",
-    "telecaller_phone": "+919844412345"
+    "telecaller_phone": "+919844412345",
+    "escrow_min_amount_rupees": "50000",
+    "escrow_max_token_pct": "10"
   }
 }
 ```
 
-Returns a flat key → value object. Only keys with `isPublic: true` appear here. `telecaller_phone` is the shared number the frontend's "Contact agent" action should dial — the buyer is never given the assigned partner's own phone number (see `PATCH /api/admin/leads/:id/assign` and `GET /api/user/leads`).
+Returns a flat key → value object — **every value is a string**, including numeric-looking ones like `escrow_min_amount_rupees`; parse on the client. Only keys with `isPublic: true` appear here. `telecaller_phone` is the shared number the frontend's "Contact agent" action should dial — the buyer is never given the assigned partner's own phone number (see `PATCH /api/admin/leads/:id/assign` and `GET /api/user/leads`). `escrow_min_amount_rupees`/`escrow_max_token_pct` (added 2026-10-08, P3) are the escrow token-advance floor/ceiling — read these instead of hardcoding `50000`/`10%` on the token-amount form.
 
 ---
 
@@ -7888,6 +7911,10 @@ Update loan status. Sets `sanctionedAt` on `SANCTIONED`, `disbursedAt` on `DISBU
 
 `interestRatePct`, `tenureMonths`, `emiPaise`, `sanctionLetterUrl` are all optional — set them whenever the information is available, not only alongside a status change.
 
+**Note — `tenureMonths` here is the ADMIN-set (sanctioned) tenure,
+separate from the user's original request** (`tenureMonthsRequested`,
+set at `POST /user/loan`). Setting this never overwrites the other.
+
 **Response `200`:**
 
 ```json
@@ -7896,23 +7923,36 @@ Update loan status. Sets `sanctionedAt` on `SANCTIONED`, `disbursedAt` on `DISBU
   "message": "Loan status updated",
   "data": {
     "id": "64loan...", "status": "SANCTIONED", "sanctionedAt": "...", "disbursedAt": null,
-    "interestRatePct": 8.5, "tenureMonths": 240, "emiPaise": 4500000,
+    "interestRatePct": 8.5, "tenureMonths": 240, "tenureMonthsRequested": 240, "emiPaise": 4500000,
     "sanctionLetterUrl": "https://cdn.realtydoor.in/loans/sanction-64loan.pdf",
     "statusHistory": [
-      "{\"status\":\"DOCUMENTS_VERIFIED\",\"at\":\"2026-10-01T10:00:00.000Z\",\"note\":\"All docs checked out\"}",
-      "{\"status\":\"SANCTIONED\",\"at\":\"2026-10-08T10:00:00.000Z\",\"note\":\"Sanctioned by HDFC. Ref: HDFC2024012345.\"}"
+      { "status": "DOCUMENTS_VERIFIED", "at": "2026-10-01T10:00:00.000Z", "note": "All docs checked out" },
+      { "status": "SANCTIONED", "at": "2026-10-08T10:00:00.000Z", "note": "Sanctioned by HDFC. Ref: HDFC2024012345." }
     ]
   }
 }
 ```
 
-**Added 2026-10-08 — `statusHistory` now actually gets written.**
-Previously the field existed on the model but nothing ever appended to
-it, so a dated step timeline had no data to show. One JSON-encoded
-string per status change — `{status, at, note}` — appended on every
-call, `note` being that specific transition's `adminNote` (`null` when
-none given), not the lead-level `adminNote` it may fall back to for
-display.
+**Added 2026-10-08 — `statusHistory` now actually gets written, as
+`Json[]` objects (not `String[]` of JSON-encoded strings — the field
+type changed too; no `JSON.parse` needed on the read side).** Previously
+the field existed on the model but nothing ever appended to it, so a
+dated step timeline had no data to show. One `{status, at, note}` entry
+per status change, appended on every call — `note` is that specific
+transition's `adminNote` (`null` when none given), not the lead-level
+`adminNote` it may fall back to for display. The first entry
+(`DOCUMENTS_PENDING`) is seeded automatically when the application is
+created (`POST /user/loan`), so the array is never empty.
+
+`emiPaise`/`sanctionedAmountPaise` (not shown above, accepted but not
+yet set in this example) are `Float`, not `Int`, as of 2026-10-08 — see
+`POST /user/loan`'s note on `loanAmountRequestedPaise`.
+
+Notification `linkUrl` (`LOAN_STATUS_UPDATE`) is
+`/user/loans/sanctioned?id=:loanId` when `status` is `SANCTIONED`, else
+`/user/loans` — corrected from the previous `/dashboard/loan/:id`, which
+doesn't exist in the frontend. The status-update email's link follows
+the same rule.
 
 **Errors:** `404` loan not found.
 

@@ -375,7 +375,7 @@ async function addTicketComment(userId, ticketId, { text, photos }) {
   });
 }
 
-async function createLoanApplication(userId, { consent, consentVersion, submittedDocIds, ...data }) {
+async function createLoanApplication(userId, { documentSharingConsent: _documentSharingConsent, documentSharingConsentVersion, submittedDocIds, tenureMonths, ...data }) {
   // Dev feedback, 2026-10-08 — submittedDocIds must actually be this user's
   // own documents; otherwise one user could attach another's PAN/Aadhaar
   // to their own loan application by guessing/reusing an id.
@@ -389,9 +389,21 @@ async function createLoanApplication(userId, { consent, consentVersion, submitte
   return prisma.loanApplication.create({
     data: {
       ...data, userId,
-      ...(submittedDocIds?.length && {
-        submittedDocIds, consentAt: new Date(), ...(consentVersion && { consentVersion }),
-      }),
+      // tenureMonthsRequested, not tenureMonths — that column is admin-set
+      // at sanction time (updateLoanStatus) and must not be clobbered by
+      // what the user originally asked for.
+      ...(tenureMonths != null && { tenureMonthsRequested: tenureMonths }),
+      ...(submittedDocIds?.length && { submittedDocIds }),
+      // documentSharingConsent is required on every submission (validator
+      // enforces the literal true), so this is always set, not conditional
+      // on documents being attached.
+      documentSharingConsentAt: new Date(),
+      ...(documentSharingConsentVersion && { documentSharingConsentVersion }),
+      // Dev feedback, 2026-10-08 (L4) — "on create seed the first one":
+      // the tracker's dated step list should show DOCUMENTS_PENDING from
+      // the very start, not only once the first admin-driven status
+      // change happens.
+      statusHistory: [{ status: 'DOCUMENTS_PENDING', at: new Date().toISOString(), note: null }],
     },
   });
 }

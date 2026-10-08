@@ -10,15 +10,31 @@ model LoanApplication {
   property                 Property?  @relation(fields: [propertyId], references: [id])
 
   preferredBank            String?
-  loanAmountRequestedPaise Int?
-  sanctionedAmountPaise    Int?
+  // Dev feedback, 2026-10-08 (L6) — Int is 32-bit (max ~₹2.14 crore in
+  // paise); a real home loan routinely exceeds that and would overflow
+  // or get silently truncated. Float instead — same unit (paise), no
+  // change to anything that reads these, just room for a real amount.
+  // IEEE-754 double precision is exact well past any realistic rupee
+  // figure, so nothing is lost by dropping the Int constraint.
+  loanAmountRequestedPaise Float?
+  sanctionedAmountPaise    Float?
   interestRatePct          Float?
+  // What ADMIN sanctions (set via PATCH /admin/loan/:id/status). Distinct
+  // from tenureMonthsRequested below — see that field's comment for why
+  // these can't be the same column.
   tenureMonths             Int?
-  emiPaise                 Int?
+  emiPaise                 Float?
   sanctionLetterUrl        String?
 
   status                   LoanStatus @default(DOCUMENTS_PENDING)
-  statusHistory            String[]
+  // Dev feedback, 2026-10-08 (L4) — Json[], not String[]: an array of
+  // {status, at, note} objects the API returns as-is, rather than a
+  // String[] of JSON-encoded strings the caller has to JSON.parse
+  // individually. Seeded with a first DOCUMENTS_PENDING entry at
+  // creation, then appended to on every status change
+  // (admin.service.js's updateLoanStatus) — a dated step timeline for
+  // the tracker.
+  statusHistory            Json[]
   adminNote                String?
   bankRefNumber            String?
   sanctionedAt             DateTime?
@@ -26,18 +42,29 @@ model LoanApplication {
   rejectionReason          String?
 
   submittedDocIds          String[]
-  // Dev feedback, 2026-10-08 — the form already has a document-sharing
-  // checkbox, but nothing backend-side validated or stored it (same gap
-  // class as Lead.buyerConsentAt/User.kycConsentAt) — the attached
-  // submittedDocIds had nowhere to record that sharing them was consented
-  // to. Timestamp-presence, not a bare boolean, so it also records *when*;
-  // consentVersion alongside it, same two-field shape as
+  // Dev feedback, 2026-10-08 (L1) — named to match the frontend's actual
+  // request field (documentSharingConsent), not an internal guess.
+  // Required on every submission (the frontend only allows submitting
+  // after the checkbox is ticked), not just when documents are attached
+  // — storing the timestamp either way is what makes this a real DPDPA
+  // consent record rather than a UI-only gate. Timestamp-presence, not a
+  // bare boolean, so it also records *when*; documentSharingConsentVersion
+  // alongside it (not currently sent by the frontend, accepted and
+  // stored when it is) is the same two-field shape as
   // User.partnerTermsVersion/partnerTermsAcceptedAt, so which version of
-  // the sharing terms was agreed to is traceable if that text ever
-  // changes. Only required when submittedDocIds is non-empty — nothing to
-  // consent to sharing on a loan application with no documents attached.
-  consentAt                DateTime?
-  consentVersion           String?
+  // the sharing terms was agreed to is traceable if that text changes.
+  documentSharingConsentAt      DateTime?
+  documentSharingConsentVersion String?
+
+  // Dev feedback, 2026-10-08 (L2) — what the USER asked for at
+  // application time. Deliberately NOT the same column as tenureMonths
+  // above: that field is admin-set at sanction time (PATCH
+  // .../status), and a sanctioned tenure overwriting the original
+  // request would destroy the record of what was actually asked for.
+  // The request body still calls this `tenureMonths` (see
+  // createLoanSchema) — only the stored column name differs, to keep
+  // the two concerns apart.
+  tenureMonthsRequested    Int?
 
   createdAt                DateTime   @default(now())
   updatedAt                DateTime   @updatedAt
