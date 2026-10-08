@@ -2053,11 +2053,25 @@ Submit a home loan application.
 {
   "propertyId": "64abc...",
   "preferredBank": "HDFC Bank",
-  "loanAmountRequestedPaise": 7000000
+  "loanAmountRequestedPaise": 7000000,
+  "tenureMonths": 240,
+  "submittedDocIds": ["64doc1...", "64doc2..."],
+  "consent": true,
+  "consentVersion": "v1"
 }
 ```
 
-All fields are optional. `loanAmountRequestedPaise` is in paise (₹1 = 100 paise).
+All fields are optional, **except `consent` (must be the literal boolean
+`true`) when `submittedDocIds` is non-empty** — attesting the user
+consents to sharing those documents with the lender; nothing to consent
+to on an application with no documents attached. `submittedDocIds` must
+be document ids the user already owns (`POST /api/user/documents`) —
+checked, not just trusted; a document belonging to someone else is
+refused outright. `loanAmountRequestedPaise` is in paise (₹1 = 100 paise).
+
+**Added 2026-10-08 — `tenureMonths`, `submittedDocIds`, `consent`,
+`consentVersion` were already on the model but none of them were ever
+accepted here.**
 
 **Response `201`:**
 
@@ -2071,11 +2085,20 @@ All fields are optional. `loanAmountRequestedPaise` is in paise (₹1 = 100 pais
     "propertyId": "64abc...",
     "preferredBank": "HDFC Bank",
     "loanAmountRequestedPaise": 7000000,
+    "tenureMonths": 240,
+    "submittedDocIds": ["64doc1...", "64doc2..."],
+    "consentAt": "2024-01-15T00:00:00.000Z",
+    "consentVersion": "v1",
     "status": "DOCUMENTS_PENDING",
+    "statusHistory": [],
     "createdAt": "2024-01-15T00:00:00.000Z"
   }
 }
 ```
+
+`consentAt`/`consentVersion` are `null` when no documents were submitted — nothing was consented to.
+
+**Errors:** `400` `submittedDocIds` given without `consent: true` · `400` one or more submitted document ids don't belong to the caller.
 
 ---
 
@@ -3256,7 +3279,7 @@ Create a Razorpay escrow order (token advance). `leadId` must belong to the auth
 { "leadId": "64lead...", "amount": 50000 }
 ```
 
-`amount` in ₹.
+`amount` in ₹. **Capped at a % of the deal's own price** (`escrow_max_pct_of_price` config, default 10) — `dealPriceAtLock` when commission terms are already set, else the live listing price. Skipped (not refused) when neither is known yet (a free-text lead with no resolvable price).
 
 **Response `201`:**
 
@@ -3275,13 +3298,43 @@ Create a Razorpay escrow order (token advance). `leadId` must belong to the auth
       "status": "PAYMENT_PENDING",
       "createdAt": "2024-01-15T00:00:00.000Z"
     },
-    "razorpayOrder": { "id": "order_...", "amount": 5000000, "currency": "INR" }
+    "razorpayOrder": { "id": "order_...", "amount": 5000000, "currency": "INR" },
+    "key": "rzp_live_...",
+    "refundProtectionFeePct": 0
   }
 }
 ```
 
+**Added 2026-10-08 — `key` and `refundProtectionFeePct` were both
+missing.** `key` is Razorpay's **public** checkout key id
+(`RAZORPAY_KEY_ID` — never the secret), so the frontend's Checkout widget
+has something to open with straight from this response instead of
+needing its own `NEXT_PUBLIC_RAZORPAY_KEY_ID` kept in sync.
+`refundProtectionFeePct` is config-driven (`escrow_refund_protection_fee_pct`,
+default `0` — genuinely free today, not a placeholder); return this
+instead of hardcoding "Free" in the UI, so it's correct the moment it's
+ever configured non-zero.
+
 `payment.captured` webhook moves status to `HELD`.  
-**Errors:** `404` lead not found or not yours · `400` lead isn't `SITE_VISIT_DONE` yet, amount below minimum, or active escrow already exists.
+**Errors:** `404` lead not found or not yours · `400` lead isn't `SITE_VISIT_DONE` yet, amount below minimum or above the deal-price cap, or active escrow already exists.
+
+---
+
+### GET /api/escrow/:id/receipt
+
+**Added 2026-10-08** — the buyer's token-advance payment receipt. Previously there was no backend endpoint at all; the frontend's "receipt" was a browser print of the on-screen summary.
+
+**Auth:** USER (must be the escrow's own buyer)
+
+**Response `200`:** a PDF file (`Content-Type: application/pdf`,
+`Content-Disposition: attachment`), not the usual JSON envelope — same
+pattern as `GET /api/locality-insights/report`. Generated fresh on every
+call from the escrow/lead/property data already on file — not a GST tax
+invoice (no GSTIN/HSN/CGST-SGST split), same scope as the commission and
+ticket-charge receipts.
+
+**Errors:** `404` escrow not found or not yours · `400` no payment has
+been captured yet for this escrow (nothing to issue a receipt for).
 
 ---
 
@@ -7844,10 +7897,22 @@ Update loan status. Sets `sanctionedAt` on `SANCTIONED`, `disbursedAt` on `DISBU
   "data": {
     "id": "64loan...", "status": "SANCTIONED", "sanctionedAt": "...", "disbursedAt": null,
     "interestRatePct": 8.5, "tenureMonths": 240, "emiPaise": 4500000,
-    "sanctionLetterUrl": "https://cdn.realtydoor.in/loans/sanction-64loan.pdf"
+    "sanctionLetterUrl": "https://cdn.realtydoor.in/loans/sanction-64loan.pdf",
+    "statusHistory": [
+      "{\"status\":\"DOCUMENTS_VERIFIED\",\"at\":\"2026-10-01T10:00:00.000Z\",\"note\":\"All docs checked out\"}",
+      "{\"status\":\"SANCTIONED\",\"at\":\"2026-10-08T10:00:00.000Z\",\"note\":\"Sanctioned by HDFC. Ref: HDFC2024012345.\"}"
+    ]
   }
 }
 ```
+
+**Added 2026-10-08 — `statusHistory` now actually gets written.**
+Previously the field existed on the model but nothing ever appended to
+it, so a dated step timeline had no data to show. One JSON-encoded
+string per status change — `{status, at, note}` — appended on every
+call, `note` being that specific transition's `adminNote` (`null` when
+none given), not the lead-level `adminNote` it may fall back to for
+display.
 
 **Errors:** `404` loan not found.
 

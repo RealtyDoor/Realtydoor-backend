@@ -8,5 +8,9 @@ const { requirePhone } = require('../../middleware/requirePhone');
 router.post('/create-order',    authenticate, requireUser, requirePhone, ctrl.createOrder);
 router.post('/verify-payment',  authenticate, requireUser, ctrl.verifyPayment);
 router.get('/:id',              authenticate, requireUser, ctrl.getEscrowById);
+// Dev feedback, 2026-10-08 — registered after /:id is fine here since
+// Express only falls through to /:id/receipt if the path actually has
+// that extra segment; a bare /:id request never reaches this route.
+router.get('/:id/receipt',      authenticate, requireUser, ctrl.getReceipt);
 
 module.exports = router;

@@ -6,9 +6,11 @@ const { createNotification } = require('../../lib/notifications');
 const { sendEscrowRefunded, sendEscrowHeld } = require('../../lib/email');
 const { getConfigNumber } = require('../config/config.service');
 const { isEscrowLeadUniqueViolation } = require('../../lib/escrowUtils');
+const { buildEscrowReceiptPdf } = require('../../lib/pdfReceipt');
 const logger = require('../../lib/logger');
 
 const DEFAULT_MIN_ESCROW_AMOUNT = 50000;
+const DEFAULT_MAX_ESCROW_PCT = 10;
 
 // Buyer-scoped lookup — for polling status right after a Checkout attempt,
 // or refreshing later. Buyers previously had no way to check escrow status
@@ -27,15 +29,76 @@ async function getById(escrowId, buyerId) {
   return safe;
 }
 
+// Dev feedback, 2026-10-08 — the buyer's token-payment receipt had no
+// backend endpoint; pdfReceipt.js already covered commission/builder-
+// invoice/ticket receipts but not this one. Generated fresh on each
+// request (same read-only data every time) rather than generated once
+// and stored — there's no "has this already been issued" state to track
+// the way an invoice has, so nothing is gained by persisting it.
+async function getReceipt(escrowId, buyerId) {
+  const escrow = await prisma.escrowTransaction.findFirst({
+    where: { id: escrowId, buyerId },
+    include: {
+      lead: {
+        select: {
+          refCode: true, buyerName: true,
+          property: { select: { title: true } },
+          propertyInterest: true,
+        },
+      },
+    },
+  });
+  if (!escrow) throw new ApiError(404, 'Escrow not found');
+  if (!['HELD', 'HELD_PAYOUT_FAILED', 'RELEASED', 'REFUNDED', 'FROZEN'].includes(escrow.status)) {
+    throw new ApiError(400, 'No receipt yet — payment has not been captured for this escrow');
+  }
+
+  return buildEscrowReceiptPdf({
+    refCode: escrow.lead?.refCode,
+    propertyTitle: escrow.lead?.property?.title || escrow.lead?.propertyInterest,
+    buyerName: escrow.lead?.buyerName,
+    amount: escrow.amount,
+    razorpayPaymentId: escrow.razorpayPaymentId,
+    paidAt: escrow.heldAt,
+  });
+}
+
 async function createOrder(leadId, buyerId, amountInRupees) {
   // Scoped to buyerId, not just id — previously any authenticated user could
   // create (and pay into) an escrow order for *any* lead by guessing/reusing
   // a leadId, since the lookup had no ownership check at all.
-  const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId } });
+  const lead = await prisma.lead.findFirst({
+    where: { id: leadId, buyerId },
+    include: { property: { select: { price: true } } },
+  });
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (lead.status !== 'SITE_VISIT_DONE') {
     throw new ApiError(400, 'Escrow can only be created after the site visit is done');
   }
+
+  // Dev feedback, 2026-10-08 — only a floor existed; nothing stopped a
+  // token amount disproportionate to the deal itself. Capped at a %
+  // (admin-configurable, default 10) of the deal's own price —
+  // dealPriceAtLock when the commission terms are already set, falling
+  // back to the live listing price otherwise. Skipped (not refused) when
+  // neither is known yet — a free-text lead with no resolvable price has
+  // nothing to cap against, same "can't validate without data" pattern
+  // used elsewhere (e.g. an ADVISOR flat amount needing a known fee).
+  const dealPrice = lead.dealPriceAtLock ?? lead.property?.price ?? null;
+  if (dealPrice) {
+    const maxPct = await getConfigNumber('escrow_max_pct_of_price', DEFAULT_MAX_ESCROW_PCT);
+    const maxAmount = round2((dealPrice * maxPct) / 100);
+    if (amountInRupees > maxAmount) {
+      throw new ApiError(400, `Maximum escrow amount is ₹${maxAmount.toLocaleString('en-IN')} (${maxPct}% of the deal price)`);
+    }
+  }
+
+  // Dev feedback, 2026-10-08 — the frontend hardcodes "Refund protection
+  // fee: Free" with no backend figure behind it at all. Config-driven,
+  // default 0 (a genuine "it's free today," not a placeholder) — returned
+  // on every createOrder response so the frontend can show the real
+  // number instead of a hardcoded claim, the moment this is ever non-zero.
+  const refundProtectionFeePct = await getConfigNumber('escrow_refund_protection_fee_pct', 0);
 
   const existing = await prisma.escrowTransaction.findFirst({
     where: { leadId, status: { in: ['HELD', 'PAYMENT_PENDING', 'HELD_PAYOUT_FAILED'] } },
@@ -63,11 +126,11 @@ async function createOrder(leadId, buyerId, amountInRupees) {
       const capturedPayment = payments.items?.find((p) => p.status === 'captured');
       if (capturedPayment) {
         const healed = await confirmPayment(existing.razorpayOrderId, capturedPayment.id, buyerId);
-        return { escrow: healed, razorpayOrder, resumed: true, alreadyPaid: true };
+        return { escrow: healed, razorpayOrder, key: process.env.RAZORPAY_KEY_ID, refundProtectionFeePct, resumed: true, alreadyPaid: true };
       }
     }
 
-    return { escrow: existing, razorpayOrder, resumed: true };
+    return { escrow: existing, razorpayOrder, key: process.env.RAZORPAY_KEY_ID, refundProtectionFeePct, resumed: true };
   }
 
   // snake_case to match every other seeded key. The old camelCase
@@ -107,7 +170,13 @@ async function createOrder(leadId, buyerId, amountInRupees) {
     throw err;
   }
 
-  return { escrow, razorpayOrder: order };
+  // Dev feedback, 2026-10-08 — razorpay.key_id (the PUBLIC checkout key,
+  // not RAZORPAY_KEY_SECRET) was never returned here, so the frontend's
+  // Razorpay Checkout widget had nothing to open with except its own
+  // NEXT_PUBLIC_RAZORPAY_KEY_ID fallback — unset locally, breaking the Pay
+  // button entirely. The backend already has the one true key_id in its
+  // own env; no reason to make the frontend keep a second copy in sync.
+  return { escrow, razorpayOrder: order, key: process.env.RAZORPAY_KEY_ID, refundProtectionFeePct };
 }
 
 // buyerId is only passed by the buyer-facing verify-payment controller — the
@@ -693,6 +762,6 @@ async function unfreeze(escrowId, adminId, ip) {
 }
 
 module.exports = {
-  createOrder, getById, getReleasePlan, confirmPayment, release, refund, getAllEscrow, getEscrowStats,
+  createOrder, getById, getReceipt, getReleasePlan, confirmPayment, release, refund, getAllEscrow, getEscrowStats,
   freeze, unfreeze,
 };

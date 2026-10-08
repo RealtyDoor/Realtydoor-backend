@@ -25,6 +25,18 @@ async function getEscrowById(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// Dev feedback, 2026-10-08 — the buyer's token-payment receipt, as a
+// direct PDF download rather than the JSON envelope — same pattern as
+// locality.controller.js's downloadReport.
+async function getReceipt(req, res, next) {
+  try {
+    const pdfBuffer = await service.getReceipt(req.params.id, req.user.id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="escrow-receipt-${req.params.id}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (err) { next(err); }
+}
+
 // 2.8 / 2.9 — read-only: per-payee entitlements from the lead's locked
 // commission lines, whether the held amount covers the fee, and which release
 // conditions are unmet. Moves no money.
@@ -95,6 +107,6 @@ async function verifyPayment(req, res, next) {
 }
 
 module.exports = {
-  createOrder, getEscrowById, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
+  createOrder, getEscrowById, getReceipt, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
   freezeEscrow, unfreezeEscrow,
 };

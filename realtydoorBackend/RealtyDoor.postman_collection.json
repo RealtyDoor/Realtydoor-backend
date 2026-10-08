@@ -3103,7 +3103,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"propertyId\": \"{{propertyId}}\",\n  \"preferredBank\": \"HDFC Bank\",\n  \"loanAmountRequestedPaise\": 4000000\n}",
+              "raw": "{\n  \"propertyId\": \"{{propertyId}}\",\n  \"preferredBank\": \"HDFC Bank\",\n  \"loanAmountRequestedPaise\": 7000000,\n  \"tenureMonths\": 240,\n  \"submittedDocIds\": [\n    \"{{userDocumentId}}\"\n  ],\n  \"consent\": true,\n  \"consentVersion\": \"v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3139,7 +3139,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"message\":\"Loan application submitted\",\"data\":{\"id\":\"669eee555fff666aaa777bbb\",\"propertyId\":\"664abc123def456789012345\",\"preferredBank\":\"HDFC Bank\",\"loanAmountRequestedPaise\":4000000,\"status\":\"DOCUMENTS_PENDING\",\"createdAt\":\"2026-05-27T09:00:00.000Z\"}}"
+              "body": "{\"success\":true,\"message\":\"Loan application submitted\",\"data\":{\"id\":\"669eee555fff666aaa777bbb\",\"propertyId\":\"664abc123def456789012345\",\"preferredBank\":\"HDFC Bank\",\"loanAmountRequestedPaise\":4000000,\"status\":\"DOCUMENTS_PENDING\",\"createdAt\":\"2026-05-27T09:00:00.000Z\",\"tenureMonths\":240,\"submittedDocIds\":[\"{{userDocumentId}}\"],\"consentAt\":\"2026-10-08T10:00:00.000Z\",\"consentVersion\":\"v1\",\"statusHistory\":[]}}"
             },
             {
               "name": "403 – Phone Not Verified",
@@ -10203,6 +10203,42 @@
                   "body": "{\"success\":false,\"message\":\"Cannot send a fee reminder for commission status PENDING, not INVOICED\"}"
                 }
               ]
+            },
+            {
+              "name": "Get Escrow Receipt",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/escrow/{{escrowId}}/receipt",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "escrow",
+                    "{{escrowId}}",
+                    "receipt"
+                  ]
+                },
+                "description": "Added 2026-10-08. Returns a PDF directly (Content-Type: application/pdf), not the JSON envelope. 400 if no payment has been captured yet."
+              },
+              "response": [
+                {
+                  "name": "400 – Not Captured Yet",
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"No receipt yet — payment has not been captured for this escrow\"}"
+                }
+              ]
             }
           ]
         },
@@ -11686,7 +11722,7 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":true,\"message\":\"Loan status updated\",\"data\":{\"id\":\"669eee555fff666aaa777bbb\",\"status\":\"SANCTIONED\",\"adminNote\":\"Sanctioned by HDFC Bank at 8.5% for 240 months.\",\"interestRatePct\":8.5,\"tenureMonths\":240,\"emiPaise\":3450000,\"sanctionLetterUrl\":\"https://realtydoor-bucket.s3.ap-south-1.amazonaws.com/loans/sanction-669eee.pdf\",\"sanctionedAt\":\"2026-05-27T11:00:00.000Z\",\"updatedAt\":\"2026-05-27T11:00:00.000Z\"}}"
+                  "body": "{\"success\":true,\"message\":\"Loan status updated\",\"data\":{\"id\":\"669eee555fff666aaa777bbb\",\"status\":\"SANCTIONED\",\"adminNote\":\"Sanctioned by HDFC Bank at 8.5% for 240 months.\",\"interestRatePct\":8.5,\"tenureMonths\":240,\"emiPaise\":3450000,\"sanctionLetterUrl\":\"https://realtydoor-bucket.s3.ap-south-1.amazonaws.com/loans/sanction-669eee.pdf\",\"sanctionedAt\":\"2026-05-27T11:00:00.000Z\",\"updatedAt\":\"2026-05-27T11:00:00.000Z\",\"statusHistory\":[\"{\\\"status\\\":\\\"SANCTIONED\\\",\\\"at\\\":\\\"2026-10-08T10:00:00.000Z\\\",\\\"note\\\":\\\"Sanctioned by HDFC Bank at 8.5% for 240 months.\\\"}\"]}}"
                 }
               ]
             },
@@ -13879,7 +13915,7 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"message\":\"Escrow order created\",\"data\":{\"escrow\":{\"id\":\"66bbb111ccc222ddd333eee4\",\"status\":\"PAYMENT_PENDING\",\"amount\":100000},\"razorpayOrder\":{\"id\":\"order_Abc123XYZescrow\",\"amount\":10000000,\"currency\":\"INR\"}}}"
+              "body": "{\"success\":true,\"message\":\"Escrow order created\",\"data\":{\"escrow\":{\"id\":\"66bbb111ccc222ddd333eee4\",\"status\":\"PAYMENT_PENDING\",\"amount\":100000},\"razorpayOrder\":{\"id\":\"order_Abc123XYZescrow\",\"amount\":10000000,\"currency\":\"INR\"},\"key\":\"rzp_live_Abc123XYZ\",\"refundProtectionFeePct\":0}}"
             },
             {
               "name": "400 – Escrow Already Exists",
@@ -13926,6 +13962,20 @@
               ],
               "cookie": [],
               "body": "{\"success\":false,\"message\":\"Escrow can only be created after the site visit is done\",\"data\":null}"
+            },
+            {
+              "name": "400 – Over The Deal-Price Cap",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Maximum escrow amount is ₹500,000 (10% of the deal price)\"}"
             }
           ]
         }

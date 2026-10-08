@@ -1208,9 +1208,21 @@ async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields 
   if (status === 'SANCTIONED') statusFields.sanctionedAt = new Date();
   if (status === 'DISBURSED')  statusFields.disbursedAt  = new Date();
 
+  // Dev feedback, 2026-10-08 — statusHistory existed on the model but
+  // nothing ever wrote to it, so the tracker's step list could only ever
+  // show the current status, never when each stage was actually reached
+  // or why. JSON-encoded per entry (same convention as editlog.prisma's
+  // stored diffs), carrying `note` — the reason for THIS specific
+  // transition, not the lead-level adminNote it may fall back to — so a
+  // dated timeline can show what changed and why at each step.
+  const historyEntry = JSON.stringify({ status, at: new Date().toISOString(), note: adminNote || null });
+
   const updated = await prisma.loanApplication.update({
     where: { id: loanId },
-    data: { status, adminNote: adminNote || loan.adminNote, ...statusFields, ...extraFields },
+    data: {
+      status, adminNote: adminNote || loan.adminNote, ...statusFields, ...extraFields,
+      statusHistory: [...loan.statusHistory, historyEntry],
+    },
   });
 
   await createNotification({
@@ -1218,7 +1230,9 @@ async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields 
     title:   'Loan Application Update',
     message: `Your loan application status has been updated to ${status.replace(/_/g, ' ')}.`,
     type:    'LOAN_STATUS_UPDATE',
-    linkUrl: `/dashboard/loan/${loanId}`,
+    // Dev feedback, 2026-10-08 — /dashboard/loan/:id doesn't exist in the
+    // frontend; /user/loans does.
+    linkUrl: '/user/loans',
   });
 
   sendLoanStatusUpdate(loan.user.email, status, adminNote).catch(() => {});

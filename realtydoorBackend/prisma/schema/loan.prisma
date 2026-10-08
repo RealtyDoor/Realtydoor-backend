@@ -26,6 +26,18 @@ model LoanApplication {
   rejectionReason          String?
 
   submittedDocIds          String[]
+  // Dev feedback, 2026-10-08 — the form already has a document-sharing
+  // checkbox, but nothing backend-side validated or stored it (same gap
+  // class as Lead.buyerConsentAt/User.kycConsentAt) — the attached
+  // submittedDocIds had nowhere to record that sharing them was consented
+  // to. Timestamp-presence, not a bare boolean, so it also records *when*;
+  // consentVersion alongside it, same two-field shape as
+  // User.partnerTermsVersion/partnerTermsAcceptedAt, so which version of
+  // the sharing terms was agreed to is traceable if that text ever
+  // changes. Only required when submittedDocIds is non-empty — nothing to
+  // consent to sharing on a loan application with no documents attached.
+  consentAt                DateTime?
+  consentVersion           String?
 
   createdAt                DateTime   @default(now())
   updatedAt                DateTime   @updatedAt

@@ -72,4 +72,36 @@ function buildTicketChargeReceiptPdf({ ticketSubject, userName, visitCharge, par
   });
 }
 
-module.exports = { buildCommissionReceiptPdf, buildTicketChargeReceiptPdf };
+// Dev feedback, 2026-10-08 — the buyer's token-advance receipt had no
+// backend endpoint at all; the frontend's "receipt" was a browser print of
+// the on-screen summary. Same "simple receipt, not a GST tax invoice"
+// scope as the other two.
+function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, razorpayPaymentId, paidAt }) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50 });
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fontSize(20).fillColor('#111').text('RealtyDoor', { align: 'left' });
+    doc.fontSize(11).fillColor('#666').text('Token Advance Receipt');
+    doc.moveDown(0.5).fontSize(9).fillColor('#999')
+      .text(`Receipt for lead ${refCode || ''}`.trim());
+
+    doc.moveDown(1).fontSize(11).fillColor('#333');
+    doc.text(`Paid by: ${buyerName || 'N/A'}`);
+    doc.text(`Property: ${propertyTitle || 'N/A'}`);
+    doc.moveDown(0.3).fontSize(14).fillColor('#111').text(`Amount paid: ${formatRupees(amount)}`);
+    doc.moveDown(0.3).fontSize(11).fillColor('#333');
+    doc.text(`Payment reference: ${razorpayPaymentId || 'N/A'}`);
+    doc.text(`Paid on: ${paidAt ? new Date(paidAt).toLocaleDateString('en-IN') : 'N/A'}`);
+
+    doc.moveDown(1.5).fontSize(8).fillColor('#999')
+      .text('This is a payment receipt, not a GST tax invoice.', { align: 'center' });
+
+    doc.end();
+  });
+}
+
+module.exports = { buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf };

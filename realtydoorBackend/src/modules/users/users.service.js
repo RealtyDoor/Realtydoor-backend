@@ -375,9 +375,24 @@ async function addTicketComment(userId, ticketId, { text, photos }) {
   });
 }
 
-async function createLoanApplication(userId, data) {
+async function createLoanApplication(userId, { consent, consentVersion, submittedDocIds, ...data }) {
+  // Dev feedback, 2026-10-08 — submittedDocIds must actually be this user's
+  // own documents; otherwise one user could attach another's PAN/Aadhaar
+  // to their own loan application by guessing/reusing an id.
+  if (submittedDocIds?.length) {
+    const owned = await prisma.userDocument.count({ where: { id: { in: submittedDocIds }, userId } });
+    if (owned !== submittedDocIds.length) {
+      throw new ApiError(400, 'One or more submitted documents do not belong to you');
+    }
+  }
+
   return prisma.loanApplication.create({
-    data: { ...data, userId },
+    data: {
+      ...data, userId,
+      ...(submittedDocIds?.length && {
+        submittedDocIds, consentAt: new Date(), ...(consentVersion && { consentVersion }),
+      }),
+    },
   });
 }
 
