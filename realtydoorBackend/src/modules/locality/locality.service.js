@@ -3,11 +3,15 @@ const ApiError = require('../../utils/ApiError');
 const { withCache, cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 const { buildLocalityReportPdf } = require('../../lib/pdfReport');
+const { canonicalizeCity, cityAliasQueryGroup } = require('../../lib/cityAlias');
 
+// Backend gaps handoff, 2026-10-10 (#7C) — same alias-group safety net as
+// properties.service.js's search, applied here too ("apply the same to
+// locality-insights and city counts").
 async function getLocality(city, locality) {
   const insight = await prisma.localityInsight.findFirst({
     where: {
-      city:     { equals: city,     mode: 'insensitive' },
+      OR: cityAliasQueryGroup(city).map((v) => ({ city: { equals: v, mode: 'insensitive' } })),
       locality: { equals: locality, mode: 'insensitive' },
     },
   });
@@ -16,7 +20,8 @@ async function getLocality(city, locality) {
 }
 
 async function upsertLocality(data, adminId) {
-  const { city, locality, dataAsOfDate, ...rest } = data;
+  const { city: rawCity, locality, dataAsOfDate, ...rest } = data;
+  const city = canonicalizeCity(rawCity);
   const resolvedDataAsOfDate = dataAsOfDate ? new Date(dataAsOfDate) : new Date();
   const saved = await prisma.localityInsight.upsert({
     where:  { city_locality: { city, locality } },
@@ -29,7 +34,7 @@ async function upsertLocality(data, adminId) {
 
 async function listLocalities({ city } = {}, skip = 0, limit = 20) {
   const where = {};
-  if (city) where.city = { equals: city, mode: 'insensitive' };
+  if (city) where.OR = cityAliasQueryGroup(city).map((v) => ({ city: { equals: v, mode: 'insensitive' } }));
 
   const [data, total] = await prisma.$transaction([
     prisma.localityInsight.findMany({ where, skip, take: limit, orderBy: { city: 'asc' } }),
@@ -66,7 +71,7 @@ async function getLocalityPage(city, locality) {
 async function buildLocalityPage(city, locality) {
   const insight = await prisma.localityInsight.findFirst({
     where: {
-      city:     { equals: city,     mode: 'insensitive' },
+      OR: cityAliasQueryGroup(city).map((v) => ({ city: { equals: v, mode: 'insensitive' } })),
       locality: { equals: locality, mode: 'insensitive' },
     },
   });
@@ -154,9 +159,13 @@ async function buildCitiesSummary() {
     }),
   ]);
 
-  // Aggregate price + trend per city from LocalityInsight rows
+  // Aggregate price + trend per city from LocalityInsight rows. Grouped by
+  // the canonicalized spelling (#7C) as a defensive measure — write paths
+  // already canonicalize, but this keeps the summary correct even for a
+  // row written off that path or not yet covered by the one-off migration.
   const cityInsights = {};
-  localities.forEach(({ city, avgPricePerSqftPaise, priceChangeLastMonthPct }) => {
+  localities.forEach(({ city: rawCity, avgPricePerSqftPaise, priceChangeLastMonthPct }) => {
+    const city = canonicalizeCity(rawCity);
     if (!cityInsights[city]) cityInsights[city] = { prices: [], trends: [] };
     cityInsights[city].prices.push(avgPricePerSqftPaise);
     if (priceChangeLastMonthPct != null) cityInsights[city].trends.push(priceChangeLastMonthPct);
@@ -164,7 +173,10 @@ async function buildCitiesSummary() {
 
   // Count live listings per city
   const cityCounts = {};
-  properties.forEach(({ city }) => { cityCounts[city] = (cityCounts[city] || 0) + 1; });
+  properties.forEach(({ city: rawCity }) => {
+    const city = canonicalizeCity(rawCity);
+    cityCounts[city] = (cityCounts[city] || 0) + 1;
+  });
 
   const allCities = new Set([...Object.keys(cityInsights), ...Object.keys(cityCounts)]);
   return [...allCities]

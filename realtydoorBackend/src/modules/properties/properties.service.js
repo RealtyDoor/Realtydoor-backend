@@ -5,6 +5,9 @@ const { withCache, cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 const logger = require('../../lib/logger');
 const { recordOwnerReport } = require('../listings/integrity.service');
+const { canonicalizeCity, cityAliasQueryGroup } = require('../../lib/cityAlias');
+
+const OBJECT_ID_RE = /^[0-9a-f]{24}$/i;
 
 // 4.14 — "appears in search results". null means searchable: these fields were
 // added after 18 listings were already live, and on MongoDB a Prisma default
@@ -45,7 +48,16 @@ async function searchProperties(query, skip, limit, page) {
       { locality: { contains: query.q, mode: 'insensitive' } },
     ];
   }
-  if (query.city) where.city = { equals: query.city, mode: 'insensitive' };
+  // Backend gaps handoff, 2026-10-10 (#7C) — OR over the full alias group
+  // (Bengaluru/Bangalore/Bangaluru/Banglore all mean the same city), not an
+  // exact (even case-insensitive) match — that only covered case, not the
+  // genuinely different spellings the data actually holds. Pushed onto
+  // where.AND, not where.city directly, since where.OR below is already
+  // used for the free-text `q` search on a different field set.
+  if (query.city) {
+    if (!where.AND) where.AND = [];
+    where.AND.push({ OR: cityAliasQueryGroup(query.city).map((v) => ({ city: { equals: v, mode: 'insensitive' } })) });
+  }
   if (query.locality) where.locality = { contains: query.locality, mode: 'insensitive' };
   if (query.propertyType) where.propertyType = query.propertyType;
   if (query.listingType) where.listingType = query.listingType;
@@ -55,8 +67,12 @@ async function searchProperties(query, skip, limit, page) {
     // unconditionally meant a rent search with a price range silently
     // excluded every rental listing (monthlyRent-only rows have price: null).
     const priceField = (query.listingType === 'RENT' || query.listingType === 'LEASE') ? 'monthlyRent' : 'price';
-    where[priceField] = {};
-    if (query.minPrice) where[priceField].gte = Number(query.minPrice);
+    // Backend gaps handoff, 2026-10-10 (#7B) — always include a `gte`
+    // (defaulting to 0) whenever either bound is given. A max-only range
+    // ({lte: maxPrice} alone) let listings with no price/monthlyRent at all
+    // match, since a missing field isn't excluded the way it would be from
+    // a genuinely bounded range — measured against real data, not assumed.
+    where[priceField] = { gte: Number(query.minPrice ?? 0) };
     if (query.maxPrice) where[priceField].lte = Number(query.maxPrice);
   }
   if (query.minArea || query.maxArea) {
@@ -82,7 +98,13 @@ async function searchProperties(query, skip, limit, page) {
     });
   }
 
-  const orderBy = SORT_MAP[query.sort] || { createdAt: 'desc' };
+  // Backend gaps handoff, 2026-10-10 (#7A) — a single sort key (especially
+  // price/area, with many ties) left paging non-deterministic: the same row
+  // could appear on two pages, or never appear at all, as ties got ordered
+  // differently between requests (measured against real data: 47 rows /
+  // 39 unique across a full paged walk). createdAt desc, then id asc as a
+  // hard final tiebreaker, guarantees a total order.
+  const orderBy = [SORT_MAP[query.sort] ?? { createdAt: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }];
 
   const [data, total] = await prisma.$transaction([
     prisma.property.findMany({
@@ -113,9 +135,18 @@ async function searchProperties(query, skip, limit, page) {
   return paginate(data, total, page, limit);
 }
 
-async function getPropertyBySlug(slug) {
-  const property = await prisma.property.findUnique({
-    where: { slug, publishStatus: 'APPROVED' },
+// Backend gaps handoff, 2026-10-10 (#7F) — accepts either the slug or the
+// raw ObjectId. GET /user/properties/:id/inquiry-sent and notification
+// links hand back the property id, not the slug, and that previously 404'd
+// here outright (findUnique only ever matched slug). Same
+// approved-only/not-B2B-only rules either way — this is not a back door to
+// an unpublished or B2B-only listing via its id.
+async function getPropertyByIdOrSlug(idOrSlug) {
+  const property = await prisma.property.findFirst({
+    where: {
+      publishStatus: 'APPROVED',
+      ...(OBJECT_ID_RE.test(idOrSlug) ? { OR: [{ slug: idOrSlug }, { id: idOrSlug }] } : { slug: idOrSlug }),
+    },
     include: {
       partner: {
         select: { id: true, name: true, companyName: true, partnerSubType: true, kycStatus: true, profileImageUrl: true },
@@ -393,6 +424,11 @@ async function createProperty(data, partnerId) {
 
   if (!data.facing) data.facing = 'East';
   if (!data.furnishing) data.furnishing = 'Unfurnished';
+  // Backend gaps handoff, 2026-10-10 (#7C) — canonicalized at the one
+  // place every new listing's city is written, so the data stops drifting
+  // further while scripts/canonicalizeCityNames.js cleans up what's
+  // already there.
+  if (data.city) data.city = canonicalizeCity(data.city);
 
   // 4.6 — a stored mapLink without its parsed coordinates would describe
   // nothing, so they are derived wherever mapLink is written.
@@ -451,6 +487,7 @@ async function updateProperty(id, partnerId, data) {
 
   const FORBIDDEN = ['publishStatus', 'isVerified', 'partnerId'];
   FORBIDDEN.forEach((f) => delete data[f]);
+  if (data.city) data.city = canonicalizeCity(data.city);
 
   if (property.publishStatus === 'APPROVED') {
     const changes = diffProperty(property, data);
@@ -608,7 +645,7 @@ async function addConstructionUpdate(propertyId, partnerId, data) {
 }
 
 module.exports = {
-  searchProperties, getPropertyBySlug, createProperty, updateProperty, getFeaturedProperties,
+  searchProperties, getPropertyByIdOrSlug, createProperty, updateProperty, getFeaturedProperties,
   addImages, addVideos, addDocuments, getPropertyEditLogs,
   getConstructionUpdates, addConstructionUpdate, reportUnauthorizedListing,
 };

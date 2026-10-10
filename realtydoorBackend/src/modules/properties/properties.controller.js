@@ -15,7 +15,7 @@ async function search(req, res, next) {
 
 async function getBySlug(req, res, next) {
   try {
-    const property = await service.getPropertyBySlug(req.params.slug);
+    const property = await service.getPropertyByIdOrSlug(req.params.slug);
     success(res, property);
   } catch (err) { next(err); }
 }
