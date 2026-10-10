@@ -2024,6 +2024,164 @@
           ]
         },
         {
+          "name": "Get Consent State",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/consent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "consent"
+              ]
+            },
+            "description": "Privacy spec, 2026-10-10 — everything the Settings screen's consent/notification/deletion state depends on, in one read. kycConsentAt/partnerTermsVersion/partnerTermsAcceptedAt are included only for a PARTNER account."
+          },
+          "response": [
+            {
+              "name": "200 – Consent State",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"data\":{\"termsAcceptedAt\":\"2026-09-20T10:00:00.000Z\",\"privacyAcceptedAt\":\"2026-09-20T10:00:00.000Z\",\"marketingOptIn\":false,\"marketingOptInAt\":null,\"consentWithdrawnAt\":null,\"deletionRequestedAt\":null,\"deletionScheduledAt\":null,\"deletionCancelledAt\":null,\"deletionRequested\":false,\"notificationPreferences\":{\"push\":true,\"email\":true,\"whatsapp\":true,\"marketing\":false,\"visitReminders\":true}}}"
+            }
+          ]
+        },
+        {
+          "name": "Withdraw Consent",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/privacy/withdraw-consent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "privacy",
+                "withdraw-consent"
+              ]
+            },
+            "description": "Privacy spec, 2026-10-10 — withdraws consent. Distinct from account deletion: this does not by itself request erasure. Recorded to the privacy audit trail as CONSENT_WITHDRAWN."
+          },
+          "response": [
+            {
+              "name": "200 – Consent Withdrawn",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Consent withdrawn\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"consentWithdrawnAt\":\"2026-10-10T10:00:00.000Z\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Request Account Deletion",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/privacy/delete-account",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "privacy",
+                "delete-account"
+              ]
+            },
+            "description": "Privacy spec, 2026-10-10 — requests account deletion with a 30-day grace period (cancellable via the Cancel Account Deletion request below). Blocked with 400 MONEY_IN_FLIGHT while an escrow payment is held (or pending/payout-failed) as a buyer, or a loan application hasn't reached DISBURSED/REJECTED — a daily job retries automatically once that clears. Recorded to the privacy audit trail as DELETION_REQUESTED."
+          },
+          "response": [
+            {
+              "name": "200 – Deletion Requested",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Account deletion requested. You have 30 days to cancel this before your data is anonymised.\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"deletionRequestedAt\":\"2026-10-10T10:00:00.000Z\",\"deletionScheduledAt\":\"2026-11-09T10:00:00.000Z\"}}"
+            },
+            {
+              "name": "400 – Money In Flight",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"Account deletion is blocked while you have an escrow payment held or a loan application in progress\",\"data\":{\"code\":\"MONEY_IN_FLIGHT\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Cancel Account Deletion",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/privacy/delete-account/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "privacy",
+                "delete-account",
+                "cancel"
+              ]
+            },
+            "description": "Privacy spec, 2026-10-10 — cancels a pending deletion request before the grace period expires. Recorded to the privacy audit trail as DELETION_CANCELLED."
+          },
+          "response": [
+            {
+              "name": "200 – Deletion Cancelled",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Account deletion cancelled\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"deletionCancelledAt\":\"2026-10-12T10:00:00.000Z\"}}"
+            }
+          ]
+        },
+        {
           "name": "Request Phone OTP",
           "request": {
             "method": "POST",

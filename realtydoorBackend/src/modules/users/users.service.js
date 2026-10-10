@@ -5,6 +5,10 @@ const escrowService = require('../escrow/escrow.service');
 const { getConfigNumber } = require('../config/config.service');
 const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
 const { sanitizeLeadForBuyer } = require('../leads/leads.service');
+const { createPrivacyAuditLog } = require('../../lib/privacyAuditLog');
+const { hasMoneyInFlight } = require('../../lib/accountDeletion');
+
+const DELETION_GRACE_PERIOD_DAYS = 30;
 
 const DEFAULT_ESCROW_REFUND_WINDOW_HOURS = 48;
 
@@ -199,7 +203,7 @@ async function getFavorites(userId) {
   return favs.map((f) => ({ ...f.property, favoritedAt: f.savedAt }));
 }
 
-async function updateProfile(userId, { notificationPreferences, city, ...rest }) {
+async function updateProfile(userId, { notificationPreferences, city, ...rest }, ipAddress, userAgent) {
   const data = { ...rest };
   if (city !== undefined) data.preferredCity = city;
 
@@ -208,7 +212,14 @@ async function updateProfile(userId, { notificationPreferences, city, ...rest })
     if (push           !== undefined) data.notifPush           = push;
     if (email          !== undefined) data.notifEmail          = email;
     if (whatsapp       !== undefined) data.notifWhatsapp       = whatsapp;
-    if (marketing      !== undefined) data.notifMarketing      = marketing;
+    // Privacy spec, 2026-10-10 — the Settings screen's "Marketing
+    // communication" toggle now writes the same marketingOptIn/
+    // marketingOptInAt pair the onboarding consent screen uses
+    // (updateConsent below), instead of the old, unsynced notifMarketing.
+    if (marketing      !== undefined) {
+      data.marketingOptIn   = marketing;
+      data.marketingOptInAt = marketing ? new Date() : null;
+    }
     if (visitReminders !== undefined) data.notifVisitReminders = visitReminders;
   }
 
@@ -220,9 +231,16 @@ async function updateProfile(userId, { notificationPreferences, city, ...rest })
       isNRI: true, profileImageUrl: true, role: true, updatedAt: true,
       address: true, language: true, preferredCity: true,
       buyerType: true, budget: true, bhk: true, timeline: true,
-      notifPush: true, notifEmail: true, notifWhatsapp: true, notifMarketing: true, notifVisitReminders: true,
+      notifPush: true, notifEmail: true, notifWhatsapp: true, marketingOptIn: true, notifVisitReminders: true,
     },
   });
+
+  if (notificationPreferences) {
+    await createPrivacyAuditLog({
+      userId, action: 'NOTIFICATION_PREFS_UPDATED', ipAddress, userAgent,
+      metadata: notificationPreferences,
+    });
+  }
 
   return formatProfileSettings(user);
 }
@@ -230,20 +248,20 @@ async function updateProfile(userId, { notificationPreferences, city, ...rest })
 // Shared re-nesting so the API returns notificationPreferences/city in the
 // same shape the PATCH body accepts them in, not as flat DB columns.
 function formatProfileSettings(user) {
-  const { preferredCity, notifPush, notifEmail, notifWhatsapp, notifMarketing, notifVisitReminders, ...rest } = user;
+  const { preferredCity, notifPush, notifEmail, notifWhatsapp, marketingOptIn, notifVisitReminders, ...rest } = user;
   return {
     ...rest,
     ...(preferredCity !== undefined && { city: preferredCity }),
     ...(notifPush !== undefined && {
       notificationPreferences: {
         push: notifPush, email: notifEmail, whatsapp: notifWhatsapp,
-        marketing: notifMarketing, visitReminders: notifVisitReminders,
+        marketing: marketingOptIn, visitReminders: notifVisitReminders,
       },
     }),
   };
 }
 
-async function updateConsent(userId, { termsAccepted, privacyAccepted, marketingOptIn }) {
+async function updateConsent(userId, { termsAccepted, privacyAccepted, marketingOptIn }, ipAddress, userAgent) {
   const data = {};
   const now = new Date();
   if (termsAccepted)          data.termsAcceptedAt   = now;
@@ -253,7 +271,7 @@ async function updateConsent(userId, { termsAccepted, privacyAccepted, marketing
     data.marketingOptInAt = marketingOptIn ? now : null;
   }
 
-  return prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: userId },
     data,
     select: {
@@ -261,6 +279,118 @@ async function updateConsent(userId, { termsAccepted, privacyAccepted, marketing
       marketingOptIn: true, marketingOptInAt: true,
     },
   });
+
+  // One row per consent actually given this call, not one row for the whole
+  // request — a caller accepting terms AND opting into marketing in the same
+  // PATCH did two separate consent-worthy things, and the spec wants each
+  // event individually recorded.
+  if (termsAccepted)   await createPrivacyAuditLog({ userId, action: 'TERMS_ACCEPTED', ipAddress, userAgent });
+  if (privacyAccepted) await createPrivacyAuditLog({ userId, action: 'PRIVACY_ACCEPTED', ipAddress, userAgent });
+  if (marketingOptIn !== undefined) {
+    await createPrivacyAuditLog({
+      userId, action: marketingOptIn ? 'MARKETING_OPT_IN' : 'MARKETING_OPT_OUT', ipAddress, userAgent,
+    });
+  }
+
+  return updated;
+}
+
+// Privacy spec, 2026-10-10 — "the app can't see what a user agreed to
+// today." A single read covering every consent/preference surface the
+// Settings screen shows, so the app doesn't have to assemble it from
+// several endpoints.
+async function getConsentState(userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      role: true,
+      termsAcceptedAt: true, privacyAcceptedAt: true,
+      marketingOptIn: true, marketingOptInAt: true,
+      consentWithdrawnAt: true,
+      notifPush: true, notifEmail: true, notifWhatsapp: true, notifVisitReminders: true,
+      deletionRequestedAt: true, deletionScheduledAt: true, deletionCancelledAt: true,
+      kycConsentAt: true, partnerTermsVersion: true, partnerTermsAcceptedAt: true,
+    },
+  });
+  if (!user) throw new ApiError(404, 'User not found');
+
+  const {
+    role, notifPush, notifEmail, notifWhatsapp, notifVisitReminders, marketingOptIn,
+    kycConsentAt, partnerTermsVersion, partnerTermsAcceptedAt,
+    ...rest
+  } = user;
+
+  return {
+    ...rest,
+    marketingOptIn,
+    notificationPreferences: {
+      push: notifPush, email: notifEmail, whatsapp: notifWhatsapp,
+      marketing: marketingOptIn, visitReminders: notifVisitReminders,
+    },
+    deletionRequested: Boolean(user.deletionRequestedAt && user.deletionScheduledAt),
+    // Partner-only consent surfaces — omitted entirely for buyers, rather
+    // than sent as null, so the app doesn't render a partner section for a
+    // role that was never shown it.
+    ...(role === 'PARTNER' && { kycConsentAt, partnerTermsVersion, partnerTermsAcceptedAt }),
+  };
+}
+
+// Distinct from deletion: withdrawing consent says "stop processing my data
+// the way you were", it does not by itself ask for erasure. The Settings
+// screen may chain this with a deletion request, but the two are recorded
+// (and can happen) independently.
+async function withdrawConsent(userId, ipAddress, userAgent) {
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { consentWithdrawnAt: new Date() },
+    select: { id: true, consentWithdrawnAt: true },
+  });
+  await createPrivacyAuditLog({ userId, action: 'CONSENT_WITHDRAWN', ipAddress, userAgent });
+  return updated;
+}
+
+// Privacy spec, 2026-10-10 — 30-day grace period, cancellable, blocked while
+// money is in flight. deletionRequestedAt/deletionScheduledAt are the ACTIVE
+// request state (jobs/processAccountDeletions.js acts on deletionScheduledAt
+// directly); the historical fact that a request happened lives permanently
+// in the audit log, not in these two columns, which cancelAccountDeletion
+// below clears back to null.
+async function requestAccountDeletion(userId, ipAddress, userAgent) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, deletedAt: true } });
+  if (!user) throw new ApiError(404, 'User not found');
+  if (user.deletedAt) throw new ApiError(400, 'This account has already been deleted');
+
+  if (await hasMoneyInFlight(userId)) {
+    throw new ApiError(400, 'Account deletion is blocked while you have an escrow payment held or a loan application in progress', {
+      code: 'MONEY_IN_FLIGHT',
+    });
+  }
+
+  const now = new Date();
+  const deletionScheduledAt = new Date(now.getTime() + DELETION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { deletionRequestedAt: now, deletionScheduledAt, deletionCancelledAt: null },
+    select: { id: true, deletionRequestedAt: true, deletionScheduledAt: true },
+  });
+
+  await createPrivacyAuditLog({ userId, action: 'DELETION_REQUESTED', ipAddress, userAgent });
+  return updated;
+}
+
+async function cancelAccountDeletion(userId, ipAddress, userAgent) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { deletionRequestedAt: true } });
+  if (!user?.deletionRequestedAt) throw new ApiError(400, 'There is no pending deletion request to cancel');
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { deletionRequestedAt: null, deletionScheduledAt: null, deletionCancelledAt: new Date() },
+    select: { id: true, deletionCancelledAt: true },
+  });
+
+  await createPrivacyAuditLog({ userId, action: 'DELETION_CANCELLED', ipAddress, userAgent });
+  return updated;
 }
 
 function serializeDoc(doc) {
@@ -455,6 +585,7 @@ module.exports = {
   requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyLead, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
   formatProfileSettings,
   updateConsent,
+  getConsentState, withdrawConsent, requestAccountDeletion, cancelAccountDeletion,
   getDocuments, uploadDocument, getSubscriptions,
   raiseTicket, getMyTickets, getMyTicketById, verifyTicket,
   reopenTicket, withdrawTicket, getTicketComments, addTicketComment,

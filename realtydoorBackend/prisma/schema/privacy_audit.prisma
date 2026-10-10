@@ -1,0 +1,33 @@
+// ─── USER PRIVACY AUDIT LOG ─────────────────────────────────────────────────
+// Immutable record of user-initiated privacy/consent events — distinct from
+// AuditLog above, which requires an adminId and records admin actions on
+// other people's records. This logs a user's own actions on their own data
+// (consent given/withdrawn, legal doc accepted, notification prefs changed,
+// deletion requested/cancelled, deletion carried out).
+//
+// userId is a plain scalar, not a @relation, by design: when the grace
+// period ends, the referenced User row is anonymized in place (not
+// deleted), but if it ever needs to be hard-deleted, or if Prisma's lack of
+// a Mongo onDelete rule ever becomes relevant, this row must survive
+// regardless — the audit trail is the one thing the spec says must always
+// be kept. Same reasoning as Lead.relatedLeadId.
+//
+// action examples: CONSENT_GIVEN | CONSENT_WITHDRAWN | TERMS_ACCEPTED |
+//   PRIVACY_ACCEPTED | MARKETING_OPT_IN | MARKETING_OPT_OUT |
+//   NOTIFICATION_PREFS_UPDATED | DELETION_REQUESTED | DELETION_CANCELLED |
+//   DELETION_COMPLETED
+
+model UserPrivacyAuditLog {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId          String   @db.ObjectId
+  action          String
+  documentVersion String?
+  ipAddress       String?
+  userAgent       String?
+  metadata        String?
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action, createdAt])
+}

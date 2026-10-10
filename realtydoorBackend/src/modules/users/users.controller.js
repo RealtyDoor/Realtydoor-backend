@@ -68,8 +68,36 @@ async function cancelLead(req, res, next) {
 async function updateConsent(req, res, next) {
   try {
     const data = updateConsentSchema.parse(req.body);
-    const result = await service.updateConsent(req.user.id, data);
+    const result = await service.updateConsent(req.user.id, data, req.ip, req.headers['user-agent']);
     success(res, result, 'Consent recorded');
+  } catch (err) { next(err); }
+}
+
+async function getConsentState(req, res, next) {
+  try {
+    const result = await service.getConsentState(req.user.id);
+    success(res, result);
+  } catch (err) { next(err); }
+}
+
+async function withdrawConsent(req, res, next) {
+  try {
+    const result = await service.withdrawConsent(req.user.id, req.ip, req.headers['user-agent']);
+    success(res, result, 'Consent withdrawn');
+  } catch (err) { next(err); }
+}
+
+async function requestAccountDeletion(req, res, next) {
+  try {
+    const result = await service.requestAccountDeletion(req.user.id, req.ip, req.headers['user-agent']);
+    success(res, result, 'Account deletion requested. You have 30 days to cancel this before your data is anonymised.');
+  } catch (err) { next(err); }
+}
+
+async function cancelAccountDeletion(req, res, next) {
+  try {
+    const result = await service.cancelAccountDeletion(req.user.id, req.ip, req.headers['user-agent']);
+    success(res, result, 'Account deletion cancelled');
   } catch (err) { next(err); }
 }
 
@@ -196,7 +224,7 @@ async function getFavorites(req, res, next) {
 async function updateProfile(req, res, next) {
   try {
     const data = updateProfileSchema.parse(req.body);
-    const profile = await service.updateProfile(req.user.id, data);
+    const profile = await service.updateProfile(req.user.id, data, req.ip, req.headers['user-agent']);
     success(res, profile, 'Profile updated');
   } catch (err) { next(err); }
 }
@@ -234,6 +262,7 @@ async function getMyDisputes(req, res, next) {
 module.exports = {
   requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyLead, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
   updateConsent,
+  getConsentState, withdrawConsent, requestAccountDeletion, cancelAccountDeletion,
   getDocuments, uploadDocument, getSubscriptions,
   raiseTicket, getMyTickets, getMyTicketById, verifyTicket,
   reopenTicket, withdrawTicket, getTicketComments, addTicketComment,

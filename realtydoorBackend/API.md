@@ -1484,6 +1484,8 @@ Update profile, settings, and onboarding preferences.
 
 All fields are optional (at least one must be provided). `language`: `en` · `kn` · `hi`. `notificationPreferences` is a partial object — send only the keys you want to change (`push`, `email`, `whatsapp`, `marketing`, `visitReminders`); untouched keys keep their existing value. `buyerType`: `BUYER` · `RENTER` · `INVESTOR`. `timeline`: `NOW` · `3_6_MONTHS` · `BROWSING`. The `buyerType`/`city`/`budget`/`bhk`/`timeline` group is the mandatory "let's get started" step collected right after Google + phone verification.
 
+Privacy spec, 2026-10-10: `notificationPreferences.marketing` now writes the same `marketingOptIn`/`marketingOptInAt` pair that `PATCH /api/user/consent` and `GET /api/user/consent` use — it was previously a separate, unsynced column. Every change under `notificationPreferences` is recorded to the privacy audit trail (not returned in the response).
+
 **Response `200`:**
 
 ```json
@@ -1517,6 +1519,8 @@ Record onboarding consent (terms, privacy, marketing).
 
 All three fields are optional; at least one must be provided. `termsAccepted`/`privacyAccepted` record a one-time acceptance timestamp and are not revocable once set (sending `false` is a no-op for them). `marketingOptIn` is a genuine on/off toggle.
 
+Each consent actually given/changed in a single call is recorded as its own row in the privacy audit trail (`TERMS_ACCEPTED`, `PRIVACY_ACCEPTED`, `MARKETING_OPT_IN`/`MARKETING_OPT_OUT`) — e.g. accepting terms and opting into marketing in the same request writes two rows, not one.
+
 **Response `200`:**
 
 ```json
@@ -1532,6 +1536,76 @@ All three fields are optional; at least one must be provided. `termsAccepted`/`p
   }
 }
 ```
+
+---
+
+### GET /api/user/consent
+
+Privacy spec, 2026-10-10 — read-only view of everything the Settings screen's consent/notification/deletion state depends on, so the app doesn't have to assemble it from several endpoints.
+
+**Auth:** USER
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "termsAcceptedAt": "2026-09-20T10:00:00.000Z",
+    "privacyAcceptedAt": "2026-09-20T10:00:00.000Z",
+    "marketingOptIn": false,
+    "marketingOptInAt": null,
+    "consentWithdrawnAt": null,
+    "deletionRequestedAt": null,
+    "deletionScheduledAt": null,
+    "deletionCancelledAt": null,
+    "deletionRequested": false,
+    "notificationPreferences": { "push": true, "email": true, "whatsapp": true, "marketing": false, "visitReminders": true }
+  }
+}
+```
+
+`kycConsentAt`/`partnerTermsVersion`/`partnerTermsAcceptedAt` are included only for a PARTNER account — omitted entirely (not `null`) for a buyer. `deletionRequested` is `true` only while a deletion is actively pending (set and not yet cancelled or carried out) — a convenience boolean so the app doesn't have to derive it from the two timestamps itself.
+
+---
+
+### POST /api/user/privacy/withdraw-consent
+
+Withdraws consent. Distinct from account deletion below — this records that the user no longer consents to how their data is being processed; it does not by itself request erasure. Recorded to the privacy audit trail as `CONSENT_WITHDRAWN`.
+
+**Auth:** USER
+
+**Response `200`:** `{ "success": true, "message": "Consent withdrawn", "data": { "id": "64user...", "consentWithdrawnAt": "2026-10-10T10:00:00.000Z" } }`
+
+---
+
+### POST /api/user/privacy/delete-account
+
+Requests account deletion, with a 30-day grace period before anything is actually anonymized (see `POST /api/user/privacy/delete-account/cancel` below to call it off within that window). Recorded to the privacy audit trail as `DELETION_REQUESTED`.
+
+**Auth:** USER
+
+**Response `200`:** `{ "success": true, "message": "Account deletion requested. You have 30 days to cancel this before your data is anonymised.", "data": { "id": "64user...", "deletionRequestedAt": "2026-10-10T10:00:00.000Z", "deletionScheduledAt": "2026-11-09T10:00:00.000Z" } }`
+
+**Errors:** `400 MONEY_IN_FLIGHT` — blocked while the caller has an escrow payment held (or payment pending / payout failed) as a buyer, or a loan application that hasn't reached `DISBURSED`/`REJECTED`. `400` the account has already been deleted.
+
+A daily job re-checks this same condition right before the grace period actually expires — a block only pauses the request, it never cancels it; it's retried automatically once the money is no longer in flight.
+
+---
+
+### POST /api/user/privacy/delete-account/cancel
+
+Cancels a pending deletion request before the grace period expires. Recorded to the privacy audit trail as `DELETION_CANCELLED`.
+
+**Auth:** USER
+
+**Response `200`:** `{ "success": true, "message": "Account deletion cancelled", "data": { "id": "64user...", "deletionCancelledAt": "2026-10-12T10:00:00.000Z" } }`
+
+**Errors:** `400` there is no pending deletion request to cancel.
+
+---
+
+**What happens when the grace period expires:** personal fields (name, email, phone, address, profile photo, bio, company name, PAN/GSTIN/RERA numbers and verified names, KYC document URLs, bank and billing contact details, RazorpayX payout ids) are overwritten with anonymized placeholders, and the existing `deletedAt` is set. `email`/`clerkId` are reassigned to a unique `deleted-<id>@...` placeholder rather than left real, freeing them up for reuse by someone else signing up. Business records that reference this user (leads, escrow transactions, loan applications, commissions) are left exactly as they were — they simply end up pointing at the now-anonymized row — and the privacy audit trail itself is never touched, recording a final `DELETION_COMPLETED` entry.
 
 ---
 

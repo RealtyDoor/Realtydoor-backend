@@ -20,6 +20,7 @@ const server = app.listen(PORT, () => {
   require('./src/jobs/cleanupIncompleteSignups').start();
   require('./src/jobs/escrowAutoEscalate').start();
   require('./src/jobs/resetWeeklyViews').start();
+  require('./src/jobs/processAccountDeletions').start();
 });
 
 process.on('unhandledRejection', (err) => {

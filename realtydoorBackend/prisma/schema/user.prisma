@@ -50,6 +50,13 @@ model User {
   notifPush           Boolean @default(true)
   notifEmail          Boolean @default(true)
   notifWhatsapp       Boolean @default(true)
+  // Privacy spec, 2026-10-10 — deprecated. This duplicated
+  // marketingOptIn/marketingOptInAt below (the Settings screen's
+  // "Marketing communication" toggle and the onboarding consent screen
+  // tracked the same decision in two unsynced fields). marketingOptIn is
+  // now the single source of truth for both; this column is kept only so
+  // a pre-migration row's old value isn't silently lost, never read or
+  // written by new code.
   notifMarketing      Boolean @default(false)
   notifVisitReminders Boolean @default(true)
 
@@ -155,6 +162,25 @@ model User {
   privacyAcceptedAt DateTime?
   marketingOptIn    Boolean   @default(false)
   marketingOptInAt  DateTime?
+  // Privacy spec, 2026-10-10 — set when either consent is explicitly
+  // withdrawn via POST /user/privacy/withdraw-consent (distinct from
+  // deletedAt below: withdrawing consent stops future processing but does
+  // not request erasure).
+  consentWithdrawnAt DateTime?
+
+  // Privacy spec, 2026-10-10 — account-deletion request with a 30-day
+  // grace period. deletionRequestedAt starts the clock;
+  // deletionScheduledAt (requestedAt + 30d) is what the daily cron
+  // compares against to run the anonymization; deletionCancelledAt is set
+  // if the user cancels before the deadline (deletionRequestedAt/
+  // deletionScheduledAt are left as-is for the audit trail — "cancelled"
+  // is derived as deletionCancelledAt > deletionRequestedAt, not cleared).
+  // deletedAt (existing field above) is reused as the final "anonymized"
+  // marker so every existing `deletedAt: null`/`isSet: false` filter
+  // across the codebase automatically excludes anonymized users too.
+  deletionRequestedAt DateTime?
+  deletionScheduledAt DateTime?
+  deletionCancelledAt DateTime?
 
   // Partner — visit availability
   visitDays     String[] // e.g. ['Mon','Tue','Wed','Thu','Fri','Sat']

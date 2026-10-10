@@ -23,6 +23,12 @@ router.patch('/profile', ctrl.updateProfile);
 
 // Onboarding consent
 router.patch('/consent', ctrl.updateConsent);
+router.get('/consent', ctrl.getConsentState);
+
+// Privacy — withdrawal and account deletion (grace period + cancel)
+router.post('/privacy/withdraw-consent',        ctrl.withdrawConsent);
+router.post('/privacy/delete-account',          ctrl.requestAccountDeletion);
+router.post('/privacy/delete-account/cancel',   ctrl.cancelAccountDeletion);
 
 // Phone verification (lazy — only called when needed)
 router.post('/verify-phone',     otpLimiter, ctrl.requestPhoneOtp);
