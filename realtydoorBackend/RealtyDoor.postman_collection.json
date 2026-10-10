@@ -2059,27 +2059,26 @@
           ]
         },
         {
-          "name": "Withdraw Consent",
+          "name": "Get Privacy State",
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/user/privacy/withdraw-consent",
+              "raw": "{{baseUrl}}/api/user/privacy",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "user",
-                "privacy",
-                "withdraw-consent"
+                "privacy"
               ]
             },
-            "description": "Privacy spec, 2026-10-10 — withdraws consent. Distinct from account deletion: this does not by itself request erasure. Recorded to the privacy audit trail as CONSENT_WITHDRAWN."
+            "description": "Backend gaps handoff, 2026-10-10 — the canonical nested-shape read the frontend's src/lib/privacy.ts actually calls. GET /api/user/consent above is kept as-is for its flatter shape."
           },
           "response": [
             {
-              "name": "200 – Consent Withdrawn",
+              "name": "200 – Privacy State",
               "status": "OK",
               "code": 200,
               "_postman_previewlanguage": "json",
@@ -2090,7 +2089,71 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"message\":\"Consent withdrawn\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"consentWithdrawnAt\":\"2026-10-10T10:00:00.000Z\"}}"
+              "body": "{\"success\":true,\"data\":{\"terms\":{\"acceptedAt\":\"2026-09-20T10:00:00.000Z\",\"version\":\"1\"},\"privacy\":{\"acceptedAt\":\"2026-09-20T10:00:00.000Z\",\"version\":\"1\",\"withdrawnAt\":null},\"marketingOptIn\":false,\"notificationPreferences\":{\"push\":true,\"email\":true,\"whatsapp\":true,\"marketing\":false,\"visitReminders\":true},\"currentVersions\":{\"terms\":\"1\",\"privacy\":\"1\"},\"requiresReconsent\":false,\"deletion\":{\"requestedAt\":null,\"scheduledFor\":null}}}"
+            }
+          ]
+        },
+        {
+          "name": "Withdraw Consent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scope\": \"MARKETING\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/user/consent/withdraw",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "consent",
+                "withdraw"
+              ]
+            },
+            "description": "Backend gaps handoff, 2026-10-10 — canonical path. scope: MARKETING just flips marketingOptIn off; scope: ALL also starts the 30-day deletion flow (same as Request Account Deletion below, including its money-in-flight block). The legacy POST /api/user/privacy/withdraw-consent (no body) still works as an alias, defaulting to scope: MARKETING. Rate-limited to 5/hour/user."
+          },
+          "response": [
+            {
+              "name": "200 – Consent Withdrawn (scope=MARKETING)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Consent withdrawn\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"marketingOptIn\":false}}"
+            },
+            {
+              "name": "200 – Consent Withdrawn (scope=ALL, also starts deletion)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Consent withdrawn\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"consentWithdrawnAt\":\"2026-10-10T10:00:00.000Z\",\"deletion\":{\"requestedAt\":\"2026-10-10T10:00:00.000Z\",\"scheduledFor\":\"2026-11-09T10:00:00.000Z\"},\"scheduledFor\":\"2026-11-09T10:00:00.000Z\"}}"
             }
           ]
         },
@@ -2098,20 +2161,34 @@
           "name": "Request Account Deletion",
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"confirm\": true,\n  \"reason\": \"moving to another platform\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
             "url": {
-              "raw": "{{baseUrl}}/api/user/privacy/delete-account",
+              "raw": "{{baseUrl}}/api/user/account/deletion-request",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "user",
-                "privacy",
-                "delete-account"
+                "account",
+                "deletion-request"
               ]
             },
-            "description": "Privacy spec, 2026-10-10 — requests account deletion with a 30-day grace period (cancellable via the Cancel Account Deletion request below). Blocked with 400 MONEY_IN_FLIGHT while an escrow payment is held (or pending/payout-failed) as a buyer, or a loan application hasn't reached DISBURSED/REJECTED — a daily job retries automatically once that clears. Recorded to the privacy audit trail as DELETION_REQUESTED."
+            "description": "Backend gaps handoff, 2026-10-10 — canonical path. confirm must be the literal true. reason is optional, stored only in the audit log. Requests account deletion with a 30-day grace period (cancellable via Cancel Account Deletion below). Blocked with 409 DELETION_BLOCKED while an escrow payment is held (or pending/payout-failed) as a buyer, or a loan application hasn't reached DISBURSED/REJECTED — a daily job retries automatically once that clears. Also best-effort revokes active Clerk sessions and applies a read-only lock to the rest of the API until cancelled. The legacy POST /api/user/privacy/delete-account (no body) still works as an alias. Rate-limited to 5/hour/user."
           },
           "response": [
             {
@@ -2126,12 +2203,12 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":true,\"message\":\"Account deletion requested. You have 30 days to cancel this before your data is anonymised.\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"deletionRequestedAt\":\"2026-10-10T10:00:00.000Z\",\"deletionScheduledAt\":\"2026-11-09T10:00:00.000Z\"}}"
+              "body": "{\"success\":true,\"message\":\"Account deletion requested. You have 30 days to cancel this before your data is anonymised.\",\"data\":{\"id\":\"6a1a3213aa8de854e8acfad8\",\"deletionRequestedAt\":\"2026-10-10T10:00:00.000Z\",\"deletionScheduledAt\":\"2026-11-09T10:00:00.000Z\",\"scheduledFor\":\"2026-11-09T10:00:00.000Z\"}}"
             },
             {
-              "name": "400 – Money In Flight",
-              "status": "Bad Request",
-              "code": 400,
+              "name": "409 – Deletion Blocked",
+              "status": "Conflict",
+              "code": 409,
               "_postman_previewlanguage": "json",
               "header": [
                 {
@@ -2140,29 +2217,28 @@
                 }
               ],
               "cookie": [],
-              "body": "{\"success\":false,\"message\":\"Account deletion is blocked while you have an escrow payment held or a loan application in progress\",\"data\":{\"code\":\"MONEY_IN_FLIGHT\"}}"
+              "body": "{\"success\":false,\"message\":\"Account deletion is blocked: An escrow payment is currently held\",\"data\":{\"code\":\"DELETION_BLOCKED\",\"reasons\":[\"An escrow payment is currently held\"]}}"
             }
           ]
         },
         {
           "name": "Cancel Account Deletion",
           "request": {
-            "method": "POST",
+            "method": "DELETE",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/user/privacy/delete-account/cancel",
+              "raw": "{{baseUrl}}/api/user/account/deletion-request",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "user",
-                "privacy",
-                "delete-account",
-                "cancel"
+                "account",
+                "deletion-request"
               ]
             },
-            "description": "Privacy spec, 2026-10-10 — cancels a pending deletion request before the grace period expires. Recorded to the privacy audit trail as DELETION_CANCELLED."
+            "description": "Backend gaps handoff, 2026-10-10 — canonical path (DELETE, no body). Cancels a pending deletion request before the grace period expires. Recorded to the privacy audit trail as DELETION_CANCELLED. The legacy POST /api/user/privacy/delete-account/cancel still works as an alias."
           },
           "response": [
             {
@@ -2788,6 +2864,56 @@
           ]
         },
         {
+          "name": "Delete Document",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/documents/{{documentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "documents",
+                "{{documentId}}"
+              ]
+            },
+            "description": "Backend gaps handoff, 2026-10-10 — blocked with 409 DOCUMENT_IN_USE while the document is attached to a loan application that hasn't reached DISBURSED/REJECTED."
+          },
+          "response": [
+            {
+              "name": "200 – Document Deleted",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"message\":\"Document deleted\",\"data\":null}"
+            },
+            {
+              "name": "409 – Document In Use",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"This document is attached to a loan application that is still in progress and cannot be deleted\",\"data\":{\"code\":\"DOCUMENT_IN_USE\"}}"
+            }
+          ]
+        },
+        {
           "name": "Get My Subscriptions",
           "request": {
             "method": "GET",
@@ -3250,6 +3376,42 @@
           ]
         },
         {
+          "name": "Get Loan Eligibility",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/loan/eligibility",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "user",
+                "loan",
+                "eligibility"
+              ]
+            },
+            "description": "Backend gaps handoff, 2026-10-10 — whether the caller can submit a loan application right now, and exactly what's missing. Also consulted server-side by Apply for Loan below."
+          },
+          "response": [
+            {
+              "name": "200 – Eligibility",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":true,\"data\":{\"eligible\":false,\"rows\":[{\"type\":\"PAN_CARD\",\"state\":\"verified\"},{\"type\":\"AADHAR\",\"state\":\"under_review\"},{\"type\":\"INCOME_PROOF\",\"acceptableTypes\":[\"SALARY_SLIP\",\"FORM_16\",\"BANK_STATEMENT\"],\"state\":\"missing\"}],\"blocking\":[{\"type\":\"AADHAR\",\"state\":\"under_review\"},{\"type\":\"INCOME_PROOF\",\"state\":\"missing\"}],\"documents\":[]}}"
+            }
+          ]
+        },
+        {
           "name": "Apply for Loan",
           "request": {
             "method": "POST",
@@ -3261,7 +3423,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"propertyId\": \"{{propertyId}}\",\n  \"preferredBank\": \"HDFC Bank\",\n  \"loanAmountRequestedPaise\": 8400000000,\n  \"tenureMonths\": 240,\n  \"submittedDocIds\": [\n    \"{{userDocumentId}}\"\n  ],\n  \"documentSharingConsent\": true,\n  \"documentSharingConsentVersion\": \"v1\"\n}",
+              "raw": "{\n  \"propertyId\": \"{{propertyId}}\",\n  \"preferredBank\": \"HDFC Bank\",\n  \"loanAmountRequestedPaise\": 8400000000,\n  \"tenureMonths\": 240,\n  \"documentSharingConsent\": true,\n  \"documentSharingConsentVersion\": \"v1\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3278,9 +3440,24 @@
                 "user",
                 "loan"
               ]
-            }
+            },
+            "description": "Backend gaps handoff, 2026-10-10 — submittedDocIds is no longer accepted from the body; the server checks GET /api/user/loan/eligibility itself (inside the same transaction as the insert) and attaches whichever documents are actually verified."
           },
           "response": [
+            {
+              "name": "409 – Documents Not Verified",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\"success\":false,\"message\":\"All required documents must be verified before you can apply\",\"data\":{\"code\":\"DOCUMENTS_NOT_VERIFIED\",\"blocking\":[{\"type\":\"AADHAR\",\"state\":\"under_review\"}]}}"
+            },
             {
               "name": "201 – Loan Application Created",
               "status": "Created",
@@ -9781,6 +9958,72 @@
               ]
             },
             {
+              "name": "User Privacy Events",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/users/{{userId}}/privacy-events?page=1&limit=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "users",
+                    "{{userId}}",
+                    "privacy-events"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    },
+                    {
+                      "key": "format",
+                      "value": "csv",
+                      "disabled": true
+                    }
+                  ]
+                },
+                "description": "Backend gaps handoff, 2026-10-10 — a user's own consent/legal/notification/withdrawal/deletion history. Requires the PRIVACY permission scope (not USERS, not in any default staff-role preset). Reading this itself writes a PRIVACY_EVENTS_VIEWED row to the admin audit log above. ?format=csv returns every matching row as text/csv, unpaginated."
+              },
+              "response": [
+                {
+                  "name": "200 – Privacy Events",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"66priv000bbb111ccc222ddd\",\"userId\":\"6a1a3213aa8de854e8acfad8\",\"action\":\"DELETION_REQUESTED\",\"documentVersion\":null,\"ipAddress\":\"103.58.12.44\",\"userAgent\":\"Mozilla/5.0 ...\",\"metadata\":\"{\\\"reason\\\":\\\"moving to another platform\\\"}\",\"createdAt\":\"2026-10-10T10:00:00.000Z\"}],\"pagination\":{\"total\":12,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                },
+                {
+                  "name": "403 – Missing PRIVACY Permission",
+                  "status": "Forbidden",
+                  "code": 403,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":false,\"message\":\"Missing the PRIVACY permission\"}"
+                }
+              ]
+            },
+            {
               "name": "Partner Performance",
               "request": {
                 "method": "GET",
@@ -11825,7 +12068,43 @@
                     }
                   ],
                   "cookie": [],
-                  "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"669eee555fff666aaa777bbb\",\"preferredBank\":\"HDFC Bank\",\"loanAmountRequestedPaise\":4000000,\"status\":\"DOCUMENTS_PENDING\",\"user\":{\"name\":\"Suresh Mehta\",\"email\":\"user@realtydoor.com\",\"phone\":\"+919000000003\"},\"createdAt\":\"2026-05-27T09:00:00.000Z\"}],\"pagination\":{\"total\":5,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                  "body": "{\"success\":true,\"data\":{\"data\":[{\"id\":\"669eee555fff666aaa777bbb\",\"preferredBank\":\"HDFC Bank\",\"loanAmountRequestedPaise\":4000000,\"status\":\"DOCUMENTS_PENDING\",\"userId\":\"6a1a3213aa8de854e8acfad8\",\"user\":{\"name\":\"Suresh Mehta\",\"email\":\"user@realtydoor.com\",\"phone\":\"+919000000003\"},\"documents\":[{\"id\":\"64doc1...\",\"documentType\":\"PAN_CARD\",\"status\":\"APPROVED\"}],\"documentCount\":1,\"createdAt\":\"2026-05-27T09:00:00.000Z\"}],\"pagination\":{\"total\":5,\"page\":1,\"limit\":20,\"totalPages\":1,\"hasNext\":false,\"hasPrev\":false}}}"
+                }
+              ]
+            },
+            {
+              "name": "Get Loan Application by ID",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/admin/loan/{{loanId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "admin",
+                    "loan",
+                    "{{loanId}}"
+                  ]
+                },
+                "description": "Backend gaps handoff, 2026-10-10 — previously missing entirely (only the list and the status-update endpoint existed). documents[] is live-joined against UserDocument and includes verifiedByAdmin per document."
+              },
+              "response": [
+                {
+                  "name": "200 – Loan Application",
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\"success\":true,\"data\":{\"id\":\"669eee555fff666aaa777bbb\",\"userId\":\"6a1a3213aa8de854e8acfad8\",\"user\":{\"name\":\"Suresh Mehta\",\"email\":\"user@realtydoor.com\",\"phone\":\"+919000000003\"},\"status\":\"DOCUMENTS_SUBMITTED\",\"documents\":[{\"id\":\"64doc1...\",\"documentType\":\"PAN_CARD\",\"fileName\":\"pan.pdf\",\"fileUrl\":\"...\",\"status\":\"APPROVED\",\"uploadedAt\":\"...\",\"verifiedAt\":\"...\",\"expiresAt\":null,\"rejectionNote\":null,\"verifiedByAdminId\":\"64admin...\",\"verifiedByAdmin\":{\"id\":\"64admin...\",\"name\":\"Priya Admin\",\"email\":\"priya@realtydoor.in\"}}]}}"
                 }
               ]
             },

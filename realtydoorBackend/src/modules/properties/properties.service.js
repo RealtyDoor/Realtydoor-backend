@@ -106,33 +106,82 @@ async function searchProperties(query, skip, limit, page) {
   // hard final tiebreaker, guarantees a total order.
   const orderBy = [SORT_MAP[query.sort] ?? { createdAt: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }];
 
+  const select = {
+    id: true, title: true, slug: true, price: true, monthlyRent: true,
+    propertyType: true, listingType: true, propertyStatus: true,
+    bhk: true, balconies: true, carpetArea: true, locality: true, city: true,
+    images: true, coverImageIndex: true, isVerified: true, isFeatured: true,
+    reraNumber: true, createdAt: true, facing: true, furnishing: true,
+    previousPrice: true, priceChange6m: true, unitsLeft: true, viewsThisWeek: true,
+    // Used by the property detail page's peer-comparison ("Better/below
+    // average" tags for built-up area, age, and floor) — it fetches this
+    // same search endpoint for peers and was silently getting undefined
+    // for these three without them in the select.
+    builtUpArea: true, ageOfProperty: true, floorNumber: true, totalFloors: true,
+    // Needed for a map view (pins for every result on the listing page)
+    // without round-tripping to the per-property detail endpoint.
+    latitude: true, longitude: true,
+  };
+
+  // Backend gaps handoff, 2026-10-10 (#7D) — for a sort whose key can be
+  // genuinely absent (price/area), an unpriced listing has no meaningful
+  // position in that order, so it's pushed to a second group (sorted
+  // createdAt desc) after every valued row, instead of landing wherever
+  // Mongo happens to place a missing field. `total` is always counted
+  // against the original, unsplit `where` — this only changes order, not
+  // how many results exist.
+  const splitField = SORT_SPLIT_FIELD[query.sort];
+  if (splitField) {
+    const field = splitField === 'price' && (query.listingType === 'RENT' || query.listingType === 'LEASE')
+      ? 'monthlyRent' : splitField;
+
+    const valuedWhere   = withValuePresence(where, field, true);
+    const unpricedWhere = withValuePresence(where, field, false);
+    const unpricedOrderBy = [{ createdAt: 'desc' }, { id: 'asc' }];
+
+    const [total, valuedTotal] = await Promise.all([
+      prisma.property.count({ where }),
+      prisma.property.count({ where: valuedWhere }),
+    ]);
+
+    let data;
+    if (skip < valuedTotal) {
+      const valuedRows = await prisma.property.findMany({ where: valuedWhere, orderBy, skip, take: limit, select });
+      if (valuedRows.length < limit) {
+        const unpricedRows = await prisma.property.findMany({
+          where: unpricedWhere, orderBy: unpricedOrderBy, skip: 0, take: limit - valuedRows.length, select,
+        });
+        data = [...valuedRows, ...unpricedRows];
+      } else {
+        data = valuedRows;
+      }
+    } else {
+      data = await prisma.property.findMany({
+        where: unpricedWhere, orderBy: unpricedOrderBy, skip: skip - valuedTotal, take: limit, select,
+      });
+    }
+
+    return paginate(data, total, page, limit);
+  }
+
   const [data, total] = await prisma.$transaction([
-    prisma.property.findMany({
-      where,
-      orderBy,
-      skip,
-      take: limit,
-      select: {
-        id: true, title: true, slug: true, price: true, monthlyRent: true,
-        propertyType: true, listingType: true, propertyStatus: true,
-        bhk: true, balconies: true, carpetArea: true, locality: true, city: true,
-        images: true, coverImageIndex: true, isVerified: true, isFeatured: true,
-        reraNumber: true, createdAt: true, facing: true, furnishing: true,
-        previousPrice: true, priceChange6m: true, unitsLeft: true, viewsThisWeek: true,
-        // Used by the property detail page's peer-comparison ("Better/below
-        // average" tags for built-up area, age, and floor) — it fetches this
-        // same search endpoint for peers and was silently getting undefined
-        // for these three without them in the select.
-        builtUpArea: true, ageOfProperty: true, floorNumber: true, totalFloors: true,
-        // Needed for a map view (pins for every result on the listing page)
-        // without round-tripping to the per-property detail endpoint.
-        latitude: true, longitude: true,
-      },
-    }),
+    prisma.property.findMany({ where, orderBy, skip, take: limit, select }),
     prisma.property.count({ where }),
   ]);
 
   return paginate(data, total, page, limit);
+}
+
+const SORT_SPLIT_FIELD = { price_asc: 'price', price_desc: 'price', area_asc: 'carpetArea' };
+
+// Same "OR: [{field: null}, {field: {isSet: false}}]" idiom as SEARCHABLE
+// above, for whichever numeric field this sort depends on — Mongo missing
+// vs. explicit-null again, same reasoning, different field.
+function withValuePresence(where, field, present) {
+  const condition = present
+    ? { AND: [{ [field]: { not: null } }, { [field]: { isSet: true } }] }
+    : { OR: [{ [field]: null }, { [field]: { isSet: false } }] };
+  return { ...where, AND: [...(where.AND || []), condition] };
 }
 
 // Backend gaps handoff, 2026-10-10 (#7F) — accepts either the slug or the

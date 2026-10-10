@@ -9,6 +9,7 @@ const { sendLeadAssigned } = require('../../lib/email');
 const { createAuditLog } = require('../../lib/auditLog');
 const { getConfigNumber } = require('../config/config.service');
 const { nextRefCode } = require('../../lib/refCode');
+const { assertLeadNotPaused } = require('../../lib/accountDeletion');
 
 const DEFAULT_MAX_ACTIVE_INQUIRIES = 5;
 const DEFAULT_MAX_INQUIRIES_PER_DAY = 3;
@@ -333,6 +334,7 @@ async function scheduleVisit(leadId, partnerId, scheduledAt) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (lead.status === 'CLOSED') throw new ApiError(400, 'Cannot schedule visit on a closed lead');
+  await assertLeadNotPaused(lead.buyerId);
 
   const otp = generate();
   const otpExp = expiresAt();
@@ -371,6 +373,7 @@ async function resendOtp(leadId, partnerId) {
   if (isLocked(lead.otpLockedUntil)) {
     throw new ApiError(429, 'OTP is locked after too many failed attempts. Request an admin override instead.');
   }
+  await assertLeadNotPaused(lead.buyerId);
 
   const otp = generate();
   const otpExp = expiresAt();

@@ -392,7 +392,7 @@ Search published, non-B2B properties.
 | Param | Type | Description |
 |-------|------|-------------|
 | `q` | string | Full-text search (title, description, locality) |
-| `city` | string | Case-insensitive exact match |
+| `city` | string | Case-insensitive, and OR'd across known spelling variants (backend gaps handoff, 2026-10-10) — `city=Bangalore`, `bangaluru`, `banglore` and `Bengaluru` all match the same listings, stored under the one canonical spelling (`Bengaluru`) |
 | `locality` | string | Case-insensitive contains |
 | `propertyType` | string | `FLAT` · `INDEPENDENT_HOUSE` · `VILLA` · `PLOT` · `COMMERCIAL_OFFICE` · `RETAIL_SHOP` |
 | `listingType` | string | `SALE` · `RENT` · `LEASE` |
@@ -463,7 +463,9 @@ Search published, non-B2B properties.
 }
 ```
 
-`previousPrice`, `priceChange6m`, `unitsLeft`, `balconies` are all `null` until an admin sets them on the listing. `viewsThisWeek` increments on every `GET /api/properties/:slug` and resets to `0` every Monday at midnight. `builtUpArea`, `ageOfProperty`, `floorNumber`, `totalFloors` are included specifically for the property detail page's peer-comparison logic (it fetches this same endpoint for similar listings and computes "better/below average" tags from them). `latitude`/`longitude` are `null` until set on the listing (via `POST`/`PATCH /api/properties`) — included here (not just on the detail page) so the listing page can render a map with a pin per result without an extra round trip per property.
+`previousPrice`, `priceChange6m`, `unitsLeft`, `balconies` are all `null` until an admin sets them on the listing. `viewsThisWeek` increments on every `GET /api/properties/:idOrSlug` and resets to `0` every Monday at midnight. `builtUpArea`, `ageOfProperty`, `floorNumber`, `totalFloors` are included specifically for the property detail page's peer-comparison logic (it fetches this same endpoint for similar listings and computes "better/below average" tags from them). `latitude`/`longitude` are `null` until set on the listing (via `POST`/`PATCH /api/properties`) — included here (not just on the detail page) so the listing page can render a map with a pin per result without an extra round trip per property.
+
+Backend gaps handoff, 2026-10-10 — three correctness fixes: (1) **stable ordering** — `sort` now orders by `[chosen key, createdAt desc, id asc]` instead of a single key, so a tie-heavy sort (price/area) no longer returns duplicate or dropped rows across pages (measured against real data: 47 rows / 39 unique on a full paged walk before this fix). (2) **`minPrice`/`maxPrice` always include a lower bound** (`gte: 0` if `minPrice` isn't given) whenever either is present — a max-only range previously let listings with no price at all slip through. (3) **unpriced listings sort last** — for `sort=price_asc`/`price_desc`/`area_asc`, a listing with no value at all for the sorted field (price/`monthlyRent`/carpet area) no longer lands at an arbitrary position; every valued listing sorts first (in the requested order), then every unpriced one, by `createdAt desc`. `pagination.total` is unaffected — this only changes order, not count, and pagination across the boundary between the two groups returns no duplicates and drops nothing.
 
 ---
 
@@ -512,9 +514,11 @@ Note: this list is cached for 10 minutes (`FEATURED_PROPERTIES` key) — a cache
 
 ---
 
-### GET /api/properties/:slug
+### GET /api/properties/:idOrSlug
 
 Full property detail for a single approved listing. `isB2BOnly` listings 404 here the same as a search — a direct slug link can no longer be used to bypass the public/B2B separation.
+
+Backend gaps handoff, 2026-10-10 — **accepts either the slug or the raw 24-hex-char ObjectId** (previously slug-only; the id-shaped case now 404'd for links from notifications and `/user/properties/:id/inquiry-sent`, both of which hand back the id, not the slug). Same approved-only/not-B2B-only rules apply regardless of which form is used — this is not a way to reach an unpublished or B2B-only listing via its id.
 
 **Auth:** Public
 
@@ -1228,7 +1232,7 @@ Schedule a site visit and send a 6-digit OTP to the buyer via WhatsApp.
 }
 ```
 
-**Errors:** `400` if lead is already closed.
+**Errors:** `400` if lead is already closed · `403 LEAD_PAUSED` — the buyer has requested account deletion (backend gaps handoff, 2026-10-10). No new lead status, no stored flag — a live check against the buyer's `deletionRequestedAt`, so cancelling the deletion request resumes the lead immediately.
 
 ---
 
@@ -1248,7 +1252,7 @@ Resends the site-visit OTP without moving the scheduled visit time (unlike `sche
 
 Deliberately does **not** reset the 3-attempt lockout counter — a resend can't be used to repeatedly reset the anti-leakage lock. If the OTP is currently locked, this returns `429` instead of sending anything; use `request-otp-override` in that case.
 
-**Errors:** `404` lead not found or not yours · `400` no site visit scheduled · `429` OTP is locked.
+**Errors:** `404` lead not found or not yours · `400` no site visit scheduled · `429` OTP is locked · `403 LEAD_PAUSED` — the buyer has requested account deletion (see `POST /api/leads/partner/:id/schedule-visit` above). `verify-otp` itself is **not** gated by this — confirming a visit that may have already happened physically is still allowed.
 
 ---
 
@@ -1484,7 +1488,7 @@ Update profile, settings, and onboarding preferences.
 
 All fields are optional (at least one must be provided). `language`: `en` · `kn` · `hi`. `notificationPreferences` is a partial object — send only the keys you want to change (`push`, `email`, `whatsapp`, `marketing`, `visitReminders`); untouched keys keep their existing value. `buyerType`: `BUYER` · `RENTER` · `INVESTOR`. `timeline`: `NOW` · `3_6_MONTHS` · `BROWSING`. The `buyerType`/`city`/`budget`/`bhk`/`timeline` group is the mandatory "let's get started" step collected right after Google + phone verification.
 
-Privacy spec, 2026-10-10: `notificationPreferences.marketing` now writes the same `marketingOptIn`/`marketingOptInAt` pair that `PATCH /api/user/consent` and `GET /api/user/consent` use — it was previously a separate, unsynced column. Every change under `notificationPreferences` is recorded to the privacy audit trail (not returned in the response).
+Privacy spec, 2026-10-10: `notificationPreferences.marketing` now writes the same `marketingOptIn`/`marketingOptInAt` pair that `PATCH /api/user/consent` and `GET /api/user/consent` use — it was previously a separate, unsynced column. Each key whose value actually changes is recorded to the privacy audit trail individually (`NOTIFICATION_PREFERENCE_CHANGED`, one row per changed key) — resending the same value you already have logs nothing.
 
 **Response `200`:**
 
@@ -1514,10 +1518,10 @@ Record onboarding consent (terms, privacy, marketing).
 **Request Body:**
 
 ```json
-{ "termsAccepted": true, "privacyAccepted": true, "marketingOptIn": false }
+{ "termsAccepted": true, "privacyAccepted": true, "marketingOptIn": false, "documentVersion": "1" }
 ```
 
-All three fields are optional; at least one must be provided. `termsAccepted`/`privacyAccepted` record a one-time acceptance timestamp and are not revocable once set (sending `false` is a no-op for them). `marketingOptIn` is a genuine on/off toggle.
+All four fields are optional; at least one must be provided. `termsAccepted`/`privacyAccepted` record a one-time acceptance timestamp and are not revocable once set (sending `false` is a no-op for them). `marketingOptIn` is a genuine on/off toggle. `documentVersion` (backend gaps handoff, 2026-10-10) is the published terms/privacy version this acceptance is for — stored as `termsAcceptedVersion`/`privacyAcceptedVersion` for whichever of `termsAccepted`/`privacyAccepted` is `true` in the same call, and compared against current `PlatformConfig` (`terms_version`/`privacy_version`) to compute `requiresReconsent` on `GET /api/user/privacy`.
 
 Each consent actually given/changed in a single call is recorded as its own row in the privacy audit trail (`TERMS_ACCEPTED`, `PRIVACY_ACCEPTED`, `MARKETING_OPT_IN`/`MARKETING_OPT_OUT`) — e.g. accepting terms and opting into marketing in the same request writes two rows, not one.
 
@@ -1530,7 +1534,9 @@ Each consent actually given/changed in a single call is recorded as its own row 
   "data": {
     "id": "64user...",
     "termsAcceptedAt": "2026-09-20T10:00:00.000Z",
+    "termsAcceptedVersion": "1",
     "privacyAcceptedAt": "2026-09-20T10:00:00.000Z",
+    "privacyAcceptedVersion": "1",
     "marketingOptIn": false,
     "marketingOptInAt": null
   }
@@ -1569,33 +1575,80 @@ Privacy spec, 2026-10-10 — read-only view of everything the Settings screen's 
 
 ---
 
-### POST /api/user/privacy/withdraw-consent
+### GET /api/user/privacy
 
-Withdraws consent. Distinct from account deletion below — this records that the user no longer consents to how their data is being processed; it does not by itself request erasure. Recorded to the privacy audit trail as `CONSENT_WITHDRAWN`.
-
-**Auth:** USER
-
-**Response `200`:** `{ "success": true, "message": "Consent withdrawn", "data": { "id": "64user...", "consentWithdrawnAt": "2026-10-10T10:00:00.000Z" } }`
-
----
-
-### POST /api/user/privacy/delete-account
-
-Requests account deletion, with a 30-day grace period before anything is actually anonymized (see `POST /api/user/privacy/delete-account/cancel` below to call it off within that window). Recorded to the privacy audit trail as `DELETION_REQUESTED`.
+Backend gaps handoff, 2026-10-10 — the canonical read the frontend actually calls (`src/lib/privacy.ts`), a nested shape distinct from `GET /api/user/consent` above (which is kept as-is for whatever still reads its flatter shape). Both stay behind `authenticate`/`requireUser` but **outside** `requireOnboarded` — a user can always see this, onboarded or not.
 
 **Auth:** USER
 
-**Response `200`:** `{ "success": true, "message": "Account deletion requested. You have 30 days to cancel this before your data is anonymised.", "data": { "id": "64user...", "deletionRequestedAt": "2026-10-10T10:00:00.000Z", "deletionScheduledAt": "2026-11-09T10:00:00.000Z" } }`
+**Response `200`:**
 
-**Errors:** `400 MONEY_IN_FLIGHT` — blocked while the caller has an escrow payment held (or payment pending / payout failed) as a buyer, or a loan application that hasn't reached `DISBURSED`/`REJECTED`. `400` the account has already been deleted.
+```json
+{
+  "success": true,
+  "data": {
+    "terms":   { "acceptedAt": "2026-09-20T10:00:00.000Z", "version": "1" },
+    "privacy": { "acceptedAt": "2026-09-20T10:00:00.000Z", "version": "1", "withdrawnAt": null },
+    "marketingOptIn": false,
+    "notificationPreferences": { "push": true, "email": true, "whatsapp": true, "marketing": false, "visitReminders": true },
+    "currentVersions": { "terms": "1", "privacy": "1" },
+    "requiresReconsent": false,
+    "deletion": { "requestedAt": null, "scheduledFor": null }
+  }
+}
+```
 
-A daily job re-checks this same condition right before the grace period actually expires — a block only pauses the request, it never cancels it; it's retried automatically once the money is no longer in flight.
+`currentVersions` comes from `PlatformConfig` keys `terms_version`/`privacy_version` (default `"1"` if unset). `requiresReconsent` is `true` only when the user accepted a **specific earlier version** that no longer matches what's currently published — never having consented at all is a separate, pre-existing state (a `null` `acceptedAt`), not reconsent.
 
 ---
 
-### POST /api/user/privacy/delete-account/cancel
+### POST /api/user/consent/withdraw
 
-Cancels a pending deletion request before the grace period expires. Recorded to the privacy audit trail as `DELETION_CANCELLED`.
+Backend gaps handoff, 2026-10-10 — the canonical withdraw path. **`POST /api/user/privacy/withdraw-consent` (no body) still works as an alias**, routed to the same handler — it defaults to `scope: "MARKETING"` since an old caller never knew about `scope: "ALL"` and must not suddenly start deleting the account. Rate-limited to 5/hour/user (both idempotent, so this is abuse protection, not a correctness requirement).
+
+**Auth:** USER
+
+**Request Body:**
+
+```json
+{ "scope": "MARKETING" }
+```
+
+`scope` is required: `"MARKETING"` just flips `marketingOptIn` off (logged as `MARKETING_OPT_OUT`) and returns immediately. `"ALL"` withdraws consent generally (`consentWithdrawnAt` stamped, logged as `CONSENT_WITHDRAWN`) **and starts the same 30-day deletion flow** as `POST /api/user/account/deletion-request` below — including its money-in-flight block. The consent-withdrawal half still succeeds even if the deletion half ends up blocked.
+
+**Response `200` (scope: MARKETING):** `{ "success": true, "message": "Consent withdrawn", "data": { "id": "64user...", "marketingOptIn": false } }`
+
+**Response `200` (scope: ALL):** `{ "success": true, "message": "Consent withdrawn", "data": { "id": "64user...", "consentWithdrawnAt": "2026-10-10T10:00:00.000Z", "deletion": { "requestedAt": "2026-10-10T10:00:00.000Z", "scheduledFor": "2026-11-09T10:00:00.000Z" }, "scheduledFor": "2026-11-09T10:00:00.000Z" } }`
+
+**Errors:** same as `POST /api/user/account/deletion-request` below, only reachable via `scope: "ALL"`.
+
+---
+
+### POST /api/user/account/deletion-request
+
+Backend gaps handoff, 2026-10-10 — the canonical deletion-request path, with a 30-day grace period before anything is actually anonymized (see `DELETE /api/user/account/deletion-request` below to cancel within that window). Recorded to the privacy audit trail as `DELETION_REQUESTED`. Rate-limited to 5/hour/user. **`POST /api/user/privacy/delete-account` (no body) still works as an alias** — the call itself is treated as confirmation, matching its old no-body contract.
+
+**Auth:** USER
+
+**Request Body:**
+
+```json
+{ "confirm": true, "reason": "moving to another platform" }
+```
+
+`confirm` must be the literal `true` (not merely truthy) — same explicit-intent pattern as the loan application's `documentSharingConsent`. `reason` is optional free text, stored only in the audit log metadata, never on the `User` row itself.
+
+**Response `200`:** `{ "success": true, "message": "Account deletion requested. You have 30 days to cancel this before your data is anonymised.", "data": { "id": "64user...", "deletionRequestedAt": "2026-10-10T10:00:00.000Z", "deletionScheduledAt": "2026-11-09T10:00:00.000Z", "scheduledFor": "2026-11-09T10:00:00.000Z" } }`
+
+**Errors:** `409 DELETION_BLOCKED` — blocked while the caller has an escrow payment held (or payment pending / payout failed) as a buyer, or a loan application that hasn't reached `DISBURSED`/`REJECTED`; `data.reasons` lists each specific blocker. `400` the account has already been deleted.
+
+A daily job re-checks this same condition right before the grace period actually expires — a block only pauses the request, it never cancels it; it's retried automatically once the money is no longer in flight. Requesting deletion also best-effort revokes every active Clerk session for the account and applies a read-only lock to the rest of the API (see below) — the only routes reachable while a deletion is pending are this section's own `GET`/withdraw/cancel endpoints.
+
+---
+
+### DELETE /api/user/account/deletion-request
+
+Cancels a pending deletion request before the grace period expires. Recorded to the privacy audit trail as `DELETION_CANCELLED`. **`POST /api/user/privacy/delete-account/cancel` (no body) still works as an alias.**
 
 **Auth:** USER
 
@@ -1604,6 +1657,8 @@ Cancels a pending deletion request before the grace period expires. Recorded to 
 **Errors:** `400` there is no pending deletion request to cancel.
 
 ---
+
+**Read-only lock while a deletion is pending:** every authenticated request from an account with an active deletion request gets **`403 DELETION_PENDING`**, except `GET /api/user/privacy`, `DELETE /api/user/account/deletion-request`, and the legacy cancel alias (`POST /api/user/privacy/delete-account/cancel`) — cancel the request to regain access. This is enforced centrally in `authenticate()`, so it applies across every router, not just `/user/*`.
 
 **What happens when the grace period expires:** personal fields (name, email, phone, address, profile photo, bio, company name, PAN/GSTIN/RERA numbers and verified names, KYC document URLs, bank and billing contact details, RazorpayX payout ids) are overwritten with anonymized placeholders, and the existing `deletedAt` is set. `email`/`clerkId` are reassigned to a unique `deleted-<id>@...` placeholder rather than left real, freeing them up for reuse by someone else signing up. Business records that reference this user (leads, escrow transactions, loan applications, commissions) are left exactly as they were — they simply end up pointing at the now-anonymized row — and the privacy audit trail itself is never touched, recording a final `DELETION_COMPLETED` entry.
 
@@ -1851,6 +1906,18 @@ Upload a document.
   }
 }
 ```
+
+---
+
+### DELETE /api/user/documents/:id
+
+Backend gaps handoff, 2026-10-10 — delete a vault document.
+
+**Auth:** USER
+
+**Response `200`:** `{ "success": true, "message": "Document deleted", "data": null }`
+
+**Errors:** `404` not found / not yours. `409 DOCUMENT_IN_USE` — this document is `submittedDocIds` on a loan application that hasn't reached `DISBURSED`/`REJECTED` yet.
 
 ---
 
@@ -2115,6 +2182,34 @@ Both fields optional.
 
 ---
 
+### GET /api/user/loan/eligibility
+
+Backend gaps handoff, 2026-10-10 — whether the caller can currently submit a loan application, and exactly what's missing if not. Also consulted server-side by `POST /api/user/loan` below, so this isn't just advisory.
+
+**Auth:** USER
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "eligible": false,
+    "rows": [
+      { "type": "PAN_CARD", "state": "verified", "document": { "id": "64doc1...", "documentType": "PAN_CARD", "status": "APPROVED", "...": "..." } },
+      { "type": "AADHAR", "state": "under_review", "document": { "id": "64doc2...", "documentType": "AADHAR", "status": "PENDING_REVIEW", "...": "..." } },
+      { "type": "INCOME_PROOF", "acceptableTypes": ["SALARY_SLIP", "FORM_16", "BANK_STATEMENT"], "state": "missing" }
+    ],
+    "blocking": [{ "type": "AADHAR", "state": "under_review" }],
+    "documents": [ "...every document in the caller's vault..." ]
+  }
+}
+```
+
+Residents need `PAN_CARD` + `AADHAR`, plus one of `SALARY_SLIP`/`FORM_16`/`BANK_STATEMENT` as income proof. `isNRI` users need `PAN_CARD` + `PASSPORT`, plus one of `OCI_PIO_CARD`/`POA_DRAFT`/`POA_NOTARIZED`/`NRE_NRO_PROOF`, plus the same income-proof group. A multi-type row (`acceptableTypes` present) reports whichever of its types is in the best state (verified > under_review > expired > rejected > missing) — not every type in the group individually. `state` is `verified` only when `status: APPROVED` **and** not past `expiresAt` (an expired-but-still-APPROVED row in the DB still reports `expired` here, derived live, never trusted as stored).
+
+---
+
 ### POST /api/user/loan
 
 Submit a home loan application.
@@ -2129,7 +2224,6 @@ Submit a home loan application.
   "preferredBank": "HDFC Bank",
   "loanAmountRequestedPaise": 8400000000,
   "tenureMonths": 240,
-  "submittedDocIds": ["64doc1...", "64doc2..."],
   "documentSharingConsent": true,
   "documentSharingConsentVersion": "v1"
 }
@@ -2139,18 +2233,24 @@ All fields are optional **except `documentSharingConsent`, which is
 required on every submission** (must be the literal boolean `true`) —
 the frontend only lets the user submit after ticking the consent
 checkbox, so this is enforced here too, not just when documents happen
-to be attached. `submittedDocIds` must be document ids the user already
-owns (`POST /api/user/documents`) — checked, not just trusted; a
-document belonging to someone else is refused outright.
-`documentSharingConsentVersion` is optional, accepted and stored when
-given. `loanAmountRequestedPaise` is in paise (₹1 = 100 paise).
+to be attached. `documentSharingConsentVersion` is optional, accepted
+and stored when given. `loanAmountRequestedPaise` is in paise (₹1 = 100
+paise).
+
+**Backend gaps handoff, 2026-10-10 — `submittedDocIds` is accepted in
+the body (so an older frontend build that still sends it doesn't 400)
+but ignored.** The server checks `GET /api/user/loan/eligibility`
+above itself, inside the same transaction as the insert, and attaches
+whichever documents are actually verified — a direct API call can no
+longer bypass the frontend's upload-gate by sending someone else's ids,
+fabricated ids, or none at all.
 
 **Corrected 2026-10-08 — field names/requiredness now match the
 frontend's actual request exactly** (`documentSharingConsent`, not
-`consent`; required unconditionally, not only when `submittedDocIds` is
-non-empty). `tenureMonths` here is the request field name only — stored
-internally as `tenureMonthsRequested`, a separate column from the
-`tenureMonths` admin sets at sanction time (`PATCH
+`consent`; required unconditionally, not only when documents happen to
+be attached). `tenureMonths` here is the request field name only —
+stored internally as `tenureMonthsRequested`, a separate column from
+the `tenureMonths` admin sets at sanction time (`PATCH
 /admin/loan/:id/status`), so a sanctioned tenure never overwrites the
 record of what was originally requested.
 
@@ -2189,7 +2289,7 @@ numbers in paise, nothing about reading them changes, just the range.
 moment the application is created — see `PATCH .../status` below for
 its full shape and how it grows.
 
-**Errors:** `400` `documentSharingConsent` not `true` · `400` one or more submitted document ids don't belong to the caller.
+**Errors:** `400` `documentSharingConsent` not `true` · `409 DOCUMENTS_NOT_VERIFIED` — `data.blocking` lists each unmet row, same shape as the eligibility endpoint's `blocking` array.
 
 ---
 
@@ -2217,6 +2317,9 @@ All loan applications for the authenticated user.
       "statusHistory": [
         { "status": "DOCUMENTS_PENDING", "at": "2024-01-15T00:00:00.000Z", "note": null }
       ],
+      "documents": [
+        { "id": "64doc1...", "documentType": "PAN_CARD", "fileName": "pan.pdf", "fileUrl": "...", "status": "APPROVED", "uploadedAt": "...", "verifiedAt": "...", "expiresAt": null, "rejectionNote": null }
+      ],
       "createdAt": "2024-01-15T00:00:00.000Z",
       "property": { "title": "3 BHK Flat in Baner", "slug": "...", "city": "Pune" }
     }
@@ -2224,11 +2327,13 @@ All loan applications for the authenticated user.
 }
 ```
 
+**Backend gaps handoff, 2026-10-10 — `documents[]`.** The *set* of which documents belong to this loan is frozen at submission time (`documentSnapshot`, or for a loan from before this field existed, `submittedDocIds` with no backfill); `status`/`verifiedAt`/`expiresAt`/`rejectionNote` are re-joined against `UserDocument` **live** on every read, so a later re-review shows up here without anything touching the loan record itself.
+
 ---
 
 ### GET /api/user/loan/:id
 
-Single loan application (must belong to authenticated user).
+Single loan application (must belong to authenticated user). Same shape as the list above, including live-joined `documents[]`.
 
 **Auth:** USER
 
@@ -2252,6 +2357,7 @@ Single loan application (must belong to authenticated user).
     "disbursedAt": null,
     "rejectionReason": null,
     "submittedDocIds": [],
+    "documents": [],
     "createdAt": "2024-01-15T00:00:00.000Z",
     "updatedAt": "2024-01-15T00:00:00.000Z"
   }
@@ -4461,7 +4567,7 @@ pre-fill-and-lock for free — but auto-assign itself still refuses an
 already-assigned lead outright (reassignment is a deliberate admin
 action, not something the auto-picker does).
 
-**Errors:** `404` lead not found · `400` partner not found or not KYC verified · `409` already assigned to this same partner.
+**Errors:** `404` lead not found · `400` partner not found or not KYC verified · `409` already assigned to this same partner · `403 LEAD_PAUSED` — the buyer has requested account deletion (backend gaps handoff, 2026-10-10); applies to `auto-assign`/batch auto-assign too, since they call this function internally. Resumes the moment the buyer cancels the deletion request — nothing is stored on the lead itself.
 
 ---
 ## Auto-assign leads
@@ -7102,6 +7208,44 @@ All audit log entries (paginated, newest first).
 
 ---
 
+### GET /api/admin/users/:id/privacy-events
+
+Backend gaps handoff, 2026-10-10 — a user's own consent/legal/notification/withdrawal/deletion history (`UserPrivacyAuditLog`), distinct from the admin audit log above. Gated by its own `PRIVACY` permission scope (`requirePermission('PRIVACY')`) — not bundled into `USERS`, and not in any default staff-role preset, so an admin/DPO needs it granted explicitly. **Reading this itself writes a `PRIVACY_EVENTS_VIEWED` row to the admin audit log above** (`targetType: "User"`, `targetId` the viewed user's id).
+
+**Auth:** ADMIN + `PRIVACY` permission
+
+**Query Parameters:** `page`, `limit`, `action` (filter to one action), `from`/`to` (ISO date range), `format=csv` (returns `text/csv`, not paginated — every matching row)
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "data": [
+      {
+        "id": "64priv...",
+        "userId": "64user...",
+        "action": "DELETION_REQUESTED",
+        "documentVersion": null,
+        "ipAddress": "103.x.x.x",
+        "userAgent": "Mozilla/5.0 ...",
+        "metadata": "{\"reason\":\"moving to another platform\"}",
+        "createdAt": "2026-10-10T10:00:00.000Z"
+      }
+    ],
+    "pagination": { "total": 12, "page": 1, "limit": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
+  }
+}
+```
+
+`metadata` is a JSON string, same convention as the admin audit log's `before`/`after`. Actions include `TERMS_ACCEPTED`, `PRIVACY_ACCEPTED`, `MARKETING_OPT_IN`/`MARKETING_OPT_OUT`, `CONSENT_WITHDRAWN`, `NOTIFICATION_PREFERENCE_CHANGED`, `DELETION_REQUESTED`, `DELETION_CANCELLED`, `DELETION_COMPLETED`.
+
+**Errors:** `404` user not found · `403` missing the `PRIVACY` permission.
+
+---
+
 ### GET /api/admin/partners
 
 Performance metrics for all KYC-verified partners (paginated).
@@ -7953,14 +8097,54 @@ All loan applications (paginated).
         "sanctionedAmountPaise": null,
         "adminNote": null,
         "createdAt": "2024-01-15T00:00:00.000Z",
+        "userId": "64user...",
         "user": { "name": "Suresh Mehta", "email": "suresh@example.com", "phone": "+919876543210" },
-        "property": { "title": "3 BHK Flat in Baner", "slug": "...", "city": "Pune" }
+        "property": { "title": "3 BHK Flat in Baner", "slug": "...", "city": "Pune" },
+        "documents": [{ "id": "64doc1...", "documentType": "PAN_CARD", "status": "APPROVED" }],
+        "documentCount": 1
       }
     ],
     "pagination": { "total": 30, "page": 1, "limit": 20, "totalPages": 2, "hasNext": true, "hasPrev": false }
   }
 }
 ```
+
+Backend gaps handoff, 2026-10-10 — `documents[]` here is deliberately light (`{id, documentType, status}` + `documentCount`), not the full live-joined objects — see `GET /api/admin/loan/:id` below for those.
+
+---
+
+### GET /api/admin/loan/:id
+
+Backend gaps handoff, 2026-10-10 — single loan application, full detail (previously missing entirely — only the list and the status-update endpoint existed).
+
+**Auth:** ADMIN
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "64loan...",
+    "userId": "64user...",
+    "user": { "name": "Suresh Mehta", "email": "suresh@example.com", "phone": "+919876543210" },
+    "property": { "title": "3 BHK Flat in Baner", "slug": "...", "city": "Pune" },
+    "status": "DOCUMENTS_SUBMITTED",
+    "documents": [
+      {
+        "id": "64doc1...", "documentType": "PAN_CARD", "fileName": "pan.pdf", "fileUrl": "...",
+        "status": "APPROVED", "uploadedAt": "...", "verifiedAt": "...", "expiresAt": null, "rejectionNote": null,
+        "verifiedByAdminId": "64admin...",
+        "verifiedByAdmin": { "id": "64admin...", "name": "Priya Admin", "email": "priya@realtydoor.in" }
+      }
+    ]
+  }
+}
+```
+
+Same live-join as the user-facing `documents[]` (status/verifiedAt/expiresAt current, set frozen at submission), plus `verifiedByAdmin` — who actually reviewed each document.
+
+**Errors:** `404` not found.
 
 ---
 

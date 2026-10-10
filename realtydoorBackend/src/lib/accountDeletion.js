@@ -1,6 +1,7 @@
 const { createClerkClient } = require('@clerk/clerk-sdk-node');
 const prisma = require('./prisma');
 const logger = require('./logger');
+const ApiError = require('../utils/ApiError');
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -97,4 +98,25 @@ async function anonymizeUser(userId) {
   });
 }
 
-module.exports = { hasMoneyInFlight, getMoneyInFlightReasons, anonymizeUser, revokeAllSessions };
+// Backend gaps handoff, 2026-10-10 (#2) — "pause open leads" once the buyer
+// has requested deletion. No new Lead status: that would mean a new branch
+// in every existing status-machine check across leads.service.js/
+// admin.service.js for what was explicitly framed as a side effect of the
+// deletion request, not a durable business state — and it has to be exactly
+// as reversible as the request itself (cancelling the deletion must resume
+// the lead with zero cleanup). A live guard achieves that for free: nothing
+// is written to the Lead, so there's nothing to undo on cancel. Applied at
+// the points a partner/admin would otherwise move the lead forward
+// (assignment, OTP send/verify) — buyerId is null for a free-text lead with
+// no registered account, which has nothing to check and is left alone.
+async function assertLeadNotPaused(buyerId) {
+  if (!buyerId) return;
+  const buyer = await prisma.user.findUnique({ where: { id: buyerId }, select: { deletionRequestedAt: true } });
+  if (buyer?.deletionRequestedAt) {
+    throw new ApiError(403, "This lead's buyer has requested account deletion — the lead is paused until they cancel it.", {
+      code: 'LEAD_PAUSED',
+    });
+  }
+}
+
+module.exports = { hasMoneyInFlight, getMoneyInFlightReasons, anonymizeUser, revokeAllSessions, assertLeadNotPaused };

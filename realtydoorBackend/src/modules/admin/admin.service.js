@@ -19,6 +19,7 @@ const logger = require('../../lib/logger');
 const { cacheDel } = require('../../lib/cache');
 const dataAckService = require('../partners/dataAck.service');
 const { attachLoanDocuments } = require('../../lib/loanEligibility');
+const { assertLeadNotPaused } = require('../../lib/accountDeletion');
 const partnerService = require('../partners/partners.service');
 const { buildTicketChargeReceiptPdf } = require('../../lib/pdfReceipt');
 const { s3Upload } = require('../../lib/fileUpload');
@@ -398,6 +399,7 @@ async function assignLead(leadId, partnerId, adminId, ip) {
   if (['CLOSED', 'DROPPED'].includes(lead.status)) {
     throw new ApiError(400, `Cannot assign a ${lead.status.toLowerCase()} lead`);
   }
+  await assertLeadNotPaused(lead.buyerId);
 
   const partner = await prisma.user.findFirst({ where: { id: partnerId, role: 'PARTNER', kycStatus: 'VERIFIED' } });
   if (!partner) throw new ApiError(400, 'Partner not found or not KYC verified');
