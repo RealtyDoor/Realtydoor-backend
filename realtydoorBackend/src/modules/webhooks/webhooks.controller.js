@@ -78,7 +78,7 @@ async function razorpay(req, res) {
         });
 
         const user = await prisma.user.findUnique({ where: { id: subscription.userId } });
-        if (user && service) sendServiceActivated(user.email, service.name).catch(() => {});
+        if (user && service) sendServiceActivated(user.email, service.name, user).catch(() => {});
       }
     }
 

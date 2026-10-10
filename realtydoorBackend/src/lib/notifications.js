@@ -1,4 +1,5 @@
 const prisma = require('./prisma');
+const { canSend } = require('./notificationGate');
 
 // 10.1 / B6.1 — the notification pages group by category chips (Leads,
 // Escrow, KYC, Listings, System). Derived from `type` here rather than asked
@@ -69,7 +70,14 @@ function categoryFor(type) {
   return CATEGORY_BY_TYPE[type] || 'SYSTEM';
 }
 
+// Privacy spec, 2026-10-10 — gated by notifPush: there's no FCM/APNs
+// integration in this codebase, so this Notification row (the in-app bell/
+// list) is the only thing the Settings screen's "Push notifications" toggle
+// can actually control. Looked up by id rather than asked of every one of
+// the ~40 call sites, same reasoning as categoryFor below.
 async function createNotification({ userId, title, message, type, linkUrl }) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { notifPush: true } });
+  if (!canSend({ user, channel: 'PUSH' })) return null;
   return prisma.notification.create({
     data: { userId, title, message, type, category: categoryFor(type), linkUrl: linkUrl || null },
   });
@@ -77,8 +85,14 @@ async function createNotification({ userId, title, message, type, linkUrl }) {
 
 async function broadcastNotification({ userIds, title, message, type, linkUrl }) {
   const category = categoryFor(type);
+  const allowedUsers = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, notifPush: true },
+  });
+  const allowedIds = allowedUsers.filter((u) => canSend({ user: u, channel: 'PUSH' })).map((u) => u.id);
+  if (!allowedIds.length) return { count: 0 };
   return prisma.notification.createMany({
-    data: userIds.map((userId) => ({ userId, title, message, type, category, linkUrl: linkUrl || null })),
+    data: allowedIds.map((userId) => ({ userId, title, message, type, category, linkUrl: linkUrl || null })),
   });
 }
 

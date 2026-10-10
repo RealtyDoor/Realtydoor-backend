@@ -1,6 +1,7 @@
 const axios = require('axios');
 const logger = require('./logger');
 const prisma = require('./prisma');
+const { canSend, CATEGORIES } = require('./notificationGate');
 
 const client = axios.create({
   baseURL: process.env.WATI_API_ENDPOINT,
@@ -26,7 +27,13 @@ async function logSend(fields) {
 
 // `context` carries the ids that let the delivery log link a message back to
 // what caused it (12.5's "linked lead or ticket"). Callers pass what they know.
-async function sendTemplateMessage(phone, templateName, parameters = [], context = {}) {
+// `user`/`category` feed the privacy-spec enforcement gate (notificationGate.js)
+// — omitted by direct/manual sends (admin template replies), which keep
+// sending unconditionally exactly as before this gate existed, since there's
+// no toggle to respect without a user in scope.
+async function sendTemplateMessage(phone, templateName, parameters = [], context = {}, user, category) {
+  if (!canSend({ user, channel: 'WHATSAPP', category })) return null;
+
   const e164 = phone.replace(/\D/g, '');
   const startedAt = Date.now();
   try {
@@ -67,28 +74,30 @@ async function sendTemplateMessage(phone, templateName, parameters = [], context
   }
 }
 
+// OTPs — always sent regardless of the notifWhatsapp toggle (spec: "Receipts,
+// OTPs and security or legal notices always go out").
 async function sendSiteVisitOtp(phone, otp, context = {}) {
   return sendTemplateMessage(phone, 'site_visit_otp', [
     { name: '1', value: String(otp) },
-  ], context);
+  ], context, null, CATEGORIES.TRANSACTIONAL);
 }
 
-async function sendLeadAssignedNotice(phone, partnerName, context = {}) {
+async function sendLeadAssignedNotice(phone, partnerName, context = {}, user) {
   return sendTemplateMessage(phone, 'lead_assigned_notice', [
     { name: 'partner_name', value: partnerName },
-  ], context);
+  ], context, user);
 }
 
-async function sendBuyerFeedbackRequest(phone, partnerName, context = {}) {
+async function sendBuyerFeedbackRequest(phone, partnerName, context = {}, user) {
   return sendTemplateMessage(phone, 'buyer_feedback_request', [
     { name: 'partner_name', value: partnerName },
-  ], context);
+  ], context, user);
 }
 
 async function sendPhoneVerificationOtp(phone, otp, context = {}) {
   return sendTemplateMessage(phone, 'phone_verification_otp', [
     { name: '1', value: String(otp) },
-  ], context);
+  ], context, null, CATEGORIES.TRANSACTIONAL);
 }
 
 module.exports = {

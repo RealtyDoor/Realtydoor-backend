@@ -447,8 +447,8 @@ async function assignLead(leadId, partnerId, adminId, ip) {
   const propertyLabel = lead.property?.title || lead.propertyInterest || 'their inquiry';
 
   // Partner: WhatsApp + email
-  sendLeadAssignedNotice(partner.phone, partner.name).catch(() => {});
-  sendLeadAssigned(partner.email, { buyerName: lead.buyerName, propertyTitle: propertyLabel }).catch(() => {});
+  sendLeadAssignedNotice(partner.phone, partner.name, {}, partner).catch(() => {});
+  sendLeadAssigned(partner.email, { buyerName: lead.buyerName, propertyTitle: propertyLabel }, partner).catch(() => {});
 
   // Buyer: in-app notification (if registered) + email. Never the partner's
   // phone — "Contact agent" always dials the shared telecaller number
@@ -792,7 +792,7 @@ async function getPendingProperties(filters, skip, limit) {
 async function approveProperty(propertyId, adminId, ip, visibility = {}) {
   const property = await prisma.property.findUnique({
     where: { id: propertyId },
-    include: { partner: { select: { email: true } } },
+    include: { partner: { select: { email: true, notifEmail: true } } },
   });
   if (!property) throw new ApiError(404, 'Property not found');
 
@@ -837,7 +837,7 @@ async function approveProperty(propertyId, adminId, ip, visibility = {}) {
     ipAddress: ip,
   });
 
-  sendPropertyApproved(property.partner.email, property.title).catch(() => {});
+  sendPropertyApproved(property.partner.email, property.title, property.partner).catch(() => {});
   cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
   cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
   return updated;
@@ -846,7 +846,7 @@ async function approveProperty(propertyId, adminId, ip, visibility = {}) {
 async function rejectProperty(propertyId, note, adminId, ip) {
   const property = await prisma.property.findUnique({
     where: { id: propertyId },
-    include: { partner: { select: { email: true } } },
+    include: { partner: { select: { email: true, notifEmail: true } } },
   });
   if (!property) throw new ApiError(404, 'Property not found');
 
@@ -869,7 +869,7 @@ async function rejectProperty(propertyId, note, adminId, ip) {
     ipAddress: ip,
   });
 
-  sendPropertyRejected(property.partner.email, property.title, note).catch(() => {});
+  sendPropertyRejected(property.partner.email, property.title, note, property.partner).catch(() => {});
   cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
   cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
   return updated;
@@ -889,7 +889,7 @@ async function rejectProperty(propertyId, note, adminId, ip) {
 async function requestPropertyChanges(propertyId, { items, note }, adminId, adminName, ip) {
   const property = await prisma.property.findUnique({
     where: { id: propertyId },
-    include: { partner: { select: { email: true } } },
+    include: { partner: { select: { email: true, notifEmail: true } } },
   });
   if (!property) throw new ApiError(404, 'Property not found');
 
@@ -938,6 +938,7 @@ async function requestPropertyChanges(propertyId, { items, note }, adminId, admi
     property.partner.email,
     property.title,
     `${note ? note + ' ' : ''}Requested fixes: ${items.join('; ')}`,
+    property.partner,
   ).catch(() => {});
 
   return updated;
@@ -1058,9 +1059,9 @@ async function verifyKyc(userId, action, note, adminId, ip) {
   });
 
   if (action === 'APPROVE') {
-    sendKycVerified(user.email).catch(() => {});
+    sendKycVerified(user.email, user).catch(() => {});
   } else {
-    sendKycRejected(user.email, note).catch(() => {});
+    sendKycRejected(user.email, note, user).catch(() => {});
   }
 
   return updated;
@@ -1200,7 +1201,7 @@ async function getLoanBankStats() {
 async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields = {}) {
   const loan = await prisma.loanApplication.findUnique({
     where: { id: loanId },
-    include: { user: { select: { email: true } } },
+    include: { user: { select: { email: true, notifEmail: true, marketingOptIn: true } } },
   });
   if (!loan) throw new ApiError(404, 'Loan application not found');
 
@@ -1238,7 +1239,7 @@ async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields 
     linkUrl: status === 'SANCTIONED' ? `/user/loans/sanctioned?id=${loanId}` : '/user/loans',
   });
 
-  sendLoanStatusUpdate(loan.user.email, status, adminNote, loanId).catch(() => {});
+  sendLoanStatusUpdate(loan.user.email, status, adminNote, loanId, loan.user).catch(() => {});
 
   return updated;
 }
