@@ -289,16 +289,29 @@ function formatProfileSettings(user) {
   };
 }
 
-async function updateConsent(userId, { termsAccepted, privacyAccepted, marketingOptIn, documentVersion }, ipAddress, userAgent) {
+// Backend gaps handoff, 2026-10-10 (follow-up) — the client's documentVersion
+// is accepted (still in the schema, so an older build that still sends one
+// doesn't 400) but no longer trusted to decide what got accepted. The
+// frontend's own wording-revision string ("2026-06-1") would never equal a
+// bumped PlatformConfig terms_version/privacy_version ("2"), so every user
+// would show requiresReconsent: true the moment an admin published a new
+// version — the server is the one place that actually knows which version
+// is current, so it stamps that, not whatever the client happened to send.
+async function updateConsent(userId, { termsAccepted, privacyAccepted, marketingOptIn }, ipAddress, userAgent) {
   const data = {};
   const now = new Date();
+
+  let currentTermsVersion;
+  let currentPrivacyVersion;
   if (termsAccepted) {
+    currentTermsVersion = await getConfigValue('terms_version', DEFAULT_TERMS_VERSION);
     data.termsAcceptedAt = now;
-    if (documentVersion) data.termsAcceptedVersion = documentVersion;
+    data.termsAcceptedVersion = currentTermsVersion;
   }
   if (privacyAccepted) {
+    currentPrivacyVersion = await getConfigValue('privacy_version', DEFAULT_PRIVACY_VERSION);
     data.privacyAcceptedAt = now;
-    if (documentVersion) data.privacyAcceptedVersion = documentVersion;
+    data.privacyAcceptedVersion = currentPrivacyVersion;
   }
   if (marketingOptIn !== undefined) {
     data.marketingOptIn   = marketingOptIn;
@@ -319,8 +332,8 @@ async function updateConsent(userId, { termsAccepted, privacyAccepted, marketing
   // request — a caller accepting terms AND opting into marketing in the same
   // PATCH did two separate consent-worthy things, and the spec wants each
   // event individually recorded.
-  if (termsAccepted)   await createPrivacyAuditLog({ userId, action: 'TERMS_ACCEPTED', documentVersion, ipAddress, userAgent });
-  if (privacyAccepted) await createPrivacyAuditLog({ userId, action: 'PRIVACY_ACCEPTED', documentVersion, ipAddress, userAgent });
+  if (termsAccepted)   await createPrivacyAuditLog({ userId, action: 'TERMS_ACCEPTED', documentVersion: currentTermsVersion, ipAddress, userAgent });
+  if (privacyAccepted) await createPrivacyAuditLog({ userId, action: 'PRIVACY_ACCEPTED', documentVersion: currentPrivacyVersion, ipAddress, userAgent });
   if (marketingOptIn !== undefined) {
     await createPrivacyAuditLog({
       userId, action: marketingOptIn ? 'MARKETING_OPT_IN' : 'MARKETING_OPT_OUT', ipAddress, userAgent,
@@ -414,13 +427,23 @@ async function getPrivacyState(userId) {
   };
 }
 
-// Backend gaps handoff, 2026-10-10 (#1) — scope: 'MARKETING' just flips the
-// marketing opt-in off (lighter, reversible). scope: 'ALL' withdraws
-// consent to processing generally AND starts the same 30-day deletion flow
-// as requestAccountDeletion below (shares its core, including the
-// money-in-flight block) — withdrawing consent is still recorded even if
-// the deletion half ends up blocked, so a retry once unblocked doesn't
-// re-ask the user to withdraw again.
+// Backend gaps handoff, 2026-10-10 (follow-up) — scope: 'MARKETING' just
+// flips the marketing opt-in off (lighter, reversible). scope: 'ALL'
+// withdraws consent to processing generally AND starts the same 30-day
+// deletion flow as requestAccountDeletion below (shares its core,
+// including the money-in-flight block).
+//
+// Decided: check first, write nothing on a block (option A of the two the
+// frontend asked us to pick between). The money-in-flight check runs
+// before anything is written — a blocked scope:'ALL' call leaves the
+// account exactly as it was (no CONSENT_WITHDRAWN, no row touched),
+// 409 DELETION_BLOCKED, same as requestAccountDeletion's own block. This
+// was picked over "keep the withdrawal, auto-start deletion once the
+// money clears" because that needs the daily cron to track users who
+// withdrew-but-couldn't-delete as a new, separate case it doesn't have
+// today — this keeps withdraw-consent a single atomic action instead of
+// introducing that extra state and a silent background follow-up the user
+// never explicitly asked this call to do for them later.
 async function withdrawConsent(userId, scope, ipAddress, userAgent) {
   const normalizedScope = scope === 'ALL' ? 'ALL' : 'MARKETING';
 
@@ -432,6 +455,17 @@ async function withdrawConsent(userId, scope, ipAddress, userAgent) {
     });
     await createPrivacyAuditLog({ userId, action: 'MARKETING_OPT_OUT', ipAddress, userAgent, metadata: { scope: normalizedScope } });
     return updated;
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { deletedAt: true } });
+  if (!user) throw new ApiError(404, 'User not found');
+  if (user.deletedAt) throw new ApiError(400, 'This account has already been deleted');
+
+  const blockingReasons = await getMoneyInFlightReasons(userId);
+  if (blockingReasons.length) {
+    throw new ApiError(409, `Account deletion is blocked: ${blockingReasons.join('; ')}`, {
+      code: 'DELETION_BLOCKED', reasons: blockingReasons,
+    });
   }
 
   const updated = await prisma.user.update({

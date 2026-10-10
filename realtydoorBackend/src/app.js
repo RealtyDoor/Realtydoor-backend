@@ -16,6 +16,22 @@ const app = express();
 // there's more than one proxy in front of this app (e.g. Cloudflare + ALB → 2).
 app.set('trust proxy', 1);
 
+// Backend gaps handoff, 2026-10-10 (follow-up) — the frontend proxy sends
+// X-Forwarded-For normally, falling back to X-Real-IP when it doesn't have
+// one to forward. Express's own req.ip (and express-rate-limit, which
+// reads it) only ever looks at X-Forwarded-For when `trust proxy` is set —
+// it has no idea X-Real-IP exists — so without this, that fallback case
+// would silently reproduce the exact "every request looks like it came
+// from the proxy" bug this trust-proxy setup exists to avoid. Must run
+// before anything that reads req.ip (rate limiters, requestLogger,
+// authenticate's privacy-audit ipAddress).
+app.use((req, res, next) => {
+  if (!req.headers['x-forwarded-for'] && req.headers['x-real-ip']) {
+    req.headers['x-forwarded-for'] = req.headers['x-real-ip'];
+  }
+  next();
+});
+
 // ── Security headers ──────────────────────────────────────────────────────────
 app.use(helmet());
 const ALLOWED_ORIGINS = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '')

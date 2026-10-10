@@ -5,7 +5,7 @@ const { requireUser } = require('../../middleware/requireRole');
 const { requireOnboarded } = require('../../middleware/requireOnboarded');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { userDocUploader } = require('../../lib/fileUpload');
-const { otpLimiter, perUserLimiter, privacyActionLimiter } = require('../../middleware/rateLimiter');
+const { otpLimiter, perUserLimiter, perUserPhoneOtpLimiter, privacyActionLimiter } = require('../../middleware/rateLimiter');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 
 router.use(authenticate, requireUser, perUserLimiter);
@@ -45,9 +45,16 @@ router.post('/privacy/withdraw-consent',        privacyActionLimiter, ctrl.withd
 router.post('/privacy/delete-account',          privacyActionLimiter, ctrl.requestAccountDeletionLegacy);
 router.post('/privacy/delete-account/cancel',                         ctrl.cancelAccountDeletion);
 
-// Phone verification (lazy — only called when needed)
-router.post('/verify-phone',     otpLimiter, ctrl.requestPhoneOtp);
-router.post('/verify-phone/otp', otpLimiter, ctrl.verifyPhoneOtp);
+// Phone verification (lazy — only called when needed). Backend gaps
+// handoff, 2026-10-10 (follow-up) — otpLimiter alone is IP-keyed, which
+// the frontend confirmed the backend previously saw as one shared IP for
+// every user behind its proxy (no X-Forwarded-For forwarded). Now fixed
+// upstream, but a shared network (office Wi-Fi, a mobile carrier's NAT)
+// still genuinely shares one IP — perUserPhoneOtpLimiter stacks a
+// per-user budget on top so those users don't exhaust each other's quota,
+// while otpLimiter remains as the IP-keyed backstop.
+router.post('/verify-phone',     otpLimiter, perUserPhoneOtpLimiter, ctrl.requestPhoneOtp);
+router.post('/verify-phone/otp', otpLimiter, perUserPhoneOtpLimiter, ctrl.verifyPhoneOtp);
 
 // Inquiries tracker
 router.get('/leads', ctrl.getMyLeads);
