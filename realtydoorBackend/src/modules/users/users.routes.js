@@ -5,15 +5,21 @@ const { requireUser } = require('../../middleware/requireRole');
 const { requireOnboarded } = require('../../middleware/requireOnboarded');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { userDocUploader } = require('../../lib/fileUpload');
-const { otpLimiter, perUserLimiter } = require('../../middleware/rateLimiter');
+const { otpLimiter, perUserLimiter, privacyActionLimiter } = require('../../middleware/rateLimiter');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 
 router.use(authenticate, requireUser, perUserLimiter);
 
-// requireOnboarded (B6) gates everything below except profile edits and the
-// phone-verification endpoints themselves — a USER account with no verified
-// phone still needs to be able to reach those to complete onboarding.
-const ONBOARDING_EXEMPT_PATHS = ['/profile', '/verify-phone', '/verify-phone/otp'];
+// requireOnboarded (B6) gates everything below except profile edits, the
+// phone-verification endpoints, and every privacy path (both the canonical
+// paths and their legacy aliases) — a user must always be able to see and
+// withdraw consent / cancel a pending deletion, onboarded or not (backend
+// gaps handoff #1/#2).
+const ONBOARDING_EXEMPT_PATHS = [
+  '/profile', '/verify-phone', '/verify-phone/otp',
+  '/privacy', '/consent/withdraw', '/account/deletion-request',
+  '/privacy/withdraw-consent', '/privacy/delete-account', '/privacy/delete-account/cancel',
+];
 router.use((req, res, next) => (
   ONBOARDING_EXEMPT_PATHS.includes(req.path) ? next() : requireOnboarded(req, res, next)
 ));
@@ -25,10 +31,19 @@ router.patch('/profile', ctrl.updateProfile);
 router.patch('/consent', ctrl.updateConsent);
 router.get('/consent', ctrl.getConsentState);
 
-// Privacy — withdrawal and account deletion (grace period + cancel)
-router.post('/privacy/withdraw-consent',        ctrl.withdrawConsent);
-router.post('/privacy/delete-account',          ctrl.requestAccountDeletion);
-router.post('/privacy/delete-account/cancel',   ctrl.cancelAccountDeletion);
+// Backend gaps handoff, 2026-10-10 (#1) — canonical privacy routes. The
+// frontend (src/lib/privacy.ts) was built against these paths; the
+// /privacy/* paths below are kept as aliases to the same handlers so an
+// older build in the wild keeps working unchanged.
+router.get('/privacy', ctrl.getPrivacyState);
+router.post('/consent/withdraw',          privacyActionLimiter, ctrl.withdrawConsent);
+router.post('/account/deletion-request',  privacyActionLimiter, ctrl.requestAccountDeletion);
+router.delete('/account/deletion-request',                      ctrl.cancelAccountDeletion);
+
+// Legacy aliases — same handlers, old no-body contracts.
+router.post('/privacy/withdraw-consent',        privacyActionLimiter, ctrl.withdrawConsentLegacy);
+router.post('/privacy/delete-account',          privacyActionLimiter, ctrl.requestAccountDeletionLegacy);
+router.post('/privacy/delete-account/cancel',                         ctrl.cancelAccountDeletion);
 
 // Phone verification (lazy — only called when needed)
 router.post('/verify-phone',     otpLimiter, ctrl.requestPhoneOtp);
@@ -47,6 +62,7 @@ router.post('/favorites', requirePhone, ctrl.toggleFavorite);
 // Document vault
 router.get('/documents', ctrl.getDocuments);
 router.post('/documents', requirePhone, userDocUploader.single('file'), ctrl.uploadDocument);
+router.delete('/documents/:id', validateObjectId('id'), ctrl.deleteDocument);
 
 // Service subscriptions
 router.get('/subscriptions', ctrl.getSubscriptions);
@@ -62,6 +78,7 @@ router.get('/tickets/:id/comments',  ctrl.getTicketComments);
 router.post('/tickets/:id/comments', ctrl.addTicketComment);
 
 // Loan applications
+router.get('/loan/eligibility',       ctrl.getLoanEligibility);
 router.post('/loan',     requirePhone, ctrl.createLoanApplication);
 router.get('/loan',                   ctrl.getMyLoanApplications);
 router.get('/loan/:id',               ctrl.getLoanApplicationById);

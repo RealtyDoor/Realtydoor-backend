@@ -222,10 +222,15 @@ async function partnerAddLead(partnerId, data) {
 // never existed.
 function sanitizeLeadForPartner(lead) {
   const { buyer, ...rest } = lead;
+  // Backend gaps handoff, 2026-10-10 (#2) — once the buyer has requested
+  // account deletion, a partner must stop being handed fresh contact
+  // details for them, same "no contact before earned" instinct as the OTP
+  // gate itself, just triggered by the opposite end of the relationship.
+  const contactVisible = lead.isOtpVerified && !buyer?.deletionRequestedAt;
   const clean = {
     ...rest,
-    buyerPhone: formatContact(lead.buyerPhone, lead.isOtpVerified, maskPhone),
-    buyerEmail: formatContact(lead.buyerEmail, lead.isOtpVerified, maskEmail),
+    buyerPhone: formatContact(lead.buyerPhone, contactVisible, maskPhone),
+    buyerEmail: formatContact(lead.buyerEmail, contactVisible, maskEmail),
     buyerRef: buyer?.refCode,
     buyerPhoneVerified: buyer?.phoneVerified,
     siteVisitOTP: undefined, // never expose OTP in response
@@ -238,7 +243,7 @@ function sanitizeLeadForPartner(lead) {
   return clean;
 }
 
-const PARTNER_LEAD_BUYER_SELECT = { select: { refCode: true, phoneVerified: true } };
+const PARTNER_LEAD_BUYER_SELECT = { select: { refCode: true, phoneVerified: true, deletionRequestedAt: true } };
 
 // B4.13 / 6.9 — "STALLED 6d" on the leads list and the admin stalled digest.
 // Computed, not stored: "last activity" is the newest of the timestamps that

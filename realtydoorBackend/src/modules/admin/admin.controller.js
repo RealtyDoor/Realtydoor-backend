@@ -260,6 +260,18 @@ async function getAuditLogs(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getUserPrivacyEvents(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const result = await service.getUserPrivacyEvents(req.params.id, req.query, skip, limit, req.user.id, req.ip);
+    if (req.query.format === 'csv') {
+      res.set('Content-Type', 'text/csv').set('Content-Disposition', `attachment; filename="privacy-events-${req.params.id}.csv"`);
+      return res.send(result.csv);
+    }
+    success(res, paginate(result.data, result.total, page, limit));
+  } catch (err) { next(err); }
+}
+
 async function getPartnerMetrics(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
@@ -299,6 +311,13 @@ async function getLoans(req, res, next) {
     const { page, limit, skip } = parsePagination(req.query);
     const { data, total } = await service.getAllLoans(req.query, skip, limit);
     success(res, paginate(data, total, page, limit));
+  } catch (err) { next(err); }
+}
+
+async function getLoanById(req, res, next) {
+  try {
+    const loan = await service.getLoanById(req.params.id);
+    success(res, loan);
   } catch (err) { next(err); }
 }
 
@@ -724,10 +743,10 @@ module.exports = {
   requestPropertyChanges,
   requestKycDocuments,
   getPendingKyc, verifyKyc, autoVerifyKyc,
-  getRevenue, getAuditLogs, getPartnerMetrics,
+  getRevenue, getAuditLogs, getUserPrivacyEvents, getPartnerMetrics,
   getTickets, getTicket, updateTicket, getTicketStats,
   dispatchTicket, resolveTicket, linkTicketToDeal, getTicketComments, addTicketComment,
-  getLoans, updateLoanStatus, getLoanBankStats,
+  getLoans, getLoanById, updateLoanStatus, getLoanBankStats,
   getUsers, changeUserRole, getUserById, suspendUser,
   listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,
   getPartnerById,

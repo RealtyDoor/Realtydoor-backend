@@ -6,9 +6,13 @@ const { getConfigNumber } = require('../config/config.service');
 const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
 const { sanitizeLeadForBuyer } = require('../leads/leads.service');
 const { createPrivacyAuditLog } = require('../../lib/privacyAuditLog');
-const { hasMoneyInFlight } = require('../../lib/accountDeletion');
+const { getMoneyInFlightReasons, revokeAllSessions } = require('../../lib/accountDeletion');
+const { getLoanEligibility, resolveVerifiedDocIds, attachLoanDocuments } = require('../../lib/loanEligibility');
+const { getConfigValue } = require('../config/config.service');
 
 const DELETION_GRACE_PERIOD_DAYS = 30;
+const DEFAULT_TERMS_VERSION = '1';
+const DEFAULT_PRIVACY_VERSION = '1';
 
 const DEFAULT_ESCROW_REFUND_WINDOW_HOURS = 48;
 
@@ -207,6 +211,19 @@ async function updateProfile(userId, { notificationPreferences, city, ...rest },
   const data = { ...rest };
   if (city !== undefined) data.preferredCity = city;
 
+  // Backend gaps handoff, 2026-10-10 (#4) — old values are read first so
+  // the audit log can record one row PER KEY THAT ACTUALLY CHANGED, not one
+  // row for the whole request regardless of whether anything moved (e.g.
+  // re-sending the same `push: true` the user already had shouldn't write
+  // a log entry). Never phone/email/message bodies — just which boolean
+  // flipped and its old/new value.
+  const oldPrefs = notificationPreferences
+    ? await prisma.user.findUnique({
+        where: { id: userId },
+        select: { notifPush: true, notifEmail: true, notifWhatsapp: true, marketingOptIn: true, notifVisitReminders: true },
+      })
+    : null;
+
   if (notificationPreferences) {
     const { push, email, whatsapp, marketing, visitReminders } = notificationPreferences;
     if (push           !== undefined) data.notifPush           = push;
@@ -235,11 +252,22 @@ async function updateProfile(userId, { notificationPreferences, city, ...rest },
     },
   });
 
-  if (notificationPreferences) {
-    await createPrivacyAuditLog({
-      userId, action: 'NOTIFICATION_PREFS_UPDATED', ipAddress, userAgent,
-      metadata: notificationPreferences,
-    });
+  if (notificationPreferences && oldPrefs) {
+    const candidates = [
+      ['push',           oldPrefs.notifPush,        user.notifPush],
+      ['email',          oldPrefs.notifEmail,        user.notifEmail],
+      ['whatsapp',       oldPrefs.notifWhatsapp,      user.notifWhatsapp],
+      ['marketing',      oldPrefs.marketingOptIn,     user.marketingOptIn],
+      ['visitReminders', oldPrefs.notifVisitReminders, user.notifVisitReminders],
+    ];
+    for (const [field, from, to] of candidates) {
+      if (notificationPreferences[field] !== undefined && from !== to) {
+        await createPrivacyAuditLog({
+          userId, action: 'NOTIFICATION_PREFERENCE_CHANGED', ipAddress, userAgent,
+          metadata: { field, from, to },
+        });
+      }
+    }
   }
 
   return formatProfileSettings(user);
@@ -261,11 +289,17 @@ function formatProfileSettings(user) {
   };
 }
 
-async function updateConsent(userId, { termsAccepted, privacyAccepted, marketingOptIn }, ipAddress, userAgent) {
+async function updateConsent(userId, { termsAccepted, privacyAccepted, marketingOptIn, documentVersion }, ipAddress, userAgent) {
   const data = {};
   const now = new Date();
-  if (termsAccepted)          data.termsAcceptedAt   = now;
-  if (privacyAccepted)        data.privacyAcceptedAt = now;
+  if (termsAccepted) {
+    data.termsAcceptedAt = now;
+    if (documentVersion) data.termsAcceptedVersion = documentVersion;
+  }
+  if (privacyAccepted) {
+    data.privacyAcceptedAt = now;
+    if (documentVersion) data.privacyAcceptedVersion = documentVersion;
+  }
   if (marketingOptIn !== undefined) {
     data.marketingOptIn   = marketingOptIn;
     data.marketingOptInAt = marketingOptIn ? now : null;
@@ -275,7 +309,8 @@ async function updateConsent(userId, { termsAccepted, privacyAccepted, marketing
     where: { id: userId },
     data,
     select: {
-      id: true, termsAcceptedAt: true, privacyAcceptedAt: true,
+      id: true, termsAcceptedAt: true, termsAcceptedVersion: true,
+      privacyAcceptedAt: true, privacyAcceptedVersion: true,
       marketingOptIn: true, marketingOptInAt: true,
     },
   });
@@ -284,8 +319,8 @@ async function updateConsent(userId, { termsAccepted, privacyAccepted, marketing
   // request — a caller accepting terms AND opting into marketing in the same
   // PATCH did two separate consent-worthy things, and the spec wants each
   // event individually recorded.
-  if (termsAccepted)   await createPrivacyAuditLog({ userId, action: 'TERMS_ACCEPTED', ipAddress, userAgent });
-  if (privacyAccepted) await createPrivacyAuditLog({ userId, action: 'PRIVACY_ACCEPTED', ipAddress, userAgent });
+  if (termsAccepted)   await createPrivacyAuditLog({ userId, action: 'TERMS_ACCEPTED', documentVersion, ipAddress, userAgent });
+  if (privacyAccepted) await createPrivacyAuditLog({ userId, action: 'PRIVACY_ACCEPTED', documentVersion, ipAddress, userAgent });
   if (marketingOptIn !== undefined) {
     await createPrivacyAuditLog({
       userId, action: marketingOptIn ? 'MARKETING_OPT_IN' : 'MARKETING_OPT_OUT', ipAddress, userAgent,
@@ -335,18 +370,83 @@ async function getConsentState(userId) {
   };
 }
 
-// Distinct from deletion: withdrawing consent says "stop processing my data
-// the way you were", it does not by itself ask for erasure. The Settings
-// screen may chain this with a deletion request, but the two are recorded
-// (and can happen) independently.
-async function withdrawConsent(userId, ipAddress, userAgent) {
+// Backend gaps handoff, 2026-10-10 (#1) — nested shape the frontend's
+// PrivacyActionModal/settings page actually reads (src/lib/privacy.ts),
+// distinct from GET /user/consent's flatter shape above which is kept
+// unchanged for whatever still reads it. requiresReconsent is true only
+// when the user accepted a SPECIFIC earlier version that no longer matches
+// what's currently published — never accepting at all is a different,
+// pre-existing state the frontend already handles via a null acceptedAt.
+async function getPrivacyState(userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      termsAcceptedAt: true, termsAcceptedVersion: true,
+      privacyAcceptedAt: true, privacyAcceptedVersion: true, consentWithdrawnAt: true,
+      marketingOptIn: true, marketingOptInAt: true,
+      notifPush: true, notifEmail: true, notifWhatsapp: true, notifVisitReminders: true,
+      deletionRequestedAt: true, deletionScheduledAt: true,
+    },
+  });
+  if (!user) throw new ApiError(404, 'User not found');
+
+  const [currentTermsVersion, currentPrivacyVersion] = await Promise.all([
+    getConfigValue('terms_version', DEFAULT_TERMS_VERSION),
+    getConfigValue('privacy_version', DEFAULT_PRIVACY_VERSION),
+  ]);
+
+  const requiresReconsent = Boolean(
+    (user.termsAcceptedAt && user.termsAcceptedVersion && user.termsAcceptedVersion !== currentTermsVersion)
+    || (user.privacyAcceptedAt && user.privacyAcceptedVersion && user.privacyAcceptedVersion !== currentPrivacyVersion)
+  );
+
+  return {
+    terms:   { acceptedAt: user.termsAcceptedAt, version: user.termsAcceptedVersion },
+    privacy: { acceptedAt: user.privacyAcceptedAt, version: user.privacyAcceptedVersion, withdrawnAt: user.consentWithdrawnAt },
+    marketingOptIn: user.marketingOptIn,
+    notificationPreferences: {
+      push: user.notifPush, email: user.notifEmail, whatsapp: user.notifWhatsapp,
+      marketing: user.marketingOptIn, visitReminders: user.notifVisitReminders,
+    },
+    currentVersions: { terms: currentTermsVersion, privacy: currentPrivacyVersion },
+    requiresReconsent,
+    deletion: { requestedAt: user.deletionRequestedAt, scheduledFor: user.deletionScheduledAt },
+  };
+}
+
+// Backend gaps handoff, 2026-10-10 (#1) — scope: 'MARKETING' just flips the
+// marketing opt-in off (lighter, reversible). scope: 'ALL' withdraws
+// consent to processing generally AND starts the same 30-day deletion flow
+// as requestAccountDeletion below (shares its core, including the
+// money-in-flight block) — withdrawing consent is still recorded even if
+// the deletion half ends up blocked, so a retry once unblocked doesn't
+// re-ask the user to withdraw again.
+async function withdrawConsent(userId, scope, ipAddress, userAgent) {
+  const normalizedScope = scope === 'ALL' ? 'ALL' : 'MARKETING';
+
+  if (normalizedScope === 'MARKETING') {
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { marketingOptIn: false, marketingOptInAt: null },
+      select: { id: true, marketingOptIn: true },
+    });
+    await createPrivacyAuditLog({ userId, action: 'MARKETING_OPT_OUT', ipAddress, userAgent, metadata: { scope: normalizedScope } });
+    return updated;
+  }
+
   const updated = await prisma.user.update({
     where: { id: userId },
     data: { consentWithdrawnAt: new Date() },
     select: { id: true, consentWithdrawnAt: true },
   });
-  await createPrivacyAuditLog({ userId, action: 'CONSENT_WITHDRAWN', ipAddress, userAgent });
-  return updated;
+  await createPrivacyAuditLog({ userId, action: 'CONSENT_WITHDRAWN', ipAddress, userAgent, metadata: { scope: normalizedScope } });
+
+  const deletion = await requestAccountDeletion(userId, 'Consent withdrawn (scope=ALL)', ipAddress, userAgent);
+  return {
+    ...updated,
+    deletion: { requestedAt: deletion.deletionRequestedAt, scheduledFor: deletion.deletionScheduledAt },
+    scheduledFor: deletion.deletionScheduledAt,
+  };
 }
 
 // Privacy spec, 2026-10-10 — 30-day grace period, cancellable, blocked while
@@ -355,14 +455,25 @@ async function withdrawConsent(userId, ipAddress, userAgent) {
 // directly); the historical fact that a request happened lives permanently
 // in the audit log, not in these two columns, which cancelAccountDeletion
 // below clears back to null.
-async function requestAccountDeletion(userId, ipAddress, userAgent) {
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, deletedAt: true } });
+//
+// Backend gaps handoff, 2026-10-10 (#1/#2) — `reason` is the optional
+// free-text field the new POST /user/account/deletion-request body accepts
+// (stored only in the audit log metadata, never on the User row itself —
+// it has no business surviving into the anonymized record). Returns
+// `scheduledFor` alongside the original `deletionScheduledAt` key so both
+// the old and new frontend contracts read the field they expect from the
+// same response. Clerk sessions are revoked best-effort so the read-only
+// lock (middleware/auth.js) isn't the only thing standing between a token
+// already in a browser and the rest of the app.
+async function requestAccountDeletion(userId, reason, ipAddress, userAgent) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, clerkId: true, deletedAt: true } });
   if (!user) throw new ApiError(404, 'User not found');
   if (user.deletedAt) throw new ApiError(400, 'This account has already been deleted');
 
-  if (await hasMoneyInFlight(userId)) {
-    throw new ApiError(400, 'Account deletion is blocked while you have an escrow payment held or a loan application in progress', {
-      code: 'MONEY_IN_FLIGHT',
+  const blockingReasons = await getMoneyInFlightReasons(userId);
+  if (blockingReasons.length) {
+    throw new ApiError(409, `Account deletion is blocked: ${blockingReasons.join('; ')}`, {
+      code: 'DELETION_BLOCKED', reasons: blockingReasons,
     });
   }
 
@@ -375,8 +486,13 @@ async function requestAccountDeletion(userId, ipAddress, userAgent) {
     select: { id: true, deletionRequestedAt: true, deletionScheduledAt: true },
   });
 
-  await createPrivacyAuditLog({ userId, action: 'DELETION_REQUESTED', ipAddress, userAgent });
-  return updated;
+  await createPrivacyAuditLog({
+    userId, action: 'DELETION_REQUESTED', ipAddress, userAgent,
+    metadata: reason ? { reason } : undefined,
+  });
+  await revokeAllSessions(user.clerkId);
+
+  return { ...updated, scheduledFor: updated.deletionScheduledAt };
 }
 
 async function cancelAccountDeletion(userId, ipAddress, userAgent) {
@@ -407,6 +523,29 @@ async function uploadDocument(userId, documentType, fileUrl, fileName) {
     data: { userId, documentType, fileUrl, fileName },
   });
   return serializeDoc(doc);
+}
+
+// Backend gaps handoff, 2026-10-10 (#5) — a document attached to a loan
+// that hasn't reached a terminal state is evidence a lender relied on;
+// deleting it out from under a live application would leave
+// documentSnapshot pointing at nothing. DISBURSED/REJECTED are the only
+// terminal LoanStatus values (same set lib/accountDeletion.js's
+// hasMoneyInFlight uses for "is this loan still in progress").
+async function deleteDocument(userId, docId) {
+  const doc = await prisma.userDocument.findFirst({ where: { id: docId, userId } });
+  if (!doc) throw new ApiError(404, 'Document not found');
+
+  const attachedLoan = await prisma.loanApplication.findFirst({
+    where: { userId, submittedDocIds: { has: docId }, status: { notIn: ['DISBURSED', 'REJECTED'] } },
+    select: { id: true },
+  });
+  if (attachedLoan) {
+    throw new ApiError(409, 'This document is attached to a loan application that is still in progress and cannot be deleted', {
+      code: 'DOCUMENT_IN_USE',
+    });
+  }
+
+  await prisma.userDocument.delete({ where: { id: docId } });
 }
 
 async function getSubscriptions(userId) {
@@ -505,51 +644,78 @@ async function addTicketComment(userId, ticketId, { text, photos }) {
   });
 }
 
-async function createLoanApplication(userId, { documentSharingConsent: _documentSharingConsent, documentSharingConsentVersion, submittedDocIds, tenureMonths, ...data }) {
-  // Dev feedback, 2026-10-08 — submittedDocIds must actually be this user's
-  // own documents; otherwise one user could attach another's PAN/Aadhaar
-  // to their own loan application by guessing/reusing an id.
-  if (submittedDocIds?.length) {
-    const owned = await prisma.userDocument.count({ where: { id: { in: submittedDocIds }, userId } });
-    if (owned !== submittedDocIds.length) {
-      throw new ApiError(400, 'One or more submitted documents do not belong to you');
+// Backend gaps handoff, 2026-10-10 (#5) — the frontend's document-upload
+// step only *looked* mandatory; a direct API call could submit with no
+// documents at all. submittedDocIds from the request body is accepted (so
+// an older frontend build that still sends it doesn't 400) but ignored —
+// the server decides which documents actually back this application, from
+// whichever ones are currently verified, re-checked inside the same
+// transaction as the insert so nothing changes between the check and the
+// write.
+async function createLoanApplication(userId, { documentSharingConsent: _documentSharingConsent, documentSharingConsentVersion, submittedDocIds: _submittedDocIds, tenureMonths, ...data }) {
+  return prisma.$transaction(async (tx) => {
+    const eligibility = await getLoanEligibility(userId, tx);
+    if (!eligibility.eligible) {
+      throw new ApiError(409, 'All required documents must be verified before you can apply', {
+        code: 'DOCUMENTS_NOT_VERIFIED',
+        blocking: eligibility.blocking,
+      });
     }
-  }
 
-  return prisma.loanApplication.create({
-    data: {
-      ...data, userId,
-      // tenureMonthsRequested, not tenureMonths — that column is admin-set
-      // at sanction time (updateLoanStatus) and must not be clobbered by
-      // what the user originally asked for.
-      ...(tenureMonths != null && { tenureMonthsRequested: tenureMonths }),
-      ...(submittedDocIds?.length && { submittedDocIds }),
-      // documentSharingConsent is required on every submission (validator
-      // enforces the literal true), so this is always set, not conditional
-      // on documents being attached.
-      documentSharingConsentAt: new Date(),
-      ...(documentSharingConsentVersion && { documentSharingConsentVersion }),
-      // Dev feedback, 2026-10-08 (L4) — "on create seed the first one":
-      // the tracker's dated step list should show DOCUMENTS_PENDING from
-      // the very start, not only once the first admin-driven status
-      // change happens.
-      statusHistory: [{ status: 'DOCUMENTS_PENDING', at: new Date().toISOString(), note: null }],
-    },
+    const verifiedDocIds = resolveVerifiedDocIds(eligibility);
+    const documentSnapshot = eligibility.rows
+      .filter((r) => r.state === 'verified' && r.document)
+      .map((r) => ({
+        documentId: r.document.id,
+        documentType: r.document.documentType,
+        fileName: r.document.fileName,
+        fileUrl: r.document.fileUrl,
+        verifiedAt: r.document.verifiedAt,
+        verifiedByAdminId: r.document.verifiedByAdminId,
+        uploadedAt: r.document.uploadedAt,
+      }));
+
+    return tx.loanApplication.create({
+      data: {
+        ...data, userId,
+        // tenureMonthsRequested, not tenureMonths — that column is admin-set
+        // at sanction time (updateLoanStatus) and must not be clobbered by
+        // what the user originally asked for.
+        ...(tenureMonths != null && { tenureMonthsRequested: tenureMonths }),
+        submittedDocIds: verifiedDocIds,
+        documentSnapshot,
+        // documentSharingConsent is required on every submission (validator
+        // enforces the literal true), so this is always set, not conditional
+        // on documents being attached.
+        documentSharingConsentAt: new Date(),
+        ...(documentSharingConsentVersion && { documentSharingConsentVersion }),
+        // Dev feedback, 2026-10-08 (L4) — "on create seed the first one":
+        // the tracker's dated step list should show DOCUMENTS_PENDING from
+        // the very start, not only once the first admin-driven status
+        // change happens.
+        statusHistory: [{ status: 'DOCUMENTS_PENDING', at: new Date().toISOString(), note: null }],
+      },
+    });
   });
 }
 
+async function getLoanEligibilityForUser(userId) {
+  return getLoanEligibility(userId);
+}
+
 async function getMyLoanApplications(userId) {
-  return prisma.loanApplication.findMany({
+  const loans = await prisma.loanApplication.findMany({
     where: { userId },
     include: { property: { select: { title: true, slug: true, city: true } } },
     orderBy: { createdAt: 'desc' },
   });
+  return attachLoanDocuments(loans);
 }
 
 async function getLoanApplicationById(userId, loanId) {
   const loan = await prisma.loanApplication.findFirst({ where: { id: loanId, userId } });
   if (!loan) throw new ApiError(404, 'Loan application not found');
-  return loan;
+  return attachLoanDocuments(loan);
 }
 
 async function requestVideoTour(userId, propertyId, userNote) {
@@ -585,11 +751,11 @@ module.exports = {
   requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyLead, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
   formatProfileSettings,
   updateConsent,
-  getConsentState, withdrawConsent, requestAccountDeletion, cancelAccountDeletion,
-  getDocuments, uploadDocument, getSubscriptions,
+  getConsentState, getPrivacyState, withdrawConsent, requestAccountDeletion, cancelAccountDeletion,
+  getDocuments, uploadDocument, deleteDocument, getSubscriptions,
   raiseTicket, getMyTickets, getMyTicketById, verifyTicket,
   reopenTicket, withdrawTicket, getTicketComments, addTicketComment,
-  createLoanApplication, getMyLoanApplications, getLoanApplicationById,
+  createLoanApplication, getMyLoanApplications, getLoanApplicationById, getLoanEligibilityForUser,
   requestVideoTour, getMyVideoTours,
   raiseDispute:    disputeService.raiseDispute,
   getMyDisputes:   disputeService.getMyDisputes,

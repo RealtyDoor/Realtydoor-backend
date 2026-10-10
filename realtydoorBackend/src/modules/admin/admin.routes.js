@@ -175,6 +175,7 @@ router.post('/tickets/:id/auto-dispatch', ctrl.dispatchTicketAutomatically);
 // Loan management
 router.get('/loan',               ctrl.getLoans);
 router.get('/loan/bank-stats',    ctrl.getLoanBankStats);
+router.get('/loan/:id',           ctrl.getLoanById);
 router.patch('/loan/:id/status',  ctrl.updateLoanStatus);
 
 // User management & role assignment
@@ -182,6 +183,11 @@ router.get('/users',                   ctrl.getUsers);
 router.get('/users/:id',               ctrl.getUserById);
 router.patch('/users/:id/role',        ctrl.changeUserRole);
 router.patch('/users/:id/suspend',     ctrl.suspendUser);
+// Backend gaps handoff, 2026-10-10 (#3) — a user's own privacy/consent
+// audit trail. Gated by its own PRIVACY permission (see
+// utils/adminPermissions.js), not bundled into the general requireAdmin
+// check every other route here still uses.
+router.get('/users/:id/privacy-events', requirePermission('PRIVACY'), ctrl.getUserPrivacyEvents);
 
 // 16.x — staff directory / permission matrix. Gated by the STAFF permission
 // itself: who can grant permissions is the single most sensitive surface

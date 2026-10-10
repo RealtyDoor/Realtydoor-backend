@@ -129,7 +129,31 @@ const updateConsentSchema = z.object({
   termsAccepted:   z.boolean().optional(),
   privacyAccepted: z.boolean().optional(),
   marketingOptIn:  z.boolean().optional(),
+  // Backend gaps handoff, 2026-10-10 (#4) — which published version of the
+  // terms/privacy doc this acceptance is for, compared against config keys
+  // terms_version/privacy_version to compute requiresReconsent later.
+  documentVersion: z.string().min(1).max(40).optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: 'At least one field must be provided' });
+
+// Backend gaps handoff, 2026-10-10 (#1) — the new canonical POST
+// /user/consent/withdraw body. The legacy alias (POST /user/privacy/
+// withdraw-consent) sends no body at all and isn't validated against this
+// — see users.controller.js.
+const withdrawConsentSchema = z.object({
+  scope: z.enum(['MARKETING', 'ALL'], {
+    errorMap: () => ({ message: 'scope must be MARKETING or ALL' }),
+  }),
+});
+
+// Backend gaps handoff, 2026-10-10 (#1) — the new canonical POST
+// /user/account/deletion-request body. confirm must be the literal true,
+// not merely truthy — same explicit-intent pattern as createLoanSchema's
+// documentSharingConsent. The legacy alias (POST /user/privacy/
+// delete-account) sends no body and isn't validated against this.
+const requestDeletionSchema = z.object({
+  confirm: z.literal(true, { errorMap: () => ({ message: 'confirm must be true to request account deletion' }) }),
+  reason: z.string().max(1000).optional(),
+});
 
 module.exports = {
   requestPhoneOtpSchema,
@@ -143,6 +167,8 @@ module.exports = {
   raiseDisputeSchema,
   rateLeadSchema,
   updateConsentSchema,
+  withdrawConsentSchema,
+  requestDeletionSchema,
   reopenTicketSchema,
   verifyTicketSchema,
   ticketCommentSchema,

@@ -18,6 +18,7 @@ const { generate, expiresAt } = require('../../lib/otp');
 const logger = require('../../lib/logger');
 const { cacheDel } = require('../../lib/cache');
 const dataAckService = require('../partners/dataAck.service');
+const { attachLoanDocuments } = require('../../lib/loanEligibility');
 const partnerService = require('../partners/partners.service');
 const { buildTicketChargeReceiptPdf } = require('../../lib/pdfReceipt');
 const { s3Upload } = require('../../lib/fileUpload');
@@ -1158,7 +1159,7 @@ async function getAllLoans(filters, skip, limit) {
   }
   if (filters.userId) where.userId = filters.userId;
 
-  const [data, total] = await Promise.all([
+  const [rows, total] = await Promise.all([
     prisma.loanApplication.findMany({
       where, skip, take: limit,
       orderBy: { createdAt: 'desc' },
@@ -1169,7 +1170,60 @@ async function getAllLoans(filters, skip, limit) {
     }),
     prisma.loanApplication.count({ where }),
   ]);
+
+  // Backend gaps handoff, 2026-10-10 (#6) — the list view only needs enough
+  // to show a document count/chip, not full objects (that's what
+  // GET /admin/loan/:id below is for) — kept light since this list can be
+  // large. userId is already present on every row (a plain scalar, included
+  // by default alongside the `user`/`property` relations above).
+  const docIds = [...new Set(rows.flatMap((l) => l.submittedDocIds || []))];
+  const docsById = docIds.length
+    ? new Map((await prisma.userDocument.findMany({
+        where: { id: { in: docIds } },
+        select: { id: true, documentType: true, status: true },
+      })).map((d) => [d.id, d]))
+    : new Map();
+
+  const data = rows.map((loan) => ({
+    ...loan,
+    documents: (loan.submittedDocIds || []).map((id) => docsById.get(id)).filter(Boolean),
+    documentCount: (loan.submittedDocIds || []).length,
+  }));
+
   return { data, total };
+}
+
+async function getLoanById(loanId) {
+  const loan = await prisma.loanApplication.findUnique({
+    where: { id: loanId },
+    include: {
+      user:     { select: { name: true, email: true, phone: true } },
+      property: { select: { title: true, slug: true, city: true } },
+    },
+  });
+  if (!loan) throw new ApiError(404, 'Loan application not found');
+
+  const { documents } = await attachLoanDocuments(loan);
+
+  // "Admin responses include the verifying admin per document" — a second,
+  // small lookup rather than folding into attachLoanDocuments itself, since
+  // the user-facing version of this helper has no business exposing which
+  // admin reviewed a document.
+  const adminIds = [...new Set(documents.map((d) => d.verifiedByAdminId).filter(Boolean))];
+  const adminsById = adminIds.length
+    ? new Map((await prisma.user.findMany({
+        where: { id: { in: adminIds } },
+        select: { id: true, name: true, email: true },
+      })).map((a) => [a.id, a]))
+    : new Map();
+
+  return {
+    ...loan,
+    documents: documents.map((d) => ({
+      ...d,
+      verifiedByAdmin: d.verifiedByAdminId ? (adminsById.get(d.verifiedByAdminId) || null) : null,
+    })),
+  };
 }
 
 // Per-bank aggregate for the admin loan page's bank cards (§4.3) — real
@@ -1810,6 +1864,55 @@ async function getAuditLogs(filters, skip, limit) {
   return { data, total };
 }
 
+// ─── PRIVACY AUDIT TRAIL (Admin) ─────────────────────────────────────────────
+// Backend gaps handoff, 2026-10-10 (#3) — a user's own consent/legal/
+// notification/withdrawal/deletion history (UserPrivacyAuditLog), distinct
+// from the admin AuditLog above. "Every read is itself audit-logged" — an
+// admin looking at someone's privacy history is itself a sensitive action.
+
+function toCsvRow(fields) {
+  return fields.map((f) => {
+    const s = f == null ? '' : String(f);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }).join(',');
+}
+
+function privacyEventsToCsv(events) {
+  const header = toCsvRow(['id', 'action', 'documentVersion', 'ipAddress', 'userAgent', 'metadata', 'createdAt']);
+  const rows = events.map((e) => toCsvRow([
+    e.id, e.action, e.documentVersion, e.ipAddress, e.userAgent, e.metadata, e.createdAt.toISOString(),
+  ]));
+  return [header, ...rows].join('\n');
+}
+
+async function getUserPrivacyEvents(userId, filters, skip, limit, adminId, ip) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+  if (!user) throw new ApiError(404, 'User not found');
+
+  const where = { userId };
+  if (filters.action) where.action = filters.action;
+  if (filters.from || filters.to) {
+    where.createdAt = {};
+    if (filters.from) where.createdAt.gte = new Date(filters.from);
+    if (filters.to)   where.createdAt.lte = new Date(filters.to);
+  }
+
+  await createAuditLog({
+    adminId, action: 'PRIVACY_EVENTS_VIEWED', targetType: 'User', targetId: userId, ipAddress: ip,
+  });
+
+  if (filters.format === 'csv') {
+    const events = await prisma.userPrivacyAuditLog.findMany({ where, orderBy: { createdAt: 'desc' } });
+    return { csv: privacyEventsToCsv(events) };
+  }
+
+  const [data, total] = await Promise.all([
+    prisma.userPrivacyAuditLog.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
+    prisma.userPrivacyAuditLog.count({ where }),
+  ]);
+  return { data, total };
+}
+
 // ─── PARTNER DRILL-DOWN ───────────────────────────────────────────────────────
 
 async function getPartnerById(partnerId) {
@@ -2148,10 +2251,10 @@ module.exports = {
   autoAssignLead, autoAssignUnassignedLeads,
   listRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule, dispatchTicketAutomatically,
   getRevenueSummary,
-  getAuditLogs,
+  getAuditLogs, getUserPrivacyEvents,
   getAllTickets, getTicketById, updateTicketStatus, getTicketStats,
   dispatchTicket, resolveTicket, linkTicketToDeal, getAdminTicketComments, addAdminTicketComment,
-  getAllLoans, updateLoanStatus, getLoanBankStats,
+  getAllLoans, getLoanById, updateLoanStatus, getLoanBankStats,
   getAllUsers, changeUserRole, suspendUser,
   listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,
   getPartnerMetrics, getPartnerById,

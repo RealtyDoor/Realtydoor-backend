@@ -42,6 +42,14 @@ model LoanApplication {
   rejectionReason          String?
 
   submittedDocIds          String[]
+  // Backend gaps handoff, 2026-10-10 — the compliance record of what was
+  // actually verified at application time, frozen at creation and never
+  // edited after: {documentId, documentType, fileName, fileUrl, verifiedAt,
+  // verifiedByAdminId, uploadedAt}. GET reads re-join these documentIds
+  // against UserDocument LIVE for status/verifiedAt/expiresAt (so a later
+  // re-review or re-upload is reflected), but the SET of which documents
+  // belong to this loan — submittedDocIds/documentSnapshot — is frozen.
+  documentSnapshot         Json[]
   // Dev feedback, 2026-10-08 (L1) — named to match the frontend's actual
   // request field (documentSharingConsent), not an internal guess.
   // Required on every submission (the frontend only allows submitting

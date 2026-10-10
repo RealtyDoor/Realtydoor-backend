@@ -6,6 +6,42 @@ const authService = require('../modules/auth/auth.service');
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
+// Backend gaps handoff, 2026-10-10 (#2) — read-only lock while an account
+// deletion request is pending. Enforced here, not in users.routes.js, since
+// it must cover every router (escrow, leads, notifications, …), not just
+// /user/* — "everything else" in the spec is unscoped. GET /user/privacy
+// (to see the pending request) and the cancel action (both the canonical
+// path and its legacy alias) are the only exceptions.
+const DELETION_PENDING_ALLOWED = [
+  { method: 'GET',    path: '/api/user/privacy' },
+  { method: 'DELETE', path: '/api/user/account/deletion-request' },
+  { method: 'POST',   path: '/api/user/privacy/delete-account/cancel' },
+];
+
+function isDeletionPendingAllowed(req) {
+  const path = req.originalUrl.split('?')[0];
+  return DELETION_PENDING_ALLOWED.some((r) => r.method === req.method && r.path === path);
+}
+
+// Shared by both the dev-bypass branch and the real Clerk-token branch
+// below, so a dev-bypass session (used for Postman/manual testing) can't
+// accidentally impersonate a deleted/suspended/deletion-pending user that
+// the real path would have rejected — the two branches must agree on who's
+// allowed through, not just on who they say the caller is.
+function assertAccountUsable(dbUser, req) {
+  // A row with deletedAt set is kept only so existing foreign keys
+  // (properties, leads, tickets they owned) stay valid — it must never be
+  // usable to authenticate again, same as if the row were actually gone.
+  if (dbUser.deletedAt) throw new ApiError(401, 'Invalid token');
+  if (dbUser.isSuspended) throw new ApiError(403, 'Your account has been suspended. Contact support@realtydoor.in');
+
+  if (dbUser.deletionRequestedAt && dbUser.deletionScheduledAt && !isDeletionPendingAllowed(req)) {
+    throw new ApiError(403, 'Your account is scheduled for deletion. Cancel the request to continue using RealtyDoor.', {
+      code: 'DELETION_PENDING',
+    });
+  }
+}
+
 async function authenticate(req, res, next) {
   try {
     // Dev API-key bypass — never active in production
@@ -19,6 +55,7 @@ async function authenticate(req, res, next) {
       // works against it; findFirst does the same lookup here.
       const dbUser = await prisma.user.findFirst({ where: { email } });
       if (!dbUser) throw new ApiError(401, `Dev bypass: no user with email ${email}`);
+      assertAccountUsable(dbUser, req);
       req.user = { ...dbUser, onboardingComplete: computeOnboardingComplete(dbUser) };
       return next();
     }
@@ -56,11 +93,7 @@ async function authenticate(req, res, next) {
       return next();
     }
 
-    // A row with deletedAt set is kept only so existing foreign keys
-    // (properties, leads, tickets they owned) stay valid — it must never be
-    // usable to authenticate again, same as if the row were actually gone.
-    if (dbUser.deletedAt) throw new ApiError(401, 'Invalid token');
-    if (dbUser.isSuspended) throw new ApiError(403, 'Your account has been suspended. Contact support@realtydoor.in');
+    assertAccountUsable(dbUser, req);
 
     // Trust the DB role, never the token's — a Clerk JWT Template can embed
     // publicMetadata.role, but that snapshot only refreshes when the token

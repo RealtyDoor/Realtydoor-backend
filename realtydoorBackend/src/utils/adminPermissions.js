@@ -12,6 +12,13 @@ const ADMIN_PERMISSION_SCOPES = [
   'USERS',       // user/partner management, role changes, suspensions
   'CONTENT',     // CMS, team roster, services catalog, FAQs
   'STAFF',       // the staff directory itself — who can grant permissions
+  // Backend gaps handoff, 2026-10-10 (#3) — a user's own privacy/consent
+  // audit trail (GET /admin/users/:id/privacy-events). Deliberately not
+  // folded into USERS: reading someone's consent/withdrawal/deletion
+  // history is a narrower, more sensitive action than general user
+  // management, and isn't in any default staff-role preset below — an
+  // admin/DPO needs it granted explicitly.
+  'PRIVACY',
 ];
 
 // A named staffRole is just a convenient preset — adminPermissions is what

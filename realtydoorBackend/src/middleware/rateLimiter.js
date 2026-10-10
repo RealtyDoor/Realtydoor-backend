@@ -105,7 +105,19 @@ const perUserPhoneOtpLimiter = rateLimit({
   message: { success: false, message: 'Too many phone-verification requests. Try again later.' },
 });
 
+// Backend gaps handoff, 2026-10-10 (#4) — withdraw and account-deletion
+// requests are idempotent (re-calling just re-stamps the same state), so
+// this is purely abuse/mistake protection, not a correctness requirement.
+// Keyed by user, same pattern as perUserPhoneOtpLimiter.
+const privacyActionLimiter = rateLimit({
+  ...BASE,
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: { success: false, message: 'Too many requests. Try again later.' },
+});
+
 module.exports = {
   defaultLimiter, perUserLimiter, otpLimiter, authLimiter, uploadLimiter, searchLimiter,
-  otpSendLimiter, otpVerifyLimiter, perUserPhoneOtpLimiter,
+  otpSendLimiter, otpVerifyLimiter, perUserPhoneOtpLimiter, privacyActionLimiter,
 };

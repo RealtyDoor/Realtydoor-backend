@@ -160,6 +160,12 @@ model User {
   // Onboarding consent (compliance audit trail)
   termsAcceptedAt   DateTime?
   privacyAcceptedAt DateTime?
+  // Backend gaps handoff, 2026-10-10 — which document version was accepted,
+  // so it can be compared against the currently-published version
+  // (config keys terms_version/privacy_version) to compute requiresReconsent
+  // on GET /user/privacy. Same two-field shape as partnerTermsVersion below.
+  termsAcceptedVersion   String?
+  privacyAcceptedVersion String?
   marketingOptIn    Boolean   @default(false)
   marketingOptInAt  DateTime?
   // Privacy spec, 2026-10-10 — set when either consent is explicitly
@@ -172,9 +178,10 @@ model User {
   // grace period. deletionRequestedAt starts the clock;
   // deletionScheduledAt (requestedAt + 30d) is what the daily cron
   // compares against to run the anonymization; deletionCancelledAt is set
-  // if the user cancels before the deadline (deletionRequestedAt/
-  // deletionScheduledAt are left as-is for the audit trail — "cancelled"
-  // is derived as deletionCancelledAt > deletionRequestedAt, not cleared).
+  // AND deletionRequestedAt/deletionScheduledAt are cleared back to null
+  // when the user cancels before the deadline — these three columns are
+  // the ACTIVE request state only. The historical fact that a request
+  // happened (and when) lives permanently in UserPrivacyAuditLog instead.
   // deletedAt (existing field above) is reused as the final "anonymized"
   // marker so every existing `deletedAt: null`/`isSet: false` filter
   // across the codebase automatically excludes anonymized users too.

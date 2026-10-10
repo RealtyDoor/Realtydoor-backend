@@ -13,6 +13,8 @@ const {
   raiseDisputeSchema,
   rateLeadSchema,
   updateConsentSchema,
+  withdrawConsentSchema,
+  requestDeletionSchema,
   reopenTicketSchema,
   verifyTicketSchema,
   ticketCommentSchema,
@@ -80,16 +82,49 @@ async function getConsentState(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// Backend gaps handoff, 2026-10-10 (#1) — GET /user/privacy, the nested
+// shape the frontend actually calls. GET /user/consent above is kept as-is
+// for whatever still reads its flatter shape.
+async function getPrivacyState(req, res, next) {
+  try {
+    const result = await service.getPrivacyState(req.user.id);
+    success(res, result);
+  } catch (err) { next(err); }
+}
+
+// Canonical: POST /user/consent/withdraw { scope: 'MARKETING' | 'ALL' }.
 async function withdrawConsent(req, res, next) {
   try {
-    const result = await service.withdrawConsent(req.user.id, req.ip, req.headers['user-agent']);
+    const { scope } = withdrawConsentSchema.parse(req.body);
+    const result = await service.withdrawConsent(req.user.id, scope, req.ip, req.headers['user-agent']);
     success(res, result, 'Consent withdrawn');
   } catch (err) { next(err); }
 }
 
+// Legacy alias: POST /user/privacy/withdraw-consent, no body. Defaults to
+// the lighter, non-destructive scope — an old caller that never knew about
+// `scope: 'ALL'` must not suddenly start deleting the account.
+async function withdrawConsentLegacy(req, res, next) {
+  try {
+    const result = await service.withdrawConsent(req.user.id, 'MARKETING', req.ip, req.headers['user-agent']);
+    success(res, result, 'Consent withdrawn');
+  } catch (err) { next(err); }
+}
+
+// Canonical: POST /user/account/deletion-request { confirm: true, reason? }.
 async function requestAccountDeletion(req, res, next) {
   try {
-    const result = await service.requestAccountDeletion(req.user.id, req.ip, req.headers['user-agent']);
+    const { reason } = requestDeletionSchema.parse(req.body);
+    const result = await service.requestAccountDeletion(req.user.id, reason, req.ip, req.headers['user-agent']);
+    success(res, result, 'Account deletion requested. You have 30 days to cancel this before your data is anonymised.');
+  } catch (err) { next(err); }
+}
+
+// Legacy alias: POST /user/privacy/delete-account, no body — the call
+// itself is treated as confirmation, matching its old no-body contract.
+async function requestAccountDeletionLegacy(req, res, next) {
+  try {
+    const result = await service.requestAccountDeletion(req.user.id, undefined, req.ip, req.headers['user-agent']);
     success(res, result, 'Account deletion requested. You have 30 days to cancel this before your data is anonymised.');
   } catch (err) { next(err); }
 }
@@ -113,6 +148,13 @@ async function getDocuments(req, res, next) {
   try {
     const docs = await service.getDocuments(req.user.id);
     success(res, docs);
+  } catch (err) { next(err); }
+}
+
+async function deleteDocument(req, res, next) {
+  try {
+    await service.deleteDocument(req.user.id, req.params.id);
+    success(res, null, 'Document deleted');
   } catch (err) { next(err); }
 }
 
@@ -200,6 +242,13 @@ async function createLoanApplication(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getLoanEligibility(req, res, next) {
+  try {
+    const result = await service.getLoanEligibilityForUser(req.user.id);
+    success(res, result);
+  } catch (err) { next(err); }
+}
+
 async function getMyLoanApplications(req, res, next) {
   try {
     const loans = await service.getMyLoanApplications(req.user.id);
@@ -262,11 +311,14 @@ async function getMyDisputes(req, res, next) {
 module.exports = {
   requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyLead, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
   updateConsent,
-  getConsentState, withdrawConsent, requestAccountDeletion, cancelAccountDeletion,
-  getDocuments, uploadDocument, getSubscriptions,
+  getConsentState, getPrivacyState,
+  withdrawConsent, withdrawConsentLegacy,
+  requestAccountDeletion, requestAccountDeletionLegacy,
+  cancelAccountDeletion,
+  getDocuments, uploadDocument, deleteDocument, getSubscriptions,
   raiseTicket, getMyTickets, getMyTicketById, verifyTicket,
   reopenTicket, withdrawTicket, getTicketComments, addTicketComment,
-  createLoanApplication, getMyLoanApplications, getLoanApplicationById,
+  createLoanApplication, getMyLoanApplications, getLoanApplicationById, getLoanEligibility,
   requestVideoTour, getMyVideoTours,
   raiseDispute, getMyDisputes,
 };

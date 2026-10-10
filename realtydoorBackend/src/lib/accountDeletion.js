@@ -1,4 +1,24 @@
+const { createClerkClient } = require('@clerk/clerk-sdk-node');
 const prisma = require('./prisma');
+const logger = require('./logger');
+
+const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+
+// Backend gaps handoff, 2026-10-10 (#2) — "revoke Clerk sessions at request
+// time" when a deletion is requested, so the read-only lock (middleware/
+// auth.js) isn't relying solely on the next API call catching it — a token
+// already in a browser's memory stays valid until Clerk expires it
+// otherwise. Best-effort: Clerk being briefly unavailable must never block
+// the deletion request itself (same "never let a side-effect fail the main
+// operation" pattern as this codebase's notification sends).
+async function revokeAllSessions(clerkId) {
+  try {
+    const { data: sessions } = await clerk.sessions.getSessionList({ userId: clerkId, status: 'active' });
+    await Promise.all((sessions || []).map((s) => clerk.sessions.revokeSession(s.id)));
+  } catch (err) {
+    logger.warn('[AccountDeletion] Failed to revoke Clerk sessions', { clerkId, error: err.message });
+  }
+}
 
 // Privacy spec, 2026-10-10 — "deletion is blocked while money is in flight,
 // such as an escrow payment held or a loan in progress." Checked both when
@@ -6,18 +26,25 @@ const prisma = require('./prisma');
 // right before it actually anonymizes the row (jobs/processAccountDeletions.js),
 // since 30 days can easily pass between request and grace-period expiry and
 // the user's situation can change in that window.
-async function hasMoneyInFlight(userId) {
+async function getMoneyInFlightReasons(userId) {
   const [escrow, loan] = await Promise.all([
     prisma.escrowTransaction.findFirst({
       where: { buyerId: userId, status: { in: ['PAYMENT_PENDING', 'HELD', 'HELD_PAYOUT_FAILED'] } },
-      select: { id: true },
+      select: { status: true },
     }),
     prisma.loanApplication.findFirst({
       where: { userId, status: { notIn: ['DISBURSED', 'REJECTED'] } },
-      select: { id: true },
+      select: { status: true },
     }),
   ]);
-  return Boolean(escrow || loan);
+  const reasons = [];
+  if (escrow) reasons.push(`An escrow payment is currently ${escrow.status.replace(/_/g, ' ').toLowerCase()}`);
+  if (loan)   reasons.push(`A loan application is still in progress (${loan.status.replace(/_/g, ' ').toLowerCase()})`);
+  return reasons;
+}
+
+async function hasMoneyInFlight(userId) {
+  return (await getMoneyInFlightReasons(userId)).length > 0;
 }
 
 // Privacy spec, 2026-10-10 — personal data is anonymised, not hard-deleted:
@@ -70,4 +97,4 @@ async function anonymizeUser(userId) {
   });
 }
 
-module.exports = { hasMoneyInFlight, anonymizeUser };
+module.exports = { hasMoneyInFlight, getMoneyInFlightReasons, anonymizeUser, revokeAllSessions };
