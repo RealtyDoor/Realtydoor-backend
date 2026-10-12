@@ -17,7 +17,7 @@ const envSchema = z.object({
   AWS_SECRET_ACCESS_KEY: z.string().min(1),
   AWS_REGION: z.string().min(1),
   AWS_S3_BUCKET: z.string().min(1),
-  RESEND_API_KEY: z.string().min(1),
+  GMAIL_APP_PASSWORD: z.string().min(1),
   EMAIL_FROM: z.string().email(),
   FRONTEND_URL: z.string().url(),
   REDIS_URL: z.string().optional(),

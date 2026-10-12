@@ -13,7 +13,7 @@
 | Payments | Razorpay (Gateway + Route/Escrow) |
 | WhatsApp | WATI Business API |
 | File Storage | Cloudinary |
-| Email | Resend |
+| Email | Gmail SMTP (Nodemailer) |
 | Scheduler | node-cron |
 
 ## Quick Start

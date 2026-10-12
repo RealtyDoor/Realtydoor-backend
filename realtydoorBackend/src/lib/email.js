@@ -1,12 +1,23 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 const { canSend, CATEGORIES } = require('./notificationGate');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM = process.env.EMAIL_FROM;
+
+// Gmail SMTP via an app password (not OAuth) — GMAIL_APP_PASSWORD is a
+// 16-character app password generated from the sending Gmail account's
+// security settings, not the account's real login password. Previously
+// this was Resend, but the real credential configured in .env was always
+// shaped like a Gmail app password (four lowercase groups), not a Resend
+// key (`re_...`) — every send has been silently failing since
+// send()/sendMail() calls are fire-and-forget throughout this codebase.
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: { user: FROM, pass: process.env.GMAIL_APP_PASSWORD },
+});
 
 async function send({ to, subject, html, user, category }) {
   if (!canSend({ user, channel: 'EMAIL', category })) return null;
-  return resend.emails.send({ from: FROM, to, subject, html });
+  return transporter.sendMail({ from: FROM, to, subject, html });
 }
 
 async function sendLeadAssigned(email, { buyerName, propertyTitle }, user) {
