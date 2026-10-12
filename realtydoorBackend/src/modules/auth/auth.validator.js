@@ -3,9 +3,21 @@ const { phoneField } = require('../../lib/phoneUtils');
 
 const codeField = z.string().length(6, 'Code must be exactly 6 digits').regex(/^\d{6}$/, 'Code must be numeric');
 
+// Email addresses are case-insensitive for delivery (RFC 5321's local-part
+// sensitivity is theoretical — no real-world mailbox provider honours it),
+// but were being compared/stored with raw case everywhere: the duplicate
+// pre-check (auth.service.js::signupOtp) and the DB's partial unique index
+// are both exact, case-sensitive matches. Confirmed live: "test@x.com" and
+// "Test@X.com" sailed past both and created two separate accounts for the
+// same real mailbox — exactly what let a user (or partner) "duplicate
+// signup". Normalizing once here, at the single entry point for phone-OTP
+// signup, is enough for that path; syncUserByClerkId does the same for the
+// Google path, since Clerk-sourced email never passes through this schema.
+const emailField = z.string().email().transform((e) => e.toLowerCase().trim());
+
 const signupOtpSchema = z.object({
   name: z.string().min(2).max(100),
-  email: z.string().email(),
+  email: emailField,
   phone: phoneField,
   isNRI: z.boolean().optional().default(false),
   marketingOptIn: z.boolean().optional().default(false),

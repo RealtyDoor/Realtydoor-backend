@@ -240,7 +240,11 @@ async function syncUser(token) {
 }
 
 async function syncUserByClerkId(clerkId, clerkUser) {
-  const email = clerkUser.emailAddresses?.[0]?.emailAddress;
+  // Same case-normalization as auth.validator.js's emailField, and for the
+  // same reason — Clerk returns whatever case the Google account/email
+  // happened to be in, and this is a separate entry point into User.email
+  // that never passes through that schema.
+  const email = clerkUser.emailAddresses?.[0]?.emailAddress?.toLowerCase().trim();
   const name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(' ') || email;
   const phone = clerkUser.phoneNumbers?.[0]?.phoneNumber || null;
   const profileImageUrl = clerkUser.imageUrl || null;

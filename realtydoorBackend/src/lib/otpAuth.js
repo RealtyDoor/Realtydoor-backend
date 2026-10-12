@@ -123,7 +123,19 @@ async function verifyOtp({ phone, purpose, code }) {
     throw genericError();
   }
 
-  await prisma.phoneOtp.delete({ where: { id: row.id } });
+  // A double-submit (double-tap, a retried request after a slow response)
+  // can get two concurrent calls past the codeMatches check above on the
+  // same still-valid row before either deletes it — Prisma's delete throws
+  // P2025 ("record not found") for whichever one loses that race. Surfaced
+  // as the same generic invalid/expired error rather than an unhandled
+  // 500 — from the caller's side, "someone already consumed this code" and
+  // "this code is no longer valid" are the same outcome.
+  try {
+    await prisma.phoneOtp.delete({ where: { id: row.id } });
+  } catch (err) {
+    if (err.code === 'P2025') throw genericError();
+    throw err;
+  }
   return { payload: row.payload };
 }
 

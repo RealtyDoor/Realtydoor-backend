@@ -206,7 +206,9 @@ Cheap re-check of onboarding state without a full `/sync` round-trip — use aft
 
 ### POST /api/auth/signup/otp
 
-New-account signup, step 1. Normalizes `phone` to E.164, rejects if the email or phone is already registered in the DB or the email already exists in Clerk, then sends a 6-digit code via WhatsApp.
+New-account signup, step 1. Normalizes `phone` to E.164 and `email` to lowercase, rejects if the email or phone is already registered in the DB or the email already exists in Clerk, then sends a 6-digit code via WhatsApp.
+
+**Fixed 2026-10-12** — `email` is now lowercased before every comparison and before it's ever stored (same normalization in `syncUserByClerkId` for the Google path). Confirmed live: before this, `"Test@X.com"` and `"test@x.com"` were treated as different values by both the duplicate pre-check and the DB's partial unique index on `email`, letting the same real mailbox register twice, as either `USER` or `PARTNER`.
 
 `phone` accepts any valid international number, not just Indian ones (backed by `libphonenumber-js`) — for NRI signups. A bare national number with no `+`/country code (e.g. `"9000000099"`, `"09000000099"`) is assumed Indian; anything with a leading `+` (or `00` IDD prefix) is parsed as full international input against whatever country it declares (e.g. `"+1 415-555-2671"`, `"+44 20 7946 0958"`). `isNRI` is a self-declared display/admin flag only — it doesn't gate or change which phone formats are accepted. This same rule (`src/lib/phoneUtils.js`'s `phoneField`) applies to every phone-OTP endpoint in this section and to `POST /user/verify-phone`.
 
