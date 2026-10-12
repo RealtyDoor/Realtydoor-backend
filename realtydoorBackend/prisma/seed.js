@@ -14,6 +14,7 @@
 require('dotenv').config();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { nextRefCode } = require('../src/lib/refCode');
 
 // ─── Clerk IDs — replace with real IDs from your Clerk dashboard ─────────────
 const ADMIN_CLERK_ID    = 'user_seed_admin_001';
@@ -34,10 +35,18 @@ const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 // IDs above are meant to be swapped for real ones from your own dashboard,
 // and matching on email is what lets a re-seed repair the clerkId on rows
 // that already exist instead of trying to create duplicates.
+// Bug, 2026-10-12 — `create` never set `refCode`, and User.refCode is a
+// plain `@unique` (not sparse/partial) on MongoDB: the FIRST document ever
+// created with it missing silently claims the implicit null slot, and the
+// very next one collides with `Unique constraint failed on the constraint:
+// User_refCode_key`. Real application signups never hit this (every real
+// path — auth.service.js's createAccount/syncUserByClerkId — already calls
+// nextRefCode()); only this seed script, creating five users in a row with
+// none of them given one, did. Now mirrors what those real paths do.
 async function upsertUserByEmail({ email, update, create }) {
   const existing = await prisma.user.findFirst({ where: { email } });
   if (existing) return prisma.user.update({ where: { id: existing.id }, data: update });
-  return prisma.user.create({ data: create });
+  return prisma.user.create({ data: { ...create, refCode: await nextRefCode('user') } });
 }
 
 async function main() {
