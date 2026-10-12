@@ -1162,32 +1162,45 @@ async function getAllLoans(filters, skip, limit) {
   if (filters.userId) where.userId = filters.userId;
 
   const [rows, total] = await Promise.all([
-    prisma.loanApplication.findMany({
-      where, skip, take: limit,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        user:     { select: { name: true, email: true, phone: true } },
-        property: { select: { title: true, slug: true, city: true } },
-      },
-    }),
+    prisma.loanApplication.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
     prisma.loanApplication.count({ where }),
   ]);
 
   // Backend gaps handoff, 2026-10-10 (#6) — the list view only needs enough
   // to show a document count/chip, not full objects (that's what
   // GET /admin/loan/:id below is for) — kept light since this list can be
-  // large. userId is already present on every row (a plain scalar, included
-  // by default alongside the `user`/`property` relations above).
+  // large. userId is already present on every row (a plain scalar).
+  //
+  // Fixed 2026-10-12 — user/property are fetched separately rather than via
+  // Prisma `include`, which throws "Inconsistent query result" for the
+  // whole list the moment ONE row's required `user` relation can't resolve
+  // (found live: a LoanApplication whose userId pointed at a hard-deleted
+  // User, predating the soft-delete-only convention this codebase relies on
+  // everywhere else — see User.deletedAt's own comment on exactly this
+  // class of bug for Property/Notification/PartnerSupportTicket). A single
+  // bad row degrading that one row's `user` to `null` beats a 500 for the
+  // entire admin loan list.
+  const userIds = [...new Set(rows.map((l) => l.userId))];
+  const propertyIds = [...new Set(rows.map((l) => l.propertyId).filter(Boolean))];
   const docIds = [...new Set(rows.flatMap((l) => l.submittedDocIds || []))];
-  const docsById = docIds.length
-    ? new Map((await prisma.userDocument.findMany({
-        where: { id: { in: docIds } },
-        select: { id: true, documentType: true, status: true },
-      })).map((d) => [d.id, d]))
-    : new Map();
+
+  const [users, properties, docs] = await Promise.all([
+    prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true, phone: true } }),
+    propertyIds.length
+      ? prisma.property.findMany({ where: { id: { in: propertyIds } }, select: { id: true, title: true, slug: true, city: true } })
+      : [],
+    docIds.length
+      ? prisma.userDocument.findMany({ where: { id: { in: docIds } }, select: { id: true, documentType: true, status: true } })
+      : [],
+  ]);
+  const usersById = new Map(users.map((u) => [u.id, u]));
+  const propertiesById = new Map(properties.map((p) => [p.id, p]));
+  const docsById = new Map(docs.map((d) => [d.id, d]));
 
   const data = rows.map((loan) => ({
     ...loan,
+    user: usersById.get(loan.userId) || null,
+    property: loan.propertyId ? (propertiesById.get(loan.propertyId) || null) : null,
     documents: (loan.submittedDocIds || []).map((id) => docsById.get(id)).filter(Boolean),
     documentCount: (loan.submittedDocIds || []).length,
   }));
@@ -1196,14 +1209,20 @@ async function getAllLoans(filters, skip, limit) {
 }
 
 async function getLoanById(loanId) {
-  const loan = await prisma.loanApplication.findUnique({
-    where: { id: loanId },
-    include: {
-      user:     { select: { name: true, email: true, phone: true } },
-      property: { select: { title: true, slug: true, city: true } },
-    },
-  });
+  const loan = await prisma.loanApplication.findUnique({ where: { id: loanId } });
   if (!loan) throw new ApiError(404, 'Loan application not found');
+
+  // Fetched separately, not via `include` — same reasoning as getAllLoans
+  // above: a required relation that can't resolve (a hard-deleted user)
+  // must degrade to null, not throw for the whole request.
+  const [user, property] = await Promise.all([
+    prisma.user.findUnique({ where: { id: loan.userId }, select: { name: true, email: true, phone: true } }),
+    loan.propertyId
+      ? prisma.property.findUnique({ where: { id: loan.propertyId }, select: { title: true, slug: true, city: true } })
+      : null,
+  ]);
+  loan.user = user || null;
+  loan.property = property || null;
 
   const { documents } = await attachLoanDocuments(loan);
 
