@@ -8,6 +8,7 @@ const { setUserRole, syncUserFields } = require('../../lib/clerkAdmin');
 const { computeOnboardingComplete } = require('../../lib/onboarding');
 const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
 const { nextRefCode } = require('../../lib/refCode');
+const { sendWelcomeEmail } = require('../../lib/email');
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -107,6 +108,10 @@ async function createAccount({ name, email, phone, isNRI = false, marketingOptIn
     }
     throw err;
   }
+
+  // Fire-and-forget, same as every other notification send in this codebase
+  // — a flaky email send must never fail or delay account creation itself.
+  sendWelcomeEmail(dbUser.email, dbUser.name, dbUser.role, dbUser).catch(() => {});
 
   // The account (Clerk user + DB row) already exists by this point — a failure
   // here doesn't leave a broken account (the user can still log in normally
@@ -298,6 +303,7 @@ async function syncUserByClerkId(clerkId, clerkUser) {
   // name/profileImageUrl are only seeded from Clerk when the row is first
   // created — after that, profile edits (PATCH /user/profile) own them, so
   // a sync must never revert a user's edited name back to their Google name.
+  let isNewUser = !existing;
   if (!existing) {
     writeData.name = name;
     writeData.profileImageUrl = profileImageUrl;
@@ -335,6 +341,9 @@ async function syncUserByClerkId(clerkId, clerkUser) {
       // loser must not overwrite it with a second, wasted one).
       const { name: _n, profileImageUrl: _p, emailVerified: _e, refCode: _r, ...raceData } = writeData;
       user = await prisma.user.update({ where: { id: found.id }, data: raceData });
+      // The winner of the race already sent (or is sending) the welcome
+      // email for this row — this losing call must not send a second one.
+      isNewUser = false;
     } else {
       throw err;
     }
@@ -344,6 +353,12 @@ async function syncUserByClerkId(clerkId, clerkUser) {
     await setUserRole(clerkId, resolvedRole).catch((err) =>
       logger.warn('[authSync] setUserRole failed', { clerkId, error: err.message })
     );
+  }
+
+  // Google sign-in's equivalent of createAccount's welcome email — only on
+  // the row's first-ever sync, never on a later login/resync.
+  if (isNewUser) {
+    sendWelcomeEmail(user.email, user.name, user.role, user).catch(() => {});
   }
 
   logger.info('[authSync] user synced', { clerkId, role: resolvedRole });

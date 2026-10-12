@@ -5,6 +5,7 @@ const { success, created } = require('../../utils/ApiResponse');
 const logger = require('../../lib/logger');
 const authService = require('./auth.service');
 const { formatProfileSettings } = require('../users/users.service');
+const { sendWelcomeEmail } = require('../../lib/email');
 const {
   signupOtpSchema,
   signupVerifySchema,
@@ -127,6 +128,10 @@ async function setRole(req, res, next) {
     }
     const user = await prisma.user.update({ where: { id: req.user.id }, data: { role: 'PARTNER' } });
     logger.info('[setRole] upgraded to PARTNER', { userId: req.user.id });
+    // Same partner-welcome content as a direct partner signup — this is the
+    // other real "became a partner" moment (an existing buyer upgrading),
+    // not just a brand-new account.
+    sendWelcomeEmail(user.email, user.name, 'PARTNER', user).catch(() => {});
     success(res, { role: user.role });
   } catch (err) {
     next(err instanceof ApiError ? err : new ApiError(500, err.message));

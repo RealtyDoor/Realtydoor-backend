@@ -236,6 +236,8 @@ New-account signup, step 1. Normalizes `phone` to E.164, rejects if the email or
 
 New-account signup, step 2. On success, creates the Clerk user (generated username, random strong password, `publicMetadata: { role, phone }` — `role` is whatever was passed to `/signup/otp`, `"USER"` if omitted) and the DB row — `phoneVerified: true`, `phoneVerifiedAt`, `emailVerified` (from Clerk's status at creation time), `isNRI` and `marketingOptIn`/`marketingOptInAt` (from `/signup/otp`), and `termsAcceptedAt`/`privacyAcceptedAt` stamped to now (submitting the signup form is the agreement action per the signup screen's copy) — in one transaction-like step. If the DB write fails, the just-created Clerk user is deleted so nothing is left orphaned. Returns a 60-second Clerk sign-in token for the frontend to complete sign-in with.
 
+Also fires a welcome email (best-effort, fire-and-forget — never blocks or fails the signup itself), role-aware: a `PARTNER` signup gets KYC-next-step copy, a `USER` signup gets a browse-listings nudge. `POST /api/auth/sync`'s own first-time-row branch (a brand-new Google sign-in) sends the same email — never on a resync/later login — and `POST /api/auth/set-role` sends the `PARTNER`-flavoured version when an existing buyer upgrades.
+
 **Auth:** Public
 
 **Request Body:**
@@ -355,7 +357,7 @@ On success, writes `phone` to the DB **and** to Clerk `publicMetadata.phone` tog
 
 ### POST /api/auth/set-role
 
-Self-service role upgrade: `USER` → `PARTNER` only. Idempotent if already PARTNER.
+Self-service role upgrade: `USER` → `PARTNER` only. Idempotent if already PARTNER. Fires the partner welcome email (see `POST /api/auth/signup/verify`) on the actual upgrade — not on the idempotent already-PARTNER path.
 
 **Auth:** Required (USER)
 

@@ -116,6 +116,23 @@ async function sendLeadInquiryConfirmed(email, propertyTitle, user) {
   });
 }
 
+// Sent once, right when an account is first created (auth.service.js's
+// createAccount for phone-OTP signup, and syncUserByClerkId's
+// !existing branch for a first-time Google sign-in) — never on a later
+// login/resync. Content branches on role: a partner needs the KYC
+// next-step, a buyer just needs a reason to start browsing.
+async function sendWelcomeEmail(email, name, role, user) {
+  const isPartner = role === 'PARTNER';
+  return send({
+    to: email,
+    subject: isPartner ? 'Welcome to RealtyDoor — list your first property' : 'Welcome to RealtyDoor!',
+    html: isPartner
+      ? `<p>Hi ${name},</p><p>Welcome to RealtyDoor! Complete your KYC from your partner dashboard to start listing properties and receiving leads.</p>`
+      : `<p>Hi ${name},</p><p>Welcome to RealtyDoor! Browse verified listings and save your favourites from your dashboard anytime.</p>`,
+    user,
+  });
+}
+
 module.exports = {
   sendLeadAssigned,
   sendPropertyApproved,
@@ -128,4 +145,5 @@ module.exports = {
   sendEscrowPaymentFailed,
   sendLoanStatusUpdate,
   sendLeadInquiryConfirmed,
+  sendWelcomeEmail,
 };
