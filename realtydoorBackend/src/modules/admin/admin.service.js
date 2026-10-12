@@ -770,15 +770,22 @@ async function dispatchTicketAutomatically(ticketId, adminId, ip) {
 async function getPendingProperties(filters, skip, limit) {
   const where = { publishStatus: filters.status || 'PENDING_APPROVAL' };
 
-  const [data, total] = await Promise.all([
-    prisma.property.findMany({
-      where,
-      skip, take: limit,
-      include: { partner: { select: { name: true, email: true, companyName: true } } },
-      orderBy: { createdAt: 'asc' },
-    }),
+  const [rows, total] = await Promise.all([
+    prisma.property.findMany({ where, skip, take: limit, orderBy: { createdAt: 'asc' } }),
     prisma.property.count({ where }),
   ]);
+
+  // Fixed 2026-10-12 — partner fetched separately, not via `include`, which
+  // throws for the WHOLE queue the moment any single row's partner can't
+  // resolve. Confirmed live: several PENDING_APPROVAL properties currently
+  // have a partnerId pointing at a hard-deleted partner — this was 500ing
+  // the admin's entire pending-approval queue, not just those rows.
+  const partnerIds = [...new Set(rows.map((p) => p.partnerId))];
+  const partnersById = new Map((await prisma.user.findMany({
+    where: { id: { in: partnerIds } }, select: { id: true, name: true, email: true, companyName: true },
+  })).map((p) => [p.id, p]));
+  const data = rows.map((p) => ({ ...p, partner: partnersById.get(p.partnerId) || null }));
+
   return { data, total };
 }
 
@@ -792,11 +799,22 @@ async function getPendingProperties(filters, skip, limit) {
 //
 // Omitting the visibility object keeps the previous behaviour exactly: public
 // and searchable, not featured. So existing callers are unaffected.
-async function approveProperty(propertyId, adminId, ip, visibility = {}) {
-  const property = await prisma.property.findUnique({
-    where: { id: propertyId },
-    include: { partner: { select: { email: true, notifEmail: true } } },
+// Fixed 2026-10-12 — shared by approveProperty/rejectProperty/
+// requestPropertyChanges below, all of which need property.partner for the
+// email notification. Fetched separately, not via `include`, for the same
+// reason as getPendingProperties above — a hard-deleted partner must
+// degrade that one property to `partner: null`, not throw.
+async function fetchPropertyWithPartner(propertyId) {
+  const property = await prisma.property.findUnique({ where: { id: propertyId } });
+  if (!property) return null;
+  property.partner = await prisma.user.findUnique({
+    where: { id: property.partnerId }, select: { email: true, notifEmail: true },
   });
+  return property;
+}
+
+async function approveProperty(propertyId, adminId, ip, visibility = {}) {
+  const property = await fetchPropertyWithPartner(propertyId);
   if (!property) throw new ApiError(404, 'Property not found');
 
   const updated = await prisma.property.update({
@@ -840,17 +858,14 @@ async function approveProperty(propertyId, adminId, ip, visibility = {}) {
     ipAddress: ip,
   });
 
-  sendPropertyApproved(property.partner.email, property.title, property.partner).catch(() => {});
+  if (property.partner) sendPropertyApproved(property.partner.email, property.title, property.partner).catch(() => {});
   cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
   cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
   return updated;
 }
 
 async function rejectProperty(propertyId, note, adminId, ip) {
-  const property = await prisma.property.findUnique({
-    where: { id: propertyId },
-    include: { partner: { select: { email: true, notifEmail: true } } },
-  });
+  const property = await fetchPropertyWithPartner(propertyId);
   if (!property) throw new ApiError(404, 'Property not found');
 
   const updated = await prisma.property.update({
@@ -872,7 +887,7 @@ async function rejectProperty(propertyId, note, adminId, ip) {
     ipAddress: ip,
   });
 
-  sendPropertyRejected(property.partner.email, property.title, note, property.partner).catch(() => {});
+  if (property.partner) sendPropertyRejected(property.partner.email, property.title, note, property.partner).catch(() => {});
   cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
   cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
   return updated;
@@ -890,10 +905,7 @@ async function rejectProperty(propertyId, note, adminId, ip) {
 // change-request flow for edits to live listings, or reject to take it down
 // deliberately.
 async function requestPropertyChanges(propertyId, { items, note }, adminId, adminName, ip) {
-  const property = await prisma.property.findUnique({
-    where: { id: propertyId },
-    include: { partner: { select: { email: true, notifEmail: true } } },
-  });
+  const property = await fetchPropertyWithPartner(propertyId);
   if (!property) throw new ApiError(404, 'Property not found');
 
   if (property.publishStatus === 'APPROVED') {
@@ -937,7 +949,7 @@ async function requestPropertyChanges(propertyId, { items, note }, adminId, admi
   // Reuses the rejection email rather than adding a near-identical template:
   // the partner needs the checklist, and this is the existing channel for
   // "your listing needs work". The subject line is the template's own.
-  sendPropertyRejected(
+  if (property.partner) sendPropertyRejected(
     property.partner.email,
     property.title,
     `${note ? note + ' ' : ''}Requested fixes: ${items.join('; ')}`,
@@ -2111,12 +2123,16 @@ async function adminVerifyDocument(docId, action, note, adminId) {
 async function getPropertyByIdAdmin(propertyId) {
   const property = await prisma.property.findUnique({
     where: { id: propertyId },
-    include: {
-      partner:  { select: { name: true, email: true, phone: true, companyName: true, partnerSubType: true } },
-      editLogs: { orderBy: { editedAt: 'desc' }, take: 10 },
-    },
+    include: { editLogs: { orderBy: { editedAt: 'desc' }, take: 10 } },
   });
   if (!property) throw new ApiError(404, 'Property not found');
+
+  // Fixed 2026-10-12 — partner fetched separately, not via `include` (same
+  // hard-deleted-partner bug as getPendingProperties/approveProperty above).
+  property.partner = await prisma.user.findUnique({
+    where: { id: property.partnerId },
+    select: { name: true, email: true, phone: true, companyName: true, partnerSubType: true },
+  });
   return property;
 }
 

@@ -196,16 +196,23 @@ async function getPropertyByIdOrSlug(idOrSlug) {
       publishStatus: 'APPROVED',
       ...(OBJECT_ID_RE.test(idOrSlug) ? { OR: [{ slug: idOrSlug }, { id: idOrSlug }] } : { slug: idOrSlug }),
     },
-    include: {
-      partner: {
-        select: { id: true, name: true, companyName: true, partnerSubType: true, kycStatus: true, profileImageUrl: true },
-      },
-    },
   });
   // isB2BOnly listings must never be reachable by slug — searchProperties
   // already excludes them from the public list, but the direct-fetch path
   // had no equivalent check, so a known/guessed slug could still see one.
   if (!property || property.isB2BOnly) throw new ApiError(404, 'Property not found');
+
+  // Fixed 2026-10-12 — partner is fetched separately rather than via Prisma
+  // `include`, which throws "Inconsistent query result" when the required
+  // relation can't resolve. Found live: 27 of 59 properties (two separate
+  // hard-deleted partner accounts, predating the soft-delete-only
+  // convention this codebase relies on everywhere else) currently have a
+  // partnerId pointing at nobody — every one of them 500'd this endpoint
+  // instead of just rendering without a "Listed by partner" card.
+  property.partner = await prisma.user.findUnique({
+    where: { id: property.partnerId },
+    select: { id: true, name: true, companyName: true, partnerSubType: true, kycStatus: true, profileImageUrl: true },
+  });
 
   // Fire-and-forget — a view counter shouldn't add latency to the page load,
   // and a lost increment under a race is harmless for this metric.

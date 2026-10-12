@@ -14,12 +14,19 @@ const { createNotification } = require('../../lib/notifications');
 // which only works if the introduction goes through the platform rather than
 // partners swapping numbers off the back of the feed. Name and company are
 // enough to decide whether to express interest.
+// Fixed 2026-10-12 — `partner` is no longer a nested select here (fetched
+// separately in getFeed below instead). A nested select on a required
+// relation throws for the WHOLE query the instant any single row's partner
+// can't resolve — confirmed live: 27 of 59 properties currently have a
+// partnerId pointing at a hard-deleted partner, which was 500ing this feed
+// for every partner trying to browse it (same bug already found and fixed
+// for the property detail page and the admin loan/commission-override lists).
 const FEED_SELECT = {
   id: true, title: true, slug: true, locality: true, city: true,
   price: true, monthlyRent: true, propertyType: true, listingType: true,
   bhk: true, carpetArea: true, images: true, coverImageIndex: true,
   commissionSplitOffer: true, isB2BOnly: true, b2bUrgent: true, createdAt: true,
-  partner: { select: { id: true, name: true, companyName: true, partnerSubType: true } },
+  partnerId: true,
 };
 
 // Everything a verified partner may see: approved listings that aren't their
@@ -38,10 +45,11 @@ function feedWhere(partnerId, filters = {}) {
   return where;
 }
 
-function shapeRow(p, interestedPropertyIds) {
-  const { isB2BOnly, ...rest } = p;
+function shapeRow(p, interestedPropertyIds, partnersById) {
+  const { isB2BOnly, partnerId, ...rest } = p;
   return {
     ...rest,
+    partner: partnersById.get(partnerId) || null,
     // The frontend's "Hidden" vs co-list tag.
     kind: isB2BOnly ? 'HIDDEN' : 'CO_LIST',
     // So the feed can render "Interest sent" instead of offering the button
@@ -67,8 +75,13 @@ async function getFeed(partnerId, filters, skip, limit) {
     }),
   ]);
 
+  const partnerIds = [...new Set(data.map((p) => p.partnerId))];
+  const partnersById = new Map((await prisma.user.findMany({
+    where: { id: { in: partnerIds } }, select: { id: true, name: true, companyName: true, partnerSubType: true },
+  })).map((p) => [p.id, p]));
+
   const interested = new Set(myInterests.map((c) => c.propertyId));
-  return { data: data.map((p) => shapeRow(p, interested)), total };
+  return { data: data.map((p) => shapeRow(p, interested, partnersById)), total };
 }
 
 // B5.11 — counts for the filter chips. Computed over the same visibility rule
@@ -162,26 +175,44 @@ async function expressInterest(partnerId, propertyId, message) {
   return connection;
 }
 
+// Fixed 2026-10-12 — listingPartner/buyerPartner/property attached
+// separately below, not via `include` (confirmed live: one B2BConnection
+// has a listingPartnerId pointing at a hard-deleted partner — same bug as
+// getFeed above). `select` picks whichever fields this caller is allowed to
+// see (admin gets contact details; a partner doesn't).
+async function attachConnectionRelations(rows, userSelect) {
+  const partnerIds = [...new Set(rows.flatMap((r) => [r.listingPartnerId, r.buyerPartnerId]))];
+  const propertyIds = [...new Set(rows.map((r) => r.propertyId))];
+  const [partners, properties] = await Promise.all([
+    prisma.user.findMany({ where: { id: { in: partnerIds } }, select: userSelect }),
+    prisma.property.findMany({
+      where: { id: { in: propertyIds } },
+      select: { id: true, title: true, slug: true, city: true, locality: true, price: true, commissionSplitOffer: true, isB2BOnly: true },
+    }),
+  ]);
+  const partnersById = new Map(partners.map((p) => [p.id, p]));
+  const propertiesById = new Map(properties.map((p) => [p.id, p]));
+  return rows.map((r) => ({
+    ...r,
+    listingPartner: partnersById.get(r.listingPartnerId) || null,
+    buyerPartner: partnersById.get(r.buyerPartnerId) || null,
+    property: propertiesById.get(r.propertyId) || null,
+  }));
+}
+
 // A partner's own interests, and interest received on their listings.
 async function getMyConnections(partnerId, filters, skip, limit) {
   const direction = filters.direction === 'RECEIVED' ? 'listingPartnerId' : 'buyerPartnerId';
   const where = { [direction]: partnerId };
   if (filters.status) where.status = filters.status;
 
-  const [data, total] = await Promise.all([
-    prisma.b2BConnection.findMany({
-      where, skip, take: limit,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        property: { select: { id: true, title: true, slug: true, city: true, locality: true, price: true, commissionSplitOffer: true } },
-        // Whichever side the caller isn't. Still no contact details — a
-        // connection existing doesn't change the bypass-prevention rule.
-        listingPartner: { select: { id: true, name: true, companyName: true } },
-        buyerPartner:   { select: { id: true, name: true, companyName: true } },
-      },
-    }),
+  const [rows, total] = await Promise.all([
+    prisma.b2BConnection.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
     prisma.b2BConnection.count({ where }),
   ]);
+  // Whichever side the caller isn't. Still no contact details — a
+  // connection existing doesn't change the bypass-prevention rule.
+  const data = await attachConnectionRelations(rows, { id: true, name: true, companyName: true });
   return { data, total };
 }
 
@@ -194,20 +225,13 @@ async function adminListConnections(filters, skip, limit) {
     where.OR = [{ listingPartnerId: filters.partnerId }, { buyerPartnerId: filters.partnerId }];
   }
 
-  const [data, total] = await Promise.all([
-    prisma.b2BConnection.findMany({
-      where, skip, take: limit,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        property:       { select: { id: true, title: true, slug: true, city: true, price: true, isB2BOnly: true } },
-        // Admin DOES get contact details — monitoring offline bypass is the
-        // reason this view exists.
-        listingPartner: { select: { id: true, name: true, companyName: true, email: true, phone: true } },
-        buyerPartner:   { select: { id: true, name: true, companyName: true, email: true, phone: true } },
-      },
-    }),
+  const [rows, total] = await Promise.all([
+    prisma.b2BConnection.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
     prisma.b2BConnection.count({ where }),
   ]);
+  // Admin DOES get contact details — monitoring offline bypass is the
+  // reason this view exists.
+  const data = await attachConnectionRelations(rows, { id: true, name: true, companyName: true, email: true, phone: true });
   return { data, total };
 }
 

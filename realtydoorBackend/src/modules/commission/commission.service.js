@@ -938,13 +938,22 @@ async function listOverrides(filters, skip, limit) {
   if (filters.partnerId) where.partnerId = filters.partnerId;
   if (filters.isActive !== undefined) where.isActive = filters.isActive === 'true';
 
-  const [data, total] = await Promise.all([
-    prisma.partnerCommissionOverride.findMany({
-      where, skip, take: limit, orderBy: { createdAt: 'desc' },
-      include: { partner: { select: { id: true, name: true, companyName: true } } },
-    }),
+  const [rows, total] = await Promise.all([
+    prisma.partnerCommissionOverride.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
     prisma.partnerCommissionOverride.count({ where }),
   ]);
+
+  // Fixed 2026-10-12 — partner fetched separately, not via `include`, which
+  // throws for the WHOLE list the moment any single row's required partner
+  // relation can't resolve (a hard-deleted partner — same bug found and
+  // fixed across admin loans and property reads; confirmed live, one
+  // PartnerCommissionOverride row currently has a dangling partnerId).
+  const partnerIds = [...new Set(rows.map((r) => r.partnerId))];
+  const partnersById = new Map((await prisma.user.findMany({
+    where: { id: { in: partnerIds } }, select: { id: true, name: true, companyName: true },
+  })).map((p) => [p.id, p]));
+  const data = rows.map((r) => ({ ...r, partner: partnersById.get(r.partnerId) || null }));
+
   return { data, total };
 }
 

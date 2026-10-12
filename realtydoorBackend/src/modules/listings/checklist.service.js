@@ -87,22 +87,28 @@ function checklistFor(subType) {
 // used by the partner-facing route. The admin route omits it, matching every
 // other admin property read, which has no ownership restriction.
 async function getChecklist(propertyId, requirePartnerId = null) {
-  const property = await prisma.property.findUnique({
-    where: { id: propertyId },
-    include: { partner: { select: { id: true, name: true, partnerSubType: true } } },
-  });
+  const property = await prisma.property.findUnique({ where: { id: propertyId } });
   if (!property) throw new ApiError(404, 'Property not found');
   if (requirePartnerId && property.partnerId !== requirePartnerId) {
     throw new ApiError(403, 'Not your listing');
   }
+
+  // Fixed 2026-10-12 — fetched separately, not via `include` (same
+  // hard-deleted-partner bug found across property/loan/commission/B2B
+  // reads — this is the admin-facing path, requirePartnerId=null; the
+  // partner-facing path can't hit a deleted partner, since that partner
+  // couldn't be authenticated to call this in the first place).
+  property.partner = await prisma.user.findUnique({
+    where: { id: property.partnerId }, select: { id: true, name: true, partnerSubType: true },
+  });
 
   // R21 — an AGENT whose in-force mandate names their own PAN as the owner's
   // is not representing a third party at all. There's no genuine mandate
   // letter/owner-PAN/owner-confirmation to collect from anyone else, so this
   // listing needs the OWNER persona's actual documents instead of pointing
   // at AGENT's "elsewhere" placeholders for items that can't exist here.
-  const selfListed = property.partner.partnerSubType === 'AGENT' && await isSelfListedByAgent(propertyId);
-  const persona = checklistFor(selfListed ? 'OWNER' : property.partner.partnerSubType);
+  const selfListed = property.partner?.partnerSubType === 'AGENT' && await isSelfListedByAgent(propertyId);
+  const persona = checklistFor(selfListed ? 'OWNER' : property.partner?.partnerSubType);
 
   const [docs, mandate, confirmations] = await Promise.all([
     prisma.propertyDocument.findMany({ where: { propertyId } }),
@@ -218,19 +224,23 @@ async function getChecklist(propertyId, requirePartnerId = null) {
 // ─── Document upload / verify (OWNER persona) ────────────────────────────────
 
 async function uploadChecklistDocument(propertyId, partnerId, { documentType, file }) {
-  const property = await prisma.property.findUnique({
-    where: { id: propertyId },
-    include: { partner: { select: { partnerSubType: true } } },
-  });
+  const property = await prisma.property.findUnique({ where: { id: propertyId } });
   if (!property) throw new ApiError(404, 'Property not found');
   if (property.partnerId !== partnerId) throw new ApiError(403, 'Not your listing');
+  // Fixed 2026-10-12 — fetched separately, not via `include` (same
+  // hard-deleted-partner bug as getChecklist above). In practice the
+  // ownership check just above already guarantees this resolves — the
+  // caller IS the authenticated partnerId that matched property.partnerId
+  // — but kept consistent with every other property+partner read site
+  // rather than relying on that invariant holding forever.
+  const partner = await prisma.user.findUnique({ where: { id: property.partnerId }, select: { partnerSubType: true } });
   // R21 — a self-listing agent is routed to the OWNER checklist above, so
   // they must be allowed to upload against it too.
-  const isOwnerPersona = property.partner.partnerSubType === 'OWNER'
-    || (property.partner.partnerSubType === 'AGENT' && await isSelfListedByAgent(propertyId));
+  const isOwnerPersona = partner?.partnerSubType === 'OWNER'
+    || (partner?.partnerSubType === 'AGENT' && await isSelfListedByAgent(propertyId));
   if (!isOwnerPersona) {
     throw new ApiError(400,
-      `This checklist document type is for the OWNER persona. This listing's partner is ${property.partner.partnerSubType || 'unset'}.`);
+      `This checklist document type is for the OWNER persona. This listing's partner is ${partner?.partnerSubType || 'unset'}.`);
   }
   if (!UPLOADABLE_OWNER_DOCUMENT_TYPES.includes(documentType)) {
     throw new ApiError(400, `documentType must be one of ${UPLOADABLE_OWNER_DOCUMENT_TYPES.join(', ')}`);
