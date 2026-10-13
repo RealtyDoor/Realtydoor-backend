@@ -555,11 +555,23 @@ async function requestPayoutAccountChange(partnerId, { legalName, accountNumber,
 async function setPayoutAccountStatus(partnerId, status, note, adminId, ip) {
   const partner = await prisma.user.findFirst({
     where: { id: partnerId, role: 'PARTNER' },
-    select: { id: true, email: true, phone: true, payoutAccountStatus: true, razorpayContactId: true },
+    select: { id: true, email: true, phone: true, payoutAccountStatus: true, razorpayContactId: true, razorpayFundAccountId: true },
   });
   if (!partner) throw new ApiError(404, 'Partner not found');
 
   let pendingChange = await prisma.payoutAccountChange.findFirst({ where: { partnerId, status: 'PENDING' } });
+
+  // BE-18 — ACTIVE/PENDING_VALIDATION implies a real fund account exists
+  // (ACTIVE means release() can pay it; PENDING_VALIDATION means one's on
+  // file awaiting approval) — without one, release()'s own
+  // PARTNER_PAYOUT_ACCOUNT condition on the plan looks satisfied while an
+  // actual release would fail with PARTNER_PAYOUT_ACCOUNT_MISSING. Approving
+  // ACTIVE via a pending change request is the one legitimate exception —
+  // the approval branch further down supplies razorpayFundAccountId from
+  // the change record itself, so it's never actually missing by the end.
+  if (['ACTIVE', 'PENDING_VALIDATION'].includes(status) && !partner.razorpayFundAccountId && !(status === 'ACTIVE' && pendingChange)) {
+    throw new ApiError(409, 'This partner has no payout account registered yet.', { code: 'NO_FUND_ACCOUNT' });
+  }
 
   // BE-14 — a status change other than ACTIVE while a change is pending
   // (e.g. admin flags NEEDS_CLARIFICATION generally, or SUSPENDED)

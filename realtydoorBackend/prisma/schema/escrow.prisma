@@ -34,6 +34,11 @@ model EscrowTransaction {
   sellerPayoutUtr     String?
   partnerPayoutStatus String?
   partnerPayoutUtr    String?
+  // BE-20 — RazorpayX's failure_reason/status_details.description, from
+  // payout.failed/payout.reversed, previously discarded (only the bare
+  // status was kept). Per-leg, independent of adminNote's free text.
+  sellerPayoutFailureReason  String?
+  partnerPayoutFailureReason String?
 
   amount    Float
   // BE-9 — integer paise, additive alongside the existing Float rupee
@@ -60,6 +65,11 @@ model EscrowTransaction {
   // BE-9 — the platform's retained cost-recovery amount at release time, in
   // paise (release()'s rupee platformFee is still what's shown/audited).
   platformFeePaise Int?
+  // BE-17 — the % used to compute platformFeePaise, stored on the row so a
+  // later config change to escrow_platform_fee_pct never alters the fee
+  // already recorded as retained on an already-RELEASED escrow (previously
+  // only ever written into adminNote text and the audit log, not queryable).
+  platformFeePct   Float?
 
   status      EscrowStatus @default(PAYMENT_PENDING)
   heldAt      DateTime?

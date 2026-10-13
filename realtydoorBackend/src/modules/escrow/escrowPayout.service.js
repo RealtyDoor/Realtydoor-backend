@@ -110,10 +110,15 @@ async function retryPayout(escrowId, { leg, sellerDetails, note }, adminId, ip) 
   if (claim.count === 0) throw new ApiError(400, 'This escrow is not in a payout-failed state', { code: 'ESCROW_NOT_PAYOUT_FAILED' });
 
   const amountPaise = Math.round(amount * 100);
-  const referenceId = `escrow_${leg}_${escrowId}_${amountPaise}_a${nextAttempt}`;
+  // BE-1-followup — same split as release(): a short, human-readable
+  // referenceId (≤40 chars) separate from the real idempotency-key input,
+  // which includes fundAccountId so a retry against a CORRECTED account
+  // (not just a changed amount/attempt) still gets a genuinely new key.
+  const referenceId = `esc_${leg === 'seller' ? 's' : 'p'}_${escrowId}_a${nextAttempt}`;
+  const idempotencyKeyInput = `${leg}:${escrowId}:${fundAccountId}:${amountPaise}:${nextAttempt}`;
   let payout;
   try {
-    payout = await createPayout(fundAccountId, amountPaise, referenceId);
+    payout = await createPayout(fundAccountId, amountPaise, referenceId, idempotencyKeyInput);
   } catch (err) {
     throw new ApiError(502, `RazorpayX rejected the retried ${leg} payout: ${err?.error?.description || err.message}`, { code: 'RAZORPAYX_ERROR' });
   }

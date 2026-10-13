@@ -106,16 +106,21 @@ async function applyLivePayoutStatus(escrow, leg, payoutId, live) {
     return true;
   }
 
+  // BE-19 — same per-leg-status dedupe as webhooks.controller.js's own
+  // payout.failed/reversed handler, not adminNote text matching.
+  const currentLegStatus = leg === 'seller' ? escrow.sellerPayoutStatus : escrow.partnerPayoutStatus;
   if (['failed', 'reversed', 'cancelled', 'rejected'].includes(live.status)
     && ['RELEASED', 'HELD_PAYOUT_FAILED'].includes(escrow.status)
-    && !escrow.adminNote?.includes(payoutId)) {
-    const reason = live.status_details?.description || live.status;
+    && currentLegStatus !== live.status) {
+    const reason = live.status_details?.description || live.status; // BE-20
     await prisma.escrowTransaction.update({
       where: { id: escrow.id },
       data: {
         status: 'HELD_PAYOUT_FAILED',
         adminNote: `${escrow.adminNote ? `${escrow.adminNote} | ` : ''}${leg} payout ${live.status} (${payoutId}): ${reason} — needs manual review (reconciled)`,
-        ...(leg === 'seller' ? { sellerPayoutStatus: live.status } : { partnerPayoutStatus: live.status }),
+        ...(leg === 'seller'
+          ? { sellerPayoutStatus: live.status, sellerPayoutFailureReason: reason }
+          : { partnerPayoutStatus: live.status, partnerPayoutFailureReason: reason }),
       },
     });
     const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });

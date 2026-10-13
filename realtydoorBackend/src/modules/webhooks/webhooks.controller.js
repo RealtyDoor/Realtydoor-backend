@@ -266,11 +266,23 @@ async function razorpay(req, res) {
       // RELEASED — a release() with both seller and partner payouts can have
       // each leg fail independently. Without this, the first leg's failure
       // flips status to HELD_PAYOUT_FAILED, and the second leg's own failure
-      // webhook would silently no-op instead of being recorded. The payoutId
-      // check in adminNote is what makes a duplicate delivery of the *same*
-      // webhook a no-op instead.
-      if (escrow && ['RELEASED', 'HELD_PAYOUT_FAILED'].includes(escrow.status) && !escrow.adminNote?.includes(payoutId)) {
-        const leg = escrow.razorpayPayoutId === payoutId ? 'seller' : 'partner';
+      // webhook would silently no-op instead of being recorded.
+      //
+      // BE-19 — dedupe on the per-leg status field itself, never by
+      // searching adminNote text: adminNote is free text release()/admins
+      // also write (release()'s OWN note already contains this same
+      // payoutId, e.g. "Seller payout pout_xxx: ₹…"), so the old
+      // `!adminNote?.includes(payoutId)` check could skip a GENUINE failure
+      // webhook entirely, leaving the row RELEASED although the money
+      // bounced. "Already recorded as exactly this status" is the real
+      // already-processed signal (the outer WebhookEvent dedup, BE-5,
+      // already handles a plain redelivery of the same event id).
+      const leg = escrow?.razorpayPayoutId === payoutId ? 'seller' : 'partner';
+      const currentLegStatus = leg === 'seller' ? escrow?.sellerPayoutStatus : escrow?.partnerPayoutStatus;
+      if (escrow && ['RELEASED', 'HELD_PAYOUT_FAILED'].includes(escrow.status) && currentLegStatus !== status) {
+        // BE-20 — RazorpayX's actual failure reason, previously discarded
+        // (only the bare status was kept) — stored per-leg, independent of
+        // adminNote's free text.
         const reason = statusDetails?.description || status;
 
         await prisma.escrowTransaction.update({
@@ -278,10 +290,9 @@ async function razorpay(req, res) {
           data: {
             status: 'HELD_PAYOUT_FAILED',
             adminNote: `${escrow.adminNote ? `${escrow.adminNote} | ` : ''}${leg} payout ${status} (${payoutId}): ${reason} — needs manual review`,
-            // R31 — per-leg status, independent of the dedup-guarded
-            // adminNote text above, so the released screen can show exactly
-            // which leg is in trouble without parsing the note.
-            ...(leg === 'seller' ? { sellerPayoutStatus: status } : { partnerPayoutStatus: status }),
+            ...(leg === 'seller'
+              ? { sellerPayoutStatus: status, sellerPayoutFailureReason: reason }
+              : { partnerPayoutStatus: status, partnerPayoutFailureReason: reason }),
           },
         });
 

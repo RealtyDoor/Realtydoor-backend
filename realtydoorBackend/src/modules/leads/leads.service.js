@@ -371,7 +371,9 @@ async function resendOtp(leadId, partnerId) {
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (!lead.siteVisitScheduledAt) throw new ApiError(400, 'No site visit scheduled for this lead');
   if (isLocked(lead.otpLockedUntil)) {
-    throw new ApiError(429, 'OTP is locked after too many failed attempts. Request an admin override instead.');
+    // BE-21 — coded so the FE can distinguish this from a plain rate-limit
+    // 429 (the lead OTP screen previously had to treat ANY 429 as locked).
+    throw new ApiError(429, 'OTP is locked after too many failed attempts. Request an admin override instead.', { code: 'LEAD_OTP_LOCKED' });
   }
   await assertLeadNotPaused(lead.buyerId);
 
@@ -420,7 +422,7 @@ async function verifyOtp(leadId, partnerId, inputOtp, ip) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (!lead.siteVisitOTP) throw new ApiError(400, 'No OTP generated for this lead');
-  if (isLocked(lead.otpLockedUntil)) throw new ApiError(429, 'OTP locked. Contact Admin to override.');
+  if (isLocked(lead.otpLockedUntil)) throw new ApiError(429, 'OTP locked. Contact Admin to override.', { code: 'LEAD_OTP_LOCKED' }); // BE-21
   if (isExpired(lead.otpExpiresAt)) throw new ApiError(400, 'OTP has expired');
 
   if (lead.siteVisitOTP !== inputOtp) {
@@ -430,8 +432,10 @@ async function verifyOtp(leadId, partnerId, inputOtp, ip) {
       where: { id: leadId },
       data: { otpAttempts: newAttempts, otpLockedUntil: locked },
     });
-    if (locked) throw new ApiError(429, 'Maximum OTP attempts reached. Lead is locked. Contact Admin.');
-    throw new ApiError(400, `Incorrect OTP. ${MAX_ATTEMPTS - newAttempts} attempt(s) remaining.`);
+    if (locked) throw new ApiError(429, 'Maximum OTP attempts reached. Lead is locked. Contact Admin.', { code: 'LEAD_OTP_LOCKED' }); // BE-21
+    // BE-21 — LEAD_OTP_INVALID with attemptsLeft, instead of only encoding
+    // it into the message text (which the FE must never parse).
+    throw new ApiError(400, `Incorrect OTP. ${MAX_ATTEMPTS - newAttempts} attempt(s) remaining.`, { code: 'LEAD_OTP_INVALID', attemptsLeft: MAX_ATTEMPTS - newAttempts });
   }
 
   const updated = await prisma.lead.update({

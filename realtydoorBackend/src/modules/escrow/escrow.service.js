@@ -89,7 +89,7 @@ async function createOrder(leadId, buyerId, amountInRupees) {
     const maxPct = await getConfigNumber('escrow_max_token_pct', DEFAULT_MAX_ESCROW_PCT);
     const maxAmount = round2((dealPrice * maxPct) / 100);
     if (amountInRupees > maxAmount) {
-      throw new ApiError(400, `Maximum escrow amount is ₹${maxAmount.toLocaleString('en-IN')} (${maxPct}% of the deal price)`);
+      throw new ApiError(400, `Maximum escrow amount is ₹${maxAmount.toLocaleString('en-IN')} (${maxPct}% of the deal price)`, { code: 'ESCROW_AMOUNT_ABOVE_MAX', max: maxAmount }); // BE-21
     }
   }
 
@@ -105,7 +105,10 @@ async function createOrder(leadId, buyerId, amountInRupees) {
   });
   if (existing) {
     if (existing.status !== 'PAYMENT_PENDING') {
-      throw new ApiError(400, 'An active escrow order already exists for this lead');
+      // BE-21 — 409 (not 400): this isn't a bad request, it's a real
+      // conflict with existing state, and escrowId lets the FE route
+      // straight to the existing order instead of just showing an error.
+      throw new ApiError(409, 'An active escrow order already exists for this lead', { code: 'ESCROW_ALREADY_ACTIVE', escrowId: existing.id });
     }
     // An earlier Checkout attempt was abandoned before any payment was made
     // (closed tab, bad network, came back later) — there's no payment.failed
@@ -138,7 +141,7 @@ async function createOrder(leadId, buyerId, amountInRupees) {
   // the default and the admin-editable value did nothing.
   const minAmount = await getConfigNumber('escrow_min_amount_rupees', DEFAULT_MIN_ESCROW_AMOUNT);
   if (amountInRupees < minAmount) {
-    throw new ApiError(400, `Minimum escrow amount is ₹${minAmount.toLocaleString('en-IN')}`);
+    throw new ApiError(400, `Minimum escrow amount is ₹${minAmount.toLocaleString('en-IN')}`, { code: 'ESCROW_AMOUNT_BELOW_MIN', min: minAmount }); // BE-21
   }
 
   const amountInPaise = Math.round(amountInRupees * 100);
@@ -563,7 +566,11 @@ async function release(escrowId, adminId, releaseData, ip) {
         const contact = await createPayoutContact(sellerDetails.name, sellerDetails.email, sellerDetails.phone);
         const fundAccount = await createPayoutFundAccount(contact.id, sellerDetails.name, sellerDetails.ifsc, sellerDetails.accountNumber);
         await validateFundAccountOrWarn(fundAccount.id, 'seller');
-        const payout = await createPayout(fundAccount.id, Math.round(sellerAmount * 100), `escrow_seller_${escrowId}_${Math.round(sellerAmount * 100)}_a${attempt}`);
+        const sellerAmountPaise = Math.round(sellerAmount * 100);
+        const payout = await createPayout(
+          fundAccount.id, sellerAmountPaise, `esc_s_${escrowId}_a${attempt}`,
+          `seller:${escrowId}:${fundAccount.id}:${sellerAmountPaise}:${attempt}`,
+        );
         sellerPayoutId = payout.id;
         sellerPayoutStatusVal = payout.status;
         await prisma.escrowTransaction.update({
@@ -585,7 +592,11 @@ async function release(escrowId, adminId, releaseData, ip) {
           await validateFundAccountOrWarn(fundAccount.id, 'partner');
           fundAccountId = fundAccount.id;
         }
-        const payout = await createPayout(fundAccountId, Math.round(partnerShare * 100), `escrow_partner_${escrowId}_${Math.round(partnerShare * 100)}_a${attempt}`);
+        const partnerSharePaise = Math.round(partnerShare * 100);
+        const payout = await createPayout(
+          fundAccountId, partnerSharePaise, `esc_p_${escrowId}_a${attempt}`,
+          `partner:${escrowId}:${fundAccountId}:${partnerSharePaise}:${attempt}`,
+        );
         partnerPayoutId = payout.id;
         partnerPayoutStatusVal = payout.status;
         await prisma.escrowTransaction.update({
@@ -642,6 +653,7 @@ async function release(escrowId, adminId, releaseData, ip) {
       netAmount: sellerAmount,
       netAmountPaise: Math.round(sellerAmount * 100), // BE-9
       platformFeePaise: Math.round(platformFee * 100), // BE-9
+      platformFeePct: plan.platformFeePct, // BE-17
       ...(partnerShare > 0 && { partnerShareAmount: partnerShare, partnerSharePaise: Math.round(partnerShare * 100) }),
       ...(sellerPayoutId && { razorpayPayoutId: sellerPayoutId, sellerPayoutStatus: sellerPayoutStatusVal }),
       ...(partnerPayoutId && { razorpayPartnerPayoutId: partnerPayoutId, partnerPayoutStatus: partnerPayoutStatusVal }),

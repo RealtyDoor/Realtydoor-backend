@@ -1088,11 +1088,20 @@ async function getRevenueSummary() {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  const [escrowHeld, escrowReleased, servicesRevenue, closedLeads, totalLeads] = await Promise.all([
+  const [escrowHeld, escrowReleased, escrowPlatformFee, servicesRevenue, closedLeads, totalLeads] = await Promise.all([
     prisma.escrowTransaction.aggregate({ where: { status: 'HELD' }, _sum: { amount: true }, _count: true }),
     prisma.escrowTransaction.aggregate({
       where: { status: 'RELEASED', releasedAt: { gte: startOfMonth } },
       _sum: { amount: true }, _count: true,
+    }),
+    // BE-17 — the platform fee actually RETAINED on releases this month,
+    // from platformFeePaise (stamped on the row at release() time, see
+    // BE-9/BE-17 schema), not re-derived from the CURRENT
+    // escrow_platform_fee_pct config — a rate change mid-month must never
+    // alter what an already-released row is counted as having kept.
+    prisma.escrowTransaction.aggregate({
+      where: { status: 'RELEASED', releasedAt: { gte: startOfMonth } },
+      _sum: { platformFeePaise: true }, _count: true,
     }),
     prisma.userSubscription.aggregate({
       where: { paymentStatus: 'SUCCESS', startDate: { gte: startOfMonth } },
@@ -1105,6 +1114,12 @@ async function getRevenueSummary() {
   return {
     escrowHeld:        { amount: escrowHeld._sum.amount || 0,         count: escrowHeld._count },
     escrowReleasedMTD: { amount: escrowReleased._sum.amount || 0,      count: escrowReleased._count },
+    // Paise-summed, then converted to rupees for the response — older rows
+    // released before BE-9/BE-17 shipped have no platformFeePaise, so this
+    // undercounts them specifically (that's a known gap: the audit doc
+    // mentions backfilling from the audit log's after.platformFee where
+    // available, which is a separate one-off migration, not done here).
+    escrowPlatformFeeMTD: { amount: round2((escrowPlatformFee._sum.platformFeePaise || 0) / 100), count: escrowPlatformFee._count },
     serviceRevenueMTD: { amount: servicesRevenue._sum.amountPaid || 0, count: servicesRevenue._count },
     closedLeadsMTD: closedLeads,
     totalLeads,

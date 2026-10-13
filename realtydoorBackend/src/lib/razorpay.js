@@ -69,15 +69,22 @@ async function createPayoutFundAccount(contactId, name, ifsc, accountNumber) {
   });
 }
 
-// referenceId is just a human-readable label RazorpayX stores on the payout —
-// it is NOT an idempotency mechanism (confirmed against current Razorpay
-// docs). Real idempotency requires the `X-Payout-Idempotency` header
-// (mandatory on every payout since March 2025): a retried request with the
-// same header value returns the original payout's state instead of paying
-// out twice. The key is derived deterministically from referenceId so a
-// retried release() call for the same escrow/leg reuses the same key.
-async function createPayout(fundAccountId, amountInPaise, referenceId) {
-  const idempotencyKey = crypto.createHash('sha256').update(referenceId).digest('hex');
+// referenceId is just a human-readable label RazorpayX stores on the payout
+// (capped at 40 chars by Razorpay itself) — it is NOT an idempotency
+// mechanism (confirmed against current Razorpay docs). Real idempotency
+// requires the `X-Payout-Idempotency` header (mandatory on every payout
+// since March 2025): a retried request with the same header value returns
+// the original payout's state instead of paying out twice.
+//
+// BE-1/BE-1-followup — idempotencyKeyInput is a SEPARATE string from
+// referenceId, not derived from it: the real key needs
+// `${leg}:${escrowId}:${fundAccountId}:${amountPaise}:${attempt}` to
+// actually distinguish a changed fund account (e.g. a corrected bank
+// account on retry) from the original attempt, but that full string would
+// blow past referenceId's 40-char cap. Callers that don't pass one get the
+// old behavior (hash of referenceId itself) for backward compatibility.
+async function createPayout(fundAccountId, amountInPaise, referenceId, idempotencyKeyInput) {
+  const idempotencyKey = crypto.createHash('sha256').update(idempotencyKeyInput || referenceId).digest('hex');
   return rawPost('/v1/payouts', {
     account_number: process.env.RAZORPAYX_ACCOUNT_NUMBER,
     fund_account_id: fundAccountId,
