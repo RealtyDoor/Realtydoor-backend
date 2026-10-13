@@ -213,7 +213,7 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
     try {
       payment = await razorpay.payments.fetch(razorpayPaymentId);
     } catch (err) {
-      throw new ApiError(502, 'Could not verify the payment with Razorpay. Please try again.');
+      throw new ApiError(502, 'Could not verify the payment with Razorpay. Please try again.', { code: 'RAZORPAY_ERROR' }); // BE-16
     }
     if (payment.order_id !== razorpayOrderId) {
       throw new ApiError(400, 'This payment does not belong to this order.');
@@ -614,6 +614,11 @@ async function release(escrowId, adminId, releaseData, ip) {
     // payment via refund(), or re-release looking like nothing happened.
     // HELD_PAYOUT_FAILED instead blocks both and routes to BE-2's payout
     // tools, which already know which leg succeeded.
+    // BE-16 — RazorpayX throws a plain {statusCode, error} object (or a bare
+    // network Error), never an ApiError — err.message is undefined on the
+    // former, and re-throwing it as-is would hit errorHandler.js's generic
+    // 500 INTERNAL_ERROR path instead of a proper 502 RAZORPAYX_ERROR.
+    const providerMessage = err?.error?.description || err.message || 'Unknown RazorpayX error';
     const anyLegPaidOut = !!(sellerPayoutId || partnerPayoutId);
     if (anyLegPaidOut) {
       const failedLeg = sellerDetails && !sellerPayoutId ? 'seller' : (partnerShare > 0 && !partnerPayoutId ? 'partner' : 'unknown');
@@ -621,7 +626,7 @@ async function release(escrowId, adminId, releaseData, ip) {
         where: { id: escrowId },
         data: {
           status: 'HELD_PAYOUT_FAILED',
-          adminNote: `${failedLeg} payout failed after the other leg already paid out: ${err.message}`,
+          adminNote: `${failedLeg} payout failed after the other leg already paid out: ${providerMessage}`,
         },
       });
     } else {
@@ -630,7 +635,7 @@ async function release(escrowId, adminId, releaseData, ip) {
         data: { status: 'HELD', releasedAt: null, releasedByAdminId: null },
       });
     }
-    throw err;
+    throw err instanceof ApiError ? err : new ApiError(502, `RazorpayX error: ${providerMessage}`, { code: 'RAZORPAYX_ERROR' });
   }
 
   const parts = [];
@@ -706,7 +711,9 @@ async function refund(escrowId, adminId, ip) {
       where: { id: escrowId },
       data: { status: 'HELD', refundedAt: null },
     });
-    throw err;
+    // BE-16 — same reasoning as release()'s catch above: Razorpay throws a
+    // plain {statusCode, error} object, not an ApiError.
+    throw new ApiError(502, `Razorpay refund failed: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAY_ERROR' });
   }
 
   const updated = await prisma.escrowTransaction.update({

@@ -82,7 +82,7 @@ async function activateSubscription(orderId, paymentId, userId = null) {
     try {
       payment = await razorpay.payments.fetch(paymentId);
     } catch (err) {
-      throw new ApiError(502, 'Could not verify the payment with Razorpay. Please try again.');
+      throw new ApiError(502, 'Could not verify the payment with Razorpay. Please try again.', { code: 'RAZORPAY_ERROR' }); // BE-16
     }
     if (payment.order_id !== orderId) {
       throw new ApiError(400, 'This payment does not belong to this order.');

@@ -1,5 +1,14 @@
 const rateLimit = require('express-rate-limit');
 
+// BE-16 — express-rate-limit sends its `message` body directly, bypassing
+// ApiError/errorHandler.js entirely, so none of these 429s ever carried a
+// `data.code` the FE could branch on — indistinguishable from any other 429
+// (e.g. a domain-specific lock like OTP_LOCKED/LEAD_OTP_LOCKED, which DO go
+// through ApiError with their own codes and are untouched by this).
+function rateLimitMessage(message) {
+  return { success: false, message, data: { code: 'RATE_LIMITED' } };
+}
+
 const BASE = {
   standardHeaders: true,  // Return rate limit info in RateLimit-* headers
   legacyHeaders: false,   // Disable X-RateLimit-* headers
@@ -24,7 +33,7 @@ const defaultLimiter = rateLimit({
   skip: skipUnreadCount,
   windowMs: 15 * 60 * 1000,
   max: 1000,
-  message: { success: false, message: 'Too many requests, please try again later.' },
+  message: rateLimitMessage('Too many requests, please try again later.'),
 });
 
 // Keyed by the authenticated user, not the connecting IP — apply this *after*
@@ -38,28 +47,28 @@ const perUserLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
   keyGenerator: (req) => req.user?.id || req.ip,
-  message: { success: false, message: 'Too many requests, please try again later.' },
+  message: rateLimitMessage('Too many requests, please try again later.'),
 });
 
 const otpLimiter = rateLimit({
   ...BASE,
   windowMs: 60 * 60 * 1000,
   max: 5,
-  message: { success: false, message: 'Too many OTP requests. Try again in 1 hour.' },
+  message: rateLimitMessage('Too many OTP requests. Try again in 1 hour.'),
 });
 
 const authLimiter = rateLimit({
   ...BASE,
   windowMs: 15 * 60 * 1000,
   max: 20,
-  message: { success: false, message: 'Too many auth attempts.' },
+  message: rateLimitMessage('Too many auth attempts.'),
 });
 
 const uploadLimiter = rateLimit({
   ...BASE,
   windowMs: 60 * 60 * 1000,
   max: 50,
-  message: { success: false, message: 'Upload limit reached. Try again later.' },
+  message: rateLimitMessage('Upload limit reached. Try again later.'),
 });
 
 // Property search runs an unindexed regex scan on `q`/`locality` — cap it
@@ -69,7 +78,7 @@ const searchLimiter = rateLimit({
   ...BASE,
   windowMs: 60 * 1000,
   max: 30,
-  message: { success: false, message: 'Too many search requests, please slow down.' },
+  message: rateLimitMessage('Too many search requests, please slow down.'),
 });
 
 // Per-IP guard on the new phone-OTP auth endpoints (signup/login/Google-complete).
@@ -81,14 +90,14 @@ const otpSendLimiter = rateLimit({
   ...BASE,
   windowMs: 15 * 60 * 1000,
   max: 10,
-  message: { success: false, message: 'Too many requests. Try again later.' },
+  message: rateLimitMessage('Too many requests. Try again later.'),
 });
 
 const otpVerifyLimiter = rateLimit({
   ...BASE,
   windowMs: 15 * 60 * 1000,
   max: 20,
-  message: { success: false, message: 'Too many attempts. Try again later.' },
+  message: rateLimitMessage('Too many attempts. Try again later.'),
 });
 
 // Per-user guard on the Google-onboarding phone-completion endpoints. Unlike
@@ -102,7 +111,7 @@ const perUserPhoneOtpLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 5,
   keyGenerator: (req) => req.user?.id || req.ip,
-  message: { success: false, message: 'Too many phone-verification requests. Try again later.' },
+  message: rateLimitMessage('Too many phone-verification requests. Try again later.'),
 });
 
 // Backend gaps handoff, 2026-10-10 (#4) — withdraw and account-deletion
@@ -114,7 +123,7 @@ const privacyActionLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 5,
   keyGenerator: (req) => req.user?.id || req.ip,
-  message: { success: false, message: 'Too many requests. Try again later.' },
+  message: rateLimitMessage('Too many requests. Try again later.'),
 });
 
 module.exports = {

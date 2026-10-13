@@ -460,7 +460,7 @@ async function createPayoutAccount(partnerId, data, kycStatus) {
     }
   } catch (err) {
     logger.error('[payoutAccount] contact creation failed', { partnerId, error: err?.error?.description || err.message });
-    throw new ApiError(502, 'Could not register your details with the payment provider. Please try again.');
+    throw new ApiError(502, 'Could not register your details with the payment provider. Please try again.', { code: 'RAZORPAYX_ERROR' }); // BE-16
   }
 
   let fundAccountId;

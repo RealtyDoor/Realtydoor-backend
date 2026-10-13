@@ -71,6 +71,140 @@ Default: `page=1`, `limit=20`.
 | 409 | Conflict (duplicate) |
 | 429 | Rate limited / OTP locked |
 | 500 | Server error |
+| 502 | Upstream provider error (Razorpay/RazorpayX) |
+
+### Error Codes (BE-16)
+
+Every error response (4xx/5xx) carries a stable `data.code`, separate from
+`message` (human-readable, may change wording at any time — **the FE must
+never parse `message`**). `errors[]` (field-level validation detail) is
+present only for `VALIDATION_ERROR`.
+
+```json
+{
+  "success": false,
+  "message": "Human-readable, may change",
+  "data": { "code": "STABLE_CODE", "...": "optional context" },
+  "errors": [{ "field": "path.to.field", "message": "…" }]
+}
+```
+
+**Codes are a frozen contract**: UPPER_SNAKE_CASE, never renamed, never
+reused for a different meaning. Adding a new code is always safe; changing
+what an existing one means is not.
+
+#### Safety-net defaults
+
+An `ApiError` thrown with no explicit `code` gets one derived from its HTTP
+status (`src/middleware/errorHandler.js`) — this is what makes the other
+~80% of `ApiError(...)` call sites in this codebase (ones with no FE
+branching need) still carry a code, without every one of them needing a
+bespoke value:
+
+| Code | Status | Applies to |
+|------|--------|------------|
+| `VALIDATION_ERROR` | 400 | Any Zod schema validation failure |
+| `BAD_REQUEST` | 400 | An `ApiError(400, ...)` with no explicit code |
+| `UNAUTHENTICATED` | 401 | An `ApiError(401, ...)` with no explicit code (e.g. `middleware/auth.js`'s token checks) |
+| `FORBIDDEN` | 403 | An `ApiError(403, ...)` with no explicit code (e.g. `requireRole`/`requirePermission`/ownership checks) |
+| `NOT_FOUND` | 404 | An `ApiError(404, ...)` with no explicit code (most "X not found" checks, and the catch-all `notFound` route handler) |
+| `CONFLICT` | 409 | An `ApiError(409, ...)` with no explicit code |
+| `RATE_LIMITED` | 429 | `middleware/rateLimiter.js`'s limiters, and any uncoded `ApiError(429, ...)` |
+| `UPSTREAM_ERROR` | 502 | An `ApiError(502, ...)` with no explicit code |
+| `INTERNAL_ERROR` | 500 | Any thrown value that isn't an `ApiError` (bugs, unexpected exceptions) |
+| `HTTP_<status>` | any other | An `ApiError` with a status not in this table and no explicit code |
+
+#### Explicit codes
+
+Everything below is a specific, FE-branchable code set at its own throw
+site — these are what the defaults above exist to NOT replace. `Emitted
+from` names the primary file(s); some codes are thrown from more than one
+call site within that file.
+
+| Code | Status | Emitted from |
+|------|--------|--------------|
+| `ACCOUNT_NOT_FOUND` | 404 | `src/modules/auth/auth.service.js` |
+| `ACTIVE_INQUIRY_LIMIT` | 429 | `src/modules/leads/leads.service.js` |
+| `ADVISOR_RATE_REQUIRED` | 400 | `src/modules/commission/commission.service.js` |
+| `ALLOCATION_LETTER_REQUIRED` | 400 | `src/modules/leads/leads.service.js` |
+| `ALREADY_INTERESTED` | 409 | `src/modules/b2b/b2b.service.js` |
+| `ALREADY_REGISTERED` | 409 | `src/modules/auth/auth.service.js` |
+| `AMOUNT_MISMATCH` | 400 | `src/modules/escrow/escrow.service.js`, `src/modules/services/services.service.js` |
+| `BAD_FLAT_AMOUNT` | 400 | `src/modules/commission/commission.service.js` |
+| `BAD_PAYEE_ROLE` | 400 | `src/modules/commission/commission.service.js` |
+| `BAD_PCT` | 400 | `src/modules/commission/commission.service.js` |
+| `CHANGE_ALREADY_PENDING` | 409 | `src/modules/partners/partners.service.js` |
+| `COMMISSION_LOCKED` | 400 | `src/modules/commission/commission.service.js` |
+| `COMMISSION_NOT_LOCKED` | 400 | `src/modules/commission/commission.service.js` |
+| `DAILY_INQUIRY_LIMIT` | 429 | `src/modules/leads/leads.service.js` |
+| `DELETION_BLOCKED` | 409 | `src/modules/users/users.service.js` |
+| `DELETION_PENDING` | 403 | `src/middleware/auth.js` |
+| `DOCUMENTS_NOT_VERIFIED` | 409 | `src/modules/users/users.service.js` |
+| `DOCUMENT_IN_USE` | 409 | `src/modules/users/users.service.js` |
+| `DUPLICATE_LEAD` | 409 | `src/modules/admin/admin.service.js`, `src/modules/leads/leads.service.js` |
+| `DUPLICATE_PAYEE_ROLE` | 400 | `src/modules/commission/commission.service.js` |
+| `EMAIL_REQUIRED` | 400 | `src/modules/auth/auth.service.js` |
+| `ESCROW_ALREADY_ACTIVE` | 409 | `src/modules/escrow/escrow.service.js` (`data.escrowId`) |
+| `ESCROW_AMOUNT_ABOVE_MAX` | 400 | `src/modules/escrow/escrow.service.js` (`data.max`) |
+| `ESCROW_AMOUNT_BELOW_MIN` | 400 | `src/modules/escrow/escrow.service.js` (`data.min`) |
+| `ESCROW_HAS_PAYOUTS` | 409 | `src/modules/escrow/escrow.service.js` |
+| `ESCROW_NOT_PAYOUT_FAILED` | 400 | `src/modules/escrow/escrowPayout.service.js` |
+| `ESCROW_STATE_CHANGED` | 409 | `src/modules/escrow/escrow.service.js` |
+| `EXISTING_USER` | 409 | `src/modules/auth/auth.service.js` |
+| `FEE_PCT_REQUIRED` | 400 | `src/modules/commission/commission.service.js` (`data.city`, `data.sellerType`) |
+| `FLAT_AMOUNT_EXCEEDS_FEE` | 400 | `src/modules/commission/commission.service.js` |
+| `FLAT_AMOUNT_NEEDS_FEE` | 400 | `src/modules/commission/commission.service.js` |
+| `FUND_ACCOUNT_REJECTED` | 400 | `src/modules/partners/partners.service.js` |
+| `INVALID_COMMISSION_STATUS` | 400 | `src/modules/commission/commission.service.js` |
+| `INVALID_INVOICE_STATUS` | 400 | `src/modules/projects/builderInvoice.service.js` |
+| `INVALID_STATUS` | 400 | `src/modules/escrow/escrow.controller.js` |
+| `INVOICE_ALREADY_EXISTS` | 409 | `src/modules/projects/builderInvoice.service.js` |
+| `KYC_CONSENT_REQUIRED` | 400 | `src/modules/partners/partners.service.js` |
+| `KYC_REQUIRED` | 403 | `src/middleware/requireKyc.js` |
+| `LEAD_OTP_INVALID` | 400 | `src/modules/leads/leads.service.js` (`data.attemptsLeft`) |
+| `LEAD_OTP_LOCKED` | 429 | `src/modules/leads/leads.service.js` |
+| `LEAD_PAUSED` | 403 | `src/lib/accountDeletion.js` |
+| `LINES_EXCEED_FEE` | 400 | `src/modules/commission/commission.service.js` |
+| `LINES_EXCEED_HEADROOM` | 400 | `src/modules/commission/commission.service.js` |
+| `MISSING_VARIABLES` | 400 | `src/modules/wati/wati.service.js` |
+| `NOTE_REQUIRED` | 400 | `src/modules/escrow/escrowPayout.service.js` |
+| `NOTHING_TO_REFUND` | 409 | `src/modules/escrow/escrowPayout.service.js` |
+| `NO_COMMISSION_LINES` | 400 | `src/modules/commission/commission.service.js` |
+| `NO_FUND_ACCOUNT` | 409 | `src/modules/partners/partners.service.js` |
+| `NO_REPLY_CHANNEL` | 400 | `src/modules/contact/contact.admin.service.js` |
+| `ONBOARDING_INCOMPLETE` | 403 | `src/middleware/requireOnboarded.js` |
+| `OTP_INVALID` | 400 | `src/lib/otpAuth.js`, `src/modules/auth/auth.service.js` |
+| `OTP_LOCKED` | 429 | `src/lib/otpAuth.js` |
+| `OTP_NOT_VERIFIED` | 400 | `src/modules/leads/leads.service.js` |
+| `OTP_RESEND_COOLDOWN` | 429 | `src/lib/otpAuth.js` |
+| `OTP_SEND_LIMIT` | 429 | `src/lib/otpAuth.js` |
+| `OVERRIDE_NEEDS_PROPERTIES` | 400 | `src/modules/commission/commission.service.js` |
+| `OVERRIDE_REASON_REQUIRED` | 400 | `src/modules/escrow/escrow.service.js` |
+| `OWN_LISTING` | 400 | `src/modules/b2b/b2b.service.js` |
+| `OWN_PROPERTY_COMMISSION` | 400 | `src/modules/commission/commission.service.js` |
+| `PARTNER_PAYOUT_ACCOUNT_MISSING` | 400 | `src/modules/escrow/escrow.service.js` |
+| `PARTNER_PAYOUT_ACCOUNT_NOT_ACTIVE` | 400 | `src/modules/escrow/escrow.service.js`, `src/modules/escrow/escrowPayout.service.js` |
+| `PARTNER_SHARE_PCT_REQUIRED` | 400 | `src/modules/commission/commission.service.js` (`data.city`, `data.sellerType`) |
+| `PAYMENT_NOT_CAPTURED` | 409 | `src/modules/escrow/escrow.service.js`, `src/modules/services/services.service.js` |
+| `PAYOUT_ACCOUNT_EXISTS` | 409 | `src/modules/partners/partners.service.js` |
+| `PAYOUT_ALREADY_PROCESSED` | 409 | `src/modules/escrow/escrowPayout.service.js` |
+| `PAYOUT_STILL_IN_FLIGHT` | 409 | `src/modules/escrow/escrowPayout.service.js` |
+| `PHONE_ALREADY_VERIFIED` | 400 | `src/modules/auth/auth.service.js` |
+| `PHONE_IN_USE` | 409 | `src/modules/auth/auth.service.js`, `src/modules/users/users.service.js` |
+| `PHONE_NOT_VERIFIED` | 403 | `src/middleware/requirePhone.js` |
+| `RATE_CARD_NEEDS_SCOPE` | 400 | `src/modules/commission/commission.service.js` |
+| `RATE_LIMITED` | 429 | `src/middleware/rateLimiter.js` |
+| `RAZORPAYX_ERROR` | 502 | `src/modules/escrow/escrow.service.js`, `src/modules/escrow/escrowPayout.service.js`, `src/modules/partners/partners.service.js` |
+| `RAZORPAY_ERROR` | 502 | `src/modules/escrow/escrow.service.js`, `src/modules/escrow/escrowPayout.service.js`, `src/modules/services/services.service.js` |
+| `REFERRAL_ALREADY_ACTIVE` | 409 | `src/modules/referrals/referral.service.js` |
+| `RELEASE_CONDITIONS_UNMET` | 400 | `src/modules/escrow/escrow.service.js` |
+| `REPLY_SEND_FAILED` | 502 | `src/modules/contact/contact.admin.service.js` |
+| `SELF_LISTED_NO_PARTNER_ASSIGNED` | 400 | `src/modules/commission/commission.service.js` |
+| `TEMPLATE_NOT_APPROVED` | 400 | `src/modules/wati/wati.service.js` |
+| `UNIT_NOT_SOLD` | 400 | `src/modules/projects/builderInvoice.service.js` |
+| `UNIT_PRICE_MISSING` | 400 | `src/modules/projects/builderInvoice.service.js` |
+| `USE_PAYOUT_CHANGE_REQUEST` | 409 | `src/modules/partners/partners.service.js` |
+| `WRONG_PORTAL` | 403 | `src/modules/auth/auth.service.js` |
 
 ---
 
