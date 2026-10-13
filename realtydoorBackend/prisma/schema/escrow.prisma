@@ -38,6 +38,10 @@ model EscrowTransaction {
   // stored here, because it's a projection that can still change before the
   // real release happens.
   netAmount Float?
+  // BE-2 — the partner leg has no equivalent of netAmount's durable record;
+  // without this, a retried partner payout (after the original failed) has
+  // no stored amount to retry with. Set alongside netAmount at release() time.
+  partnerShareAmount Float?
 
   status      EscrowStatus @default(PAYMENT_PENDING)
   heldAt      DateTime?
@@ -48,6 +52,23 @@ model EscrowTransaction {
 
   releasedByAdminId String?  @db.ObjectId
   adminNote         String?
+
+  // BE-1 — bumped only by the BE-2 retry route, never by release() itself.
+  // Folded into createPayout's idempotency key (with amountPaise) so a
+  // retried release with the SAME amount dedupes against RazorpayX, but a
+  // deliberate retry with a changed amount/account gets a fresh key instead
+  // of being silently deduped against the failed attempt. Nullable, not
+  // @default(0) non-null — every pre-existing row is missing this field
+  // entirely in Mongo, and a non-nullable Int fails to deserialize a
+  // document where the field is simply absent (code treats missing as 0).
+  payoutAttempt Int?
+
+  // BE-2 — set by POST /admin/escrow/:id/payouts/resolve, the manual way out
+  // of HELD_PAYOUT_FAILED when a payout can't be retried (e.g. paid outside
+  // Razorpay, or confirmed landed despite the webhook/API disagreeing).
+  resolvedAt        DateTime?
+  resolvedByAdminId String?   @db.ObjectId
+  resolution        String?
 
   // R10 — freeze for dispute.
   frozenAt        DateTime?

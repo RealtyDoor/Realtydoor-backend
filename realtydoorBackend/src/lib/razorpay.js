@@ -189,4 +189,8 @@ module.exports = {
   refundPayment,
   verifyWebhookSignature,
   verifyPaymentSignature,
+  // BE-2 — exported so escrowPayout.service.js can live-fetch a payout's
+  // current status (GET /v1/payouts/:id) without duplicating rawGet's
+  // auth/error-shape handling.
+  rawGet,
 };

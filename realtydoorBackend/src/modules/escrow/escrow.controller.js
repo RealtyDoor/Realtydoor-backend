@@ -1,7 +1,8 @@
 const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./escrow.service');
-const { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema } = require('./escrow.validator');
+const payoutService = require('./escrowPayout.service');
+const { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema, retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema } = require('./escrow.validator');
 const { verifyPaymentSignature } = require('../../lib/razorpay');
 const ApiError = require('../../utils/ApiError');
 
@@ -106,7 +107,39 @@ async function verifyPayment(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// BE-2 — read-only, live-fetched payout status for a HELD_PAYOUT_FAILED (or
+// any released) escrow's legs.
+async function getPayouts(req, res, next) {
+  try {
+    success(res, await payoutService.getPayouts(req.params.id));
+  } catch (err) { next(err); }
+}
+
+async function retryPayout(req, res, next) {
+  try {
+    const body = retryPayoutSchema.parse(req.body);
+    const escrow = await payoutService.retryPayout(req.params.id, body, req.user.id, req.ip);
+    success(res, escrow, 'Payout retried');
+  } catch (err) { next(err); }
+}
+
+async function resolvePayout(req, res, next) {
+  try {
+    const body = resolvePayoutSchema.parse(req.body);
+    const escrow = await payoutService.resolvePayout(req.params.id, body, req.user.id, req.ip);
+    success(res, escrow, 'Escrow marked resolved');
+  } catch (err) { next(err); }
+}
+
+async function refundRemaining(req, res, next) {
+  try {
+    const { note } = refundRemainingSchema.parse(req.body);
+    const escrow = await payoutService.refundRemaining(req.params.id, note, req.user.id, req.ip);
+    success(res, escrow, 'Remaining amount refunded');
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   createOrder, getEscrowById, getReceipt, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
-  freezeEscrow, unfreezeEscrow,
+  freezeEscrow, unfreezeEscrow, getPayouts, retryPayout, resolvePayout, refundRemaining,
 };

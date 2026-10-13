@@ -1,7 +1,8 @@
 const { verifyWebhookSignature } = require('../../lib/razorpay');
 const { confirmPayment } = require('../escrow/escrow.service');
+const { activateSubscription } = require('../services/services.service');
 const prisma = require('../../lib/prisma');
-const { sendServiceActivated, sendEscrowPaymentFailed } = require('../../lib/email');
+const { sendEscrowPaymentFailed } = require('../../lib/email');
 const { createNotification, broadcastNotification } = require('../../lib/notifications');
 const logger = require('../../lib/logger');
 
@@ -38,47 +39,14 @@ async function razorpay(req, res) {
         return res.json({ status: 'ok' });
       }
 
-      // Route: service subscription payment
+      // Route: service subscription payment. BE-3 — activateSubscription is
+      // the one atomic path shared with the buyer-facing verify-payment
+      // route (services.controller.js); whichever of the two reaches it
+      // first wins the claim and creates the ticket/notification/email,
+      // the other is a no-op.
       const subscription = await prisma.userSubscription.findUnique({ where: { razorpayOrderId: orderId } });
       if (subscription) {
-        // Idempotency: skip if already processed
-        if (subscription.paymentStatus === 'SUCCESS') return res.json({ status: 'ok' });
-
-        const now = new Date();
-        const endDate = new Date(now);
-        endDate.setFullYear(endDate.getFullYear() + 1);
-
-        await prisma.userSubscription.update({
-          where: { razorpayOrderId: orderId },
-          data: {
-            paymentStatus: 'SUCCESS',
-            razorpayPaymentId: paymentId,
-            startDate: now,
-            endDate,
-          },
-        });
-
-        const service = await prisma.service.findUnique({ where: { id: subscription.serviceId } });
-        await prisma.serviceTicket.create({
-          data: {
-            userId: subscription.userId,
-            subscriptionId: subscription.id,
-            subject: `${service?.name} — Initial Setup`,
-            description: 'Service activated. Admin will coordinate.',
-            status: 'OPEN',
-          },
-        });
-
-        await createNotification({
-          userId: subscription.userId,
-          title: 'Service Activated',
-          message: `Your ${service?.name} service is now active.`,
-          type: 'SERVICE_ACTIVATED',
-          linkUrl: '/dashboard/services',
-        });
-
-        const user = await prisma.user.findUnique({ where: { id: subscription.userId } });
-        if (user && service) sendServiceActivated(user.email, service.name, user).catch(() => {});
+        await activateSubscription(orderId, paymentId);
       }
     }
 

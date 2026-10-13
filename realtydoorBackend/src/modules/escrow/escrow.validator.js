@@ -63,4 +63,24 @@ const freezeEscrowSchema = z.object({
   reason: z.string().min(5, 'A reason of at least 5 characters is required').max(500),
 });
 
-module.exports = { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema };
+// BE-2 — payout retry/resolve/refund-remaining, the way out of
+// HELD_PAYOUT_FAILED (escrowPayout.service.js).
+const retryPayoutSchema = z.object({
+  leg: z.enum(['seller', 'partner']),
+  sellerDetails: bankDetailsSchema.optional(),
+  note: z.string().max(500).optional(),
+});
+
+const resolvePayoutSchema = z.object({
+  resolution: z.enum(['PAID_OUTSIDE', 'PAYOUT_CONFIRMED']),
+  note: z.string().min(5, 'A reason of at least 5 characters is required').max(500),
+});
+
+const refundRemainingSchema = z.object({
+  note: z.string().max(500).optional(),
+});
+
+module.exports = {
+  createOrderSchema, releaseEscrowSchema, freezeEscrowSchema,
+  retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema,
+};

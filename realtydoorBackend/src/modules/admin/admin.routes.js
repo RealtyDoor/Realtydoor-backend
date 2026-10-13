@@ -143,6 +143,14 @@ router.post('/escrow/fees-due/:id/remind', requirePermission('FINANCE'), commiss
 // 2.8/2.9 — split entitlements + release conditions, before releasing.
 router.get('/escrow/:id/release-plan', escrowCtrl.getReleasePlan);
 
+// BE-2 — the way out of HELD_PAYOUT_FAILED (release()'s BE-1 fix can leave an
+// escrow there when one payout leg fails after the other already succeeded).
+// Same FINANCE gate as release/refund above — these move real money too.
+router.get('/escrow/:id/payouts',                 requirePermission('FINANCE'), escrowCtrl.getPayouts);
+router.post('/escrow/:id/payouts/retry',           requirePermission('FINANCE'), escrowCtrl.retryPayout);
+router.post('/escrow/:id/payouts/resolve',         requirePermission('FINANCE'), escrowCtrl.resolvePayout);
+router.post('/escrow/:id/payouts/refund-remaining', requirePermission('FINANCE'), escrowCtrl.refundRemaining);
+
 // CMS
 router.get('/content',        cmsCtrl.getAllForAdmin);
 router.get('/content/:id',    cmsCtrl.getByIdForAdmin);

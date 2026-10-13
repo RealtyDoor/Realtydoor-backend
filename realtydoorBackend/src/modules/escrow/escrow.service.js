@@ -503,6 +503,16 @@ async function release(escrowId, adminId, releaseData, ip) {
   });
   if (claim.count === 0) throw new ApiError(400, 'This escrow was already released or refunded');
 
+  // BE-1 — idempotency key now includes the amount and attempt number, not
+  // just the escrowId: a retry with the SAME amount/attempt dedupes against
+  // RazorpayX (safe no-op), but BE-2's retry route bumping payoutAttempt (or
+  // admin passing a different amount) gets a genuinely new key instead of
+  // being silently deduped against a failed/different earlier attempt.
+  // escrowId (24 hex) + suffix stays well under Razorpay's 40-char
+  // reference_id limit. payoutAttempt is read once, before either leg runs,
+  // so both legs of the same release() call share one attempt number.
+  const attempt = escrow.payoutAttempt || 0;
+
   let sellerPayoutId = null;
   let sellerPayoutStatusVal = null;
   let partnerPayoutId = null;
@@ -513,19 +523,23 @@ async function release(escrowId, adminId, releaseData, ip) {
     // validation (validateFundAccountOrWarn) can add a few seconds of polling,
     // and this admin request shouldn't pay that cost twice when both legs
     // are requested. If either leg throws, Promise.all rejects and the catch
-    // below rolls the whole release back the same as a single-leg failure.
+    // below rolls the release back — but BE-1: each leg persists its own
+    // payout id to the DB the moment createPayout resolves, not after
+    // Promise.all settles, so a leg that already paid out is never lost if
+    // the OTHER leg is what throws.
     const legs = [];
     if (sellerDetails) {
       legs.push((async () => {
         const contact = await createPayoutContact(sellerDetails.name, sellerDetails.email, sellerDetails.phone);
         const fundAccount = await createPayoutFundAccount(contact.id, sellerDetails.name, sellerDetails.ifsc, sellerDetails.accountNumber);
         await validateFundAccountOrWarn(fundAccount.id, 'seller');
-        // escrowId-derived idempotency key (see createPayout): a retried
-        // payout call for the same escrow (client timeout/resubmit) is
-        // deduped by RazorpayX itself, on top of the atomic DB claim above.
-        const payout = await createPayout(fundAccount.id, Math.round(sellerAmount * 100), `escrow_seller_${escrowId}`);
+        const payout = await createPayout(fundAccount.id, Math.round(sellerAmount * 100), `escrow_seller_${escrowId}_${Math.round(sellerAmount * 100)}_a${attempt}`);
         sellerPayoutId = payout.id;
         sellerPayoutStatusVal = payout.status;
+        await prisma.escrowTransaction.update({
+          where: { id: escrowId },
+          data: { razorpayPayoutId: sellerPayoutId, sellerPayoutStatus: sellerPayoutStatusVal },
+        });
       })());
     }
     if (partnerShare > 0 && (partnerDetails || storedPartnerFundAccountId)) {
@@ -541,22 +555,40 @@ async function release(escrowId, adminId, releaseData, ip) {
           await validateFundAccountOrWarn(fundAccount.id, 'partner');
           fundAccountId = fundAccount.id;
         }
-        const payout = await createPayout(fundAccountId, Math.round(partnerShare * 100), `escrow_partner_${escrowId}`);
+        const payout = await createPayout(fundAccountId, Math.round(partnerShare * 100), `escrow_partner_${escrowId}_${Math.round(partnerShare * 100)}_a${attempt}`);
         partnerPayoutId = payout.id;
         partnerPayoutStatusVal = payout.status;
+        await prisma.escrowTransaction.update({
+          where: { id: escrowId },
+          data: { razorpayPartnerPayoutId: partnerPayoutId, partnerPayoutStatus: partnerPayoutStatusVal },
+        });
       })());
     }
     await Promise.all(legs);
   } catch (err) {
-    // At least one RazorpayX payout failed (or was never attempted) — undo
-    // the claim so the escrow is still HELD and can be retried, instead of
-    // being stuck RELEASED with money not fully moved. If the seller payout
-    // above already succeeded, its reference_id makes the retry a safe no-op
-    // on that leg instead of a second payment.
-    await prisma.escrowTransaction.update({
-      where: { id: escrowId },
-      data: { status: 'HELD', releasedAt: null, releasedByAdminId: null },
-    });
+    // BE-1 — at least one RazorpayX payout failed (or was never attempted).
+    // Reverting to HELD is only safe when NEITHER leg actually paid out —
+    // if one did (sellerPayoutId/partnerPayoutId set, and already persisted
+    // above), reverting would let an admin "retry" straight into a second
+    // payment via refund(), or re-release looking like nothing happened.
+    // HELD_PAYOUT_FAILED instead blocks both and routes to BE-2's payout
+    // tools, which already know which leg succeeded.
+    const anyLegPaidOut = !!(sellerPayoutId || partnerPayoutId);
+    if (anyLegPaidOut) {
+      const failedLeg = sellerDetails && !sellerPayoutId ? 'seller' : (partnerShare > 0 && !partnerPayoutId ? 'partner' : 'unknown');
+      await prisma.escrowTransaction.update({
+        where: { id: escrowId },
+        data: {
+          status: 'HELD_PAYOUT_FAILED',
+          adminNote: `${failedLeg} payout failed after the other leg already paid out: ${err.message}`,
+        },
+      });
+    } else {
+      await prisma.escrowTransaction.update({
+        where: { id: escrowId },
+        data: { status: 'HELD', releasedAt: null, releasedByAdminId: null },
+      });
+    }
     throw err;
   }
 
@@ -578,6 +610,7 @@ async function release(escrowId, adminId, releaseData, ip) {
     data: {
       adminNote,
       netAmount: sellerAmount,
+      ...(partnerShare > 0 && { partnerShareAmount: partnerShare }),
       ...(sellerPayoutId && { razorpayPayoutId: sellerPayoutId, sellerPayoutStatus: sellerPayoutStatusVal }),
       ...(partnerPayoutId && { razorpayPartnerPayoutId: partnerPayoutId, partnerPayoutStatus: partnerPayoutStatusVal }),
     },
@@ -603,6 +636,15 @@ async function refund(escrowId, adminId, ip) {
   if (!escrow) throw new ApiError(404, 'Escrow not found');
   if (escrow.status !== 'HELD') throw new ApiError(400, `Cannot refund escrow with status ${escrow.status}`);
   if (!escrow.razorpayPaymentId) throw new ApiError(400, 'Payment not yet captured');
+  // BE-1 — a HELD escrow with a payout already on file means a previous
+  // release() left money already paid out to the seller/partner (status was
+  // rolled back to HELD only because no leg had a payout yet — see
+  // release()'s catch block). Refunding the buyer on top of that is a
+  // double payment; this can only be untangled through BE-2's payout
+  // routes (retry/resolve/refund-remaining), never through a plain refund.
+  if (escrow.razorpayPayoutId || escrow.razorpayPartnerPayoutId) {
+    throw new ApiError(409, 'This escrow already has a payout on file — use the payout retry/resolve/refund-remaining actions instead.', { code: 'ESCROW_HAS_PAYOUTS' });
+  }
 
   // Same atomic-claim pattern as release() — see comment there.
   const claim = await prisma.escrowTransaction.updateMany({
