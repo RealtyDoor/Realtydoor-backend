@@ -1390,7 +1390,7 @@ Resends the site-visit OTP without moving the scheduled visit time (unlike `sche
 
 Deliberately does **not** reset the 3-attempt lockout counter — a resend can't be used to repeatedly reset the anti-leakage lock. If the OTP is currently locked, this returns `429` instead of sending anything; use `request-otp-override` in that case.
 
-**Errors:** `404` lead not found or not yours · `400` no site visit scheduled · `429` OTP is locked · `403 LEAD_PAUSED` — the buyer has requested account deletion (see `POST /api/leads/partner/:id/schedule-visit` above). `verify-otp` itself is **not** gated by this — confirming a visit that may have already happened physically is still allowed.
+**Errors:** `404` lead not found or not yours · `400` no site visit scheduled · `429 LEAD_OTP_LOCKED` (BE-21) · `403 LEAD_PAUSED` — the buyer has requested account deletion (see `POST /api/leads/partner/:id/schedule-visit` above). `verify-otp` itself is **not** gated by this — confirming a visit that may have already happened physically is still allowed.
 
 ---
 
@@ -1439,7 +1439,9 @@ Verify the 6-digit site-visit OTP. Reveals the buyer's full phone number on succ
 }
 ```
 
-**Errors:** `400` invalid/expired OTP · `429` too many attempts (lead locked, contact admin).
+**Errors:** `400 LEAD_OTP_INVALID` (BE-21 — `data.attemptsLeft`) · `429
+LEAD_OTP_LOCKED` (BE-21 — too many attempts, lead locked, contact admin;
+previously a bare `429`, indistinguishable from a plain rate limit).
 
 ---
 
@@ -3337,7 +3339,110 @@ writes it.
 
 **Response `200`:** `{ "success": true, "message": "Bank account updated", "data": { ...bank fields } }`
 
-**Errors:** `400` invalid IFSC format.
+**Errors:** `400` invalid IFSC format. `409 USE_PAYOUT_CHANGE_REQUEST` (BE-14) —
+once `razorpayFundAccountId` is set (a payout account exists), changing
+`bankAccountNo`/`bankIfsc`/`bankHolderName` here is refused; use
+`POST /api/partner/payout-account/change-request` instead. `bankBranch`
+alone can still be edited through this route at any time.
+
+---
+
+### GET /api/partner/payout-account
+
+The partner's RazorpayX payout account — the real destination escrow
+releases pay out to (distinct from the bank-detail storage above).
+
+**Auth:** PARTNER
+
+**Response `200`:**
+
+```json
+{
+  "success": true, "message": "Success",
+  "data": {
+    "payoutAccountStatus": "ACTIVE",
+    "payoutAccountNote": null,
+    "payoutValidatedAt": "2026-10-01T10:00:00.000Z",
+    "razorpayContactId": "cont_xxx",
+    "razorpayFundAccountId": "fa_xxx",
+    "bankName": "HDFC Bank",
+    "bankIfsc": "HDFC0000634",
+    "bankHolderName": "Ravi Kumar",
+    "bankAccountNo": "XXXXXXXXXX6280",
+    "bankLinkedAt": "2026-10-01T10:00:00.000Z",
+    "panNumber": "XXXXX1234C"
+  }
+}
+```
+
+`payoutAccountStatus` is one of `ACTIVE | PENDING_VALIDATION |
+NEEDS_CLARIFICATION | SUSPENDED`, or absent entirely if never registered.
+`bankAccountNo`/`panNumber` are tail-masked.
+
+---
+
+### POST /api/partner/payout-account
+
+Registers the partner's RazorpayX contact + fund account — the actual
+automated-payout destination (no Razorpay Route/linked-account onboarding).
+
+**Auth:** PARTNER
+
+**BE-23 — KYC policy (decided):** this route does **not** require KYC to be
+approved first — a partner can register bank details during onboarding,
+before KYC usually clears. If the partner's `kycStatus` isn't `VERIFIED`
+yet, the account is registered but forced to `PENDING_VALIDATION` (never
+`ACTIVE`) regardless of what the RazorpayX penny-drop check returned —
+admin's `PATCH /api/admin/partners/:id/payout-account/status` is the only
+way to promote it to `ACTIVE` once KYC is approved.
+
+**Request Body:**
+
+```json
+{
+  "legalName": "Ravi Kumar",
+  "accountNumber": "50100123456280",
+  "ifsc": "HDFC0000634",
+  "panNumber": "ABCDE1234F",
+  "bankName": "HDFC Bank"
+}
+```
+
+**Response `201`:** same shape as the `GET` above.
+
+**Errors:** `409 PAYOUT_ACCOUNT_EXISTS` — already `ACTIVE`; use the
+change-request route below instead. `400 FUND_ACCOUNT_REJECTED` — the
+penny-drop check flagged the account as inactive. `502 RAZORPAYX_ERROR` —
+RazorpayX contact/fund-account creation failed.
+
+---
+
+### POST /api/partner/payout-account/change-request
+
+BE-14 — the only way to change bank details on an **`ACTIVE`** payout
+account. The current fund account stays live and in use for any release
+until admin approves the request.
+
+**Auth:** PARTNER
+
+**Request Body:**
+
+```json
+{
+  "legalName": "Ravi Kumar",
+  "accountNumber": "50100987654321",
+  "ifsc": "ICIC0001234",
+  "bankName": "ICICI Bank",
+  "reason": "Switched primary bank account"
+}
+```
+
+**Response `201`:** `{ "success": true, "message": "Payout account change request submitted — pending admin review", "data": { "id", "status": "PENDING", "createdAt" } }`
+
+**Errors:** `409 CHANGE_ALREADY_PENDING` — a request is already awaiting
+review. On approval (admin's status route, below), RazorpayX re-validates
+the **new** account before `razorpayFundAccountId` is swapped onto the
+partner's row.
 
 ---
 
@@ -3507,6 +3612,10 @@ All active services in the catalog.
 
 **Auth:** Public
 
+**Query Parameters:** `category` (BE-8, optional) — one of `MAINTENANCE` |
+`CONSTRUCTION` | `LEGAL` | `LOAN` | `VALUATION`. The seed guarantees at
+least one active `MAINTENANCE` service always exists.
+
 **Response `200`:**
 
 ```json
@@ -3565,13 +3674,18 @@ Create a Razorpay order to purchase a service subscription.
 }
 ```
 
-**Errors:** `404` service not found or inactive.
+**BE-7** — `serviceId` is now Zod-validated (`400 VALIDATION_ERROR` instead
+of a `500` on a missing/malformed value), and a recent (<24h) still-`PENDING`
+subscription for the same `(userId, serviceId)` reuses its existing order
+instead of creating a duplicate on every call/double-click.
+
+**Errors:** `400 VALIDATION_ERROR` (missing/malformed `serviceId`) · `404` service not found or inactive.
 
 ---
 
 ### POST /api/services/verify-payment
 
-Confirm a service subscription payment after Razorpay checkout. Idempotent — safe to call multiple times. Sets `startDate` and `endDate` on success.
+Confirm a service subscription payment after Razorpay checkout. Idempotent — safe to call multiple times (atomic claim, BE-3 — only the winner of a race against the `payment.captured` webhook creates the `ServiceTicket`/notification/email, see below). Sets `startDate` and `endDate` on success.
 
 **Auth:** USER
 
@@ -3584,6 +3698,23 @@ Confirm a service subscription payment after Razorpay checkout. Idempotent — s
   "razorpaySignature": "string"
 }
 ```
+
+**BE-3 — one atomic activation path.** Previously the ticket/notification/
+email were only ever created by the `payment.captured` webhook, which
+returned early once this route had already set `SUCCESS` — on the normal
+flow (this route fires first, which is the common case), none of them were
+ever created. Both this route and the webhook now call the same
+`activateSubscription`, claimed via an atomic `updateMany`; exactly one of
+them wins regardless of ordering or concurrency.
+
+**BE-10 — captured-status + amount check.** Before marking anything
+`SUCCESS`, fetches the payment from Razorpay and checks it belongs to this
+order, is actually `captured` (not just signature-valid — relevant if
+auto-capture is off), and its amount/currency match. A merely-authorized
+payment leaves the subscription `PENDING` for the webhook or the 15-minute
+`paymentReconcile` job (BE-5) to finish once it actually captures.
+
+**BE-7 — scoped to the caller.** 404s if the order found isn't this user's.
 
 **Response `200`:**
 
@@ -3600,7 +3731,9 @@ Confirm a service subscription payment after Razorpay checkout. Idempotent — s
 }
 ```
 
-**Errors:** `400` invalid signature · `404` order not found.
+**Errors:** `400` invalid signature · `404` order not found (or belongs to
+another user) · `409 PAYMENT_NOT_CAPTURED` (BE-10) — leaves the subscription
+`PENDING` · `400 AMOUNT_MISMATCH` (BE-10) · `502 RAZORPAY_ERROR` (BE-16).
 
 ---
 
@@ -3655,7 +3788,7 @@ instead of hardcoding "Free" in the UI, so it's correct the moment it's
 ever configured non-zero.
 
 `payment.captured` webhook moves status to `HELD`.  
-**Errors:** `404` lead not found or not yours · `400` lead isn't `SITE_VISIT_DONE` yet, amount below minimum or above the deal-price cap, or active escrow already exists.
+**Errors:** `404` lead not found or not yours · `400` lead isn't `SITE_VISIT_DONE` yet · `400 ESCROW_AMOUNT_BELOW_MIN` (`data.min`, BE-21) · `400 ESCROW_AMOUNT_ABOVE_MAX` (`data.max`, BE-21) · `409 ESCROW_ALREADY_ACTIVE` (`data.escrowId`, BE-21 — was a bare `400` with no code; now a real conflict the FE can route straight to the existing order from).
 
 ---
 
@@ -3710,7 +3843,16 @@ Confirm an escrow payment after Razorpay checkout. Idempotent — safe to call m
 
 `razorpayOrderId` must belong to the authenticated caller — an order ID that exists but belongs to a different user's escrow 404s the same way a nonexistent one does.
 
-**Errors:** `400` invalid signature · `404` order not found or not yours.
+**BE-10 — captured-status + amount check.** Before marking `HELD`, fetches
+the payment from Razorpay and checks it belongs to this order, is actually
+`captured` (relevant if auto-capture is off — a merely-authorized payment
+is not enough), and its amount/currency match the order. Left
+`PAYMENT_PENDING` otherwise, for the `payment.captured` webhook or the
+15-minute `paymentReconcile` job (BE-5) to finish once it actually captures.
+
+**Errors:** `400` invalid signature · `404` order not found or not yours ·
+`409 PAYMENT_NOT_CAPTURED` (BE-10) · `400 AMOUNT_MISMATCH` (BE-10) ·
+`502 RAZORPAY_ERROR` (BE-16).
 
 ---
 
@@ -7022,7 +7164,8 @@ mode, and is itself async) and lands a new account as `NEEDS_CLARIFICATION`
 rather than blocking the partner or silently claiming it's good. An admin
 resolves it here after checking Razorpay directly.
 
-**Auth:** ADMIN
+**Auth:** ADMIN + `requirePermission('FINANCE')` (BE-14/BE-18 — this moves/
+redirects real payout money, same gate as escrow release/refund)
 
 **Request Body:**
 
@@ -7037,7 +7180,22 @@ resolves it here after checking Razorpay directly.
 
 **Response `200`:** `{ "success": true, "message": "Payout account marked ACTIVE", "data": { ...masked payout fields } }`
 
-**Errors:** `400` missing note for a non-`ACTIVE` status.
+**BE-14 — approving a pending change request:** if this partner has a
+`PENDING` `POST /api/partner/payout-account/change-request` on file and
+`status` is set to `ACTIVE`, this route approves THAT change — it re-runs
+the RazorpayX penny-drop on the NEW account before swapping
+`razorpayFundAccountId`/bank fields onto the partner's row, and marks the
+change request `APPROVED`. Setting any other status while a change is
+pending marks it `REJECTED` instead, so the partner isn't left permanently
+blocked from submitting a new one.
+
+**Errors:** `400` missing note for a non-`ACTIVE` status. `409
+NO_FUND_ACCOUNT` (BE-18) — `ACTIVE`/`PENDING_VALIDATION` refused for a
+partner with no `razorpayFundAccountId` on file at all (prevents
+release()'s own `PARTNER_PAYOUT_ACCOUNT` condition from looking satisfied
+while a real release would fail with `PARTNER_PAYOUT_ACCOUNT_MISSING`).
+`400 FUND_ACCOUNT_REJECTED` — approving a pending change, but the new
+account failed the penny-drop check.
 
 ---
 
@@ -7296,9 +7454,10 @@ Platform revenue summary (MTD = month-to-date).
   "success": true,
   "message": "Success",
   "data": {
-    "escrowHeld":        { "amount": 250000, "count": 5 },
-    "escrowReleasedMTD": { "amount": 150000, "count": 3 },
-    "serviceRevenueMTD": { "amount": 49990,  "count": 10 },
+    "escrowHeld":          { "amount": 250000, "count": 5 },
+    "escrowReleasedMTD":   { "amount": 150000, "count": 3 },
+    "escrowPlatformFeeMTD": { "amount": 1500,   "count": 3 },
+    "serviceRevenueMTD":   { "amount": 49990,  "count": 10 },
     "closedLeadsMTD": 3,
     "totalLeads": 50
   }
@@ -7306,6 +7465,16 @@ Platform revenue summary (MTD = month-to-date).
 ```
 
 Amounts in ₹.
+
+**BE-17 — `escrowPlatformFeeMTD`** is the platform fee actually *retained*
+on this month's releases — summed from `platformFeePaise`, stamped onto
+each `EscrowTransaction` row at release() time (not re-derived from the
+*current* `escrow_platform_fee_pct` config), so a mid-month rate change
+never alters what an already-released row is counted as having kept.
+Rows released before this field existed aren't backfilled automatically
+(the audit's `after.platformFee` in the audit log has the figure, if a
+one-off backfill is ever done) and are undercounted in this specific
+aggregate.
 
 ---
 
@@ -7517,7 +7686,22 @@ Either `sellerDetails` (a real RazorpayX payout is made to that bank account, fo
 
 `partnerDetails` is optional and independent of `sellerDetails` — if omitted, `partnerShare` is still recorded on the escrow (held back from the seller's payout) but no automated payout is made for it, same as before; provide `partnerDetails` (with a positive `partnerShare`) to also pay the partner directly via RazorpayX.
 
-The release is atomic: if two requests for the same escrow race, only one succeeds — the other gets `400 "This escrow was already released or refunded"` before any Razorpay call is made, so a double-click or retry can never trigger two payouts. Each payout also passes the escrowId as its `reference_id`, which RazorpayX itself treats as an idempotency key — including across the seller and partner payouts separately. If either payout call fails, the escrow is rolled back to `HELD` (not left stuck `RELEASED` with no money moved) and the error is returned; a retry after a partial failure safely skips re-paying whichever leg already succeeded.
+The release is atomic: if two requests for the same escrow race, only one succeeds — the other gets `400 "This escrow was already released or refunded"` before any Razorpay call is made, so a double-click or retry can never trigger two payouts.
+
+**BE-1 — each leg is persisted to the escrow the instant RazorpayX accepts
+it**, not after both legs finish. The RazorpayX idempotency key is
+`sha256(` `${leg}:${escrowId}:${fundAccountId}:${amountPaise}:${attempt}` `)`
+(sent via the `X-Payout-Idempotency` header, separate from the shorter,
+human-readable `reference_id` RazorpayX displays) — `attempt` only
+increments via `POST .../payouts/retry` below, so a plain retry with the
+same amount/account dedupes against RazorpayX, but a deliberate retry with
+a corrected account or amount gets a genuinely new key. **If a leg fails
+after the OTHER leg already paid out, the escrow moves to
+`HELD_PAYOUT_FAILED`** (never back to `HELD` — that would make a seller
+payout that already landed look retriable, risking a second payment via
+`refund()`). Only reverts to `HELD` when *neither* leg ever got a payout id.
+See `GET/POST /api/admin/escrow/:id/payouts*` below for how to resolve a
+`HELD_PAYOUT_FAILED` escrow.
 
 **Response `200`:**
 
@@ -7529,16 +7713,21 @@ The release is atomic: if two requests for the same escrow race, only one succee
 }
 ```
 
+`status` can also come back `HELD_PAYOUT_FAILED` (BE-1, see above) — still a
+`200`, since the request itself was processed; `adminNote` names which leg
+failed.
+
 **R30 — `netAmount` is `amount - partnerShare - platformFee`**: what the
 seller actually netted, stored on the escrow itself so the "released"
 screen doesn't have to re-derive it from `adminNote`'s free text. `null`
 until release happens — see `GET .../release-plan` below for the pre-release
-projection. `platformFeePct`/`platformFeeAmount`/`partnerShareAmount` are
-not persisted on the escrow row itself — they're echoed back from this
-release's own calculation (and recorded in the audit log) for the
-response, not re-derivable from a later read of the escrow alone.
+projection. **BE-9/BE-17 — `platformFeePct`, and the paise-exact
+`netAmountPaise`/`platformFeePaise`/`partnerSharePaise`, are now persisted
+on the escrow row itself** (additive alongside the existing rupee fields),
+so a later change to `escrow_platform_fee_pct` never alters what an
+already-released row is recorded as having retained.
 
-**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race) · `400` neither `sellerDetails` nor `manualTransferConfirmed` provided · `400` `partnerShare + platformFee >= escrow amount`.
+**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race) · `400` neither `sellerDetails` nor `manualTransferConfirmed` provided · `400` `partnerShare + platformFee >= escrow amount` · `502 RAZORPAYX_ERROR` (BE-16) — RazorpayX itself rejected a payout call.
 
 ---
 
@@ -7616,13 +7805,19 @@ Refund a HELD escrow to buyer. Sends buyer notification.
 
 Same atomic-claim protection as release above — a race between two refund requests (or a refund racing a release) leaves only one winner, and a failed Razorpay refund call rolls the escrow back to `HELD` instead of leaving it stuck.
 
+**BE-1 — refused once either payout id is on file.** A `HELD` escrow with
+`razorpayPayoutId`/`razorpayPartnerPayoutId` already set means a leg from a
+prior release already paid out (see the release endpoint's `HELD_PAYOUT_FAILED`
+behavior above) — refunding the buyer on top of that would be a double
+payment. Use the `payouts/*` routes below instead.
+
 **Response `200`:**
 
 ```json
 { "success": true, "message": "Escrow refunded", "data": { "id": "64esc...", "status": "REFUNDED", "refundedAt": "..." } }
 ```
 
-**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race).
+**Errors:** `400` not HELD · `400` payment not captured · `400` already released/refunded (race) · `409 ESCROW_HAS_PAYOUTS` (BE-1, see above) · `502 RAZORPAY_ERROR` (BE-16).
 
 ---
 
@@ -7633,28 +7828,128 @@ already reject anything that is not `HELD`, so setting the escrow to `FROZEN`
 blocks both for free, the same way the existing `HELD_PAYOUT_FAILED` status
 blocks the retry path.
 
-**Auth:** ADMIN
+**Auth:** ADMIN + `requirePermission('FINANCE')` (BE-4)
 
 **Request Body:** `{ "reason": "Buyer disputes the deal terms, pending admin review" }` —
 required, 5–500 chars.
 
 **Response `200`:** the escrow, `status: "FROZEN"`.
 
+**BE-4 — atomic claim**, same pattern as release/refund: a freeze racing a
+release (or vice versa) can no longer silently clobber either outcome.
+
 **Errors:** `400` escrow is not currently `HELD` (names its actual status) ·
-`404` not found.
+`404` not found · `403` missing `FINANCE` permission · `409
+ESCROW_STATE_CHANGED` (BE-4) — the escrow's status changed between the
+request and the claim (e.g. a concurrent release just completed).
 
 ---
 
 ### POST /api/admin/escrow/:id/unfreeze
 
-**Auth:** ADMIN
+**Auth:** ADMIN + `requirePermission('FINANCE')` (BE-4)
 
 **Request Body:** none.
 
 **Response `200`:** the escrow, `status: "HELD"` — unfreezing always restores
 `HELD`, since that is the only status `FROZEN` is ever entered from.
 
-**Errors:** `400` escrow is not currently `FROZEN` · `404` not found.
+**Errors:** `400` escrow is not currently `FROZEN` · `404` not found ·
+`403` missing `FINANCE` permission · `409 ESCROW_STATE_CHANGED` (BE-4).
+
+---
+
+### GET /api/admin/escrow/:id/payouts
+
+BE-2 — the way out of `HELD_PAYOUT_FAILED` (see the release endpoint above).
+Live-fetches each leg's current status directly from RazorpayX rather than
+trusting what was last written to the escrow row.
+
+**Auth:** ADMIN + `requirePermission('FINANCE')`
+
+**Response `200`:**
+
+```json
+{
+  "success": true, "message": "Success",
+  "data": [
+    { "leg": "seller", "payoutId": "pout_xxx", "amount": 320000, "status": "failed", "utr": null, "failureReason": "IMPS beneficiary bank down", "attempt": 0, "createdAt": "..." }
+  ]
+}
+```
+
+If the live RazorpayX fetch itself fails, falls back to the last known
+stored status/UTR for that leg rather than erroring the whole request.
+
+---
+
+### POST /api/admin/escrow/:id/payouts/retry
+
+Retries ONE failed leg with a fresh `payoutAttempt` (and therefore a new
+RazorpayX idempotency key — see the release endpoint above).
+
+**Auth:** ADMIN + `requirePermission('FINANCE')`
+
+**Request Body:**
+
+```json
+{ "leg": "seller", "sellerDetails": { "name": "...", "email": "...", "phone": "...", "ifsc": "...", "accountNumber": "..." }, "note": "Corrected IFSC" }
+```
+
+`sellerDetails` is required when retrying the `seller` leg (the fund account
+isn't stored anywhere from the original attempt). Retrying `partner`
+reuses the partner's own onboarded, already-validated RazorpayX fund
+account — no body fields needed for that leg beyond `leg` itself.
+
+**Response `200`:** the escrow, `status` back to `RELEASED` for this leg
+(a separately-still-failed leg, if any, re-flags it `HELD_PAYOUT_FAILED`
+on its own next payout.failed/reversed webhook, same as a fresh release).
+
+**Errors:** `400 ESCROW_NOT_PAYOUT_FAILED` · `409 PAYOUT_STILL_IN_FLIGHT` —
+the previous attempt for this leg is still queued/pending/processing ·
+`409 PAYOUT_ALREADY_PROCESSED` — it already landed, nothing to retry ·
+`502 RAZORPAYX_ERROR`.
+
+---
+
+### POST /api/admin/escrow/:id/payouts/resolve
+
+The manual way out when a payout can't be retried (e.g. confirmed paid
+outside Razorpay, or confirmed landed despite a webhook/API disagreement).
+
+**Auth:** ADMIN + `requirePermission('FINANCE')`
+
+**Request Body:**
+
+```json
+{ "resolution": "PAID_OUTSIDE", "note": "Confirmed via bank statement, 13 Oct" }
+```
+
+`resolution` is `PAID_OUTSIDE` or `PAYOUT_CONFIRMED`. `note` required, 5–500
+chars.
+
+**Response `200`:** the escrow, `status: "RELEASED"`, `resolvedAt`/
+`resolvedByAdminId`/`resolution` stamped.
+
+**Errors:** `400 ESCROW_NOT_PAYOUT_FAILED` · `400 NOTE_REQUIRED`.
+
+---
+
+### POST /api/admin/escrow/:id/payouts/refund-remaining
+
+Refunds the buyer `amount − Σ processed-status legs` (a leg only counts if
+RazorpayX's live status for it is `processed` — `queued`/`pending`/
+`processing` could still land, and an outright `failed` leg never took
+money out in the first place).
+
+**Auth:** ADMIN + `requirePermission('FINANCE')`
+
+**Request Body:** `{ "note": "..." }` (optional).
+
+**Response `200`:** the escrow, `status: "REFUNDED"`.
+
+**Errors:** `400 ESCROW_NOT_PAYOUT_FAILED` · `409 NOTHING_TO_REFUND` — the
+full amount already paid out · `502 RAZORPAY_ERROR`.
 
 ---
 
@@ -7668,7 +7963,7 @@ All escrow transactions (paginated).
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `status` | string | `PAYMENT_PENDING` · `HELD` · `RELEASED` · `REFUNDED` · `FAILED` · `CANCELLED` |
+| `status` | string | `PAYMENT_PENDING` · `HELD` · `RELEASED` · `REFUNDED` · `FAILED` · `CANCELLED` · `HELD_PAYOUT_FAILED` · `PARTIALLY_REFUNDED` · `FROZEN`. **BE-11** — validated against this exact list before reaching the DB (`400 INVALID_STATUS` on an unknown value, instead of a raw DB error turning into a `500`). Comma-separated accepted too: `?status=HELD,FROZEN`. |
 | `page` | number | Default: `1` |
 | `limit` | number | Default: `20` |
 
@@ -7712,7 +8007,17 @@ R31 — every row also carries `sellerPayoutStatus`/`sellerPayoutUtr` and
 RazorpayX's own payout status values (`processing`/`processed`/`failed`/
 `reversed`/...), kept current by the `payout.processed`/`payout.failed`/
 `payout.reversed` webhooks. `null` until a payout for that leg is ever
-attempted.
+attempted. **BE-20** — a failed/reversed leg also carries
+`sellerPayoutFailureReason`/`partnerPayoutFailureReason` (RazorpayX's actual
+`status_details.description`, previously discarded).
+
+**BE-6 — `refundedAmount` (rupees) and `razorpayRefundId`.** `refundedAmount`
+is the running total of every `refund.created` webhook applied so far
+(deduped by refund id) — `0` until any refund lands, and can be less than
+`amount` on a `PARTIALLY_REFUNDED` row (status only flips to `REFUNDED` once
+the total equals the held amount). A `RELEASED` escrow is never auto-flipped
+to `REFUNDED`/`PARTIALLY_REFUNDED` by an unexpected refund webhook — that
+case is left untouched and flagged to admins instead.
 
 R30 — every row also carries `netAmount` (the "released" screen's figure) —
 `null` until the escrow is actually released, at which point it's
