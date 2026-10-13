@@ -304,6 +304,30 @@ async function getBankAccount(partnerId) {
 }
 
 async function updateBankAccount(partnerId, data) {
+  // BE-14 — once a RazorpayX fund account is registered, the account
+  // number/IFSC/holder name displayed here must stay in lockstep with the
+  // account payouts actually go to. Previously this route could silently
+  // overwrite those three fields with no effect on razorpayFundAccountId,
+  // so the partner's own "my bank account" page could show a number that
+  // was no longer where their money actually lands. Only branch is still
+  // free to edit directly; the other three require the change-request flow
+  // (requestPayoutAccountChange below), which re-validates the new account
+  // before it's ever used for a real payout.
+  const current = await prisma.user.findUnique({
+    where: { id: partnerId },
+    select: { bankAccountNo: true, bankIfsc: true, bankHolderName: true, razorpayFundAccountId: true },
+  });
+  if (current?.razorpayFundAccountId) {
+    const changedRegisteredField = data.bankAccountNo !== current.bankAccountNo
+      || data.bankIfsc !== current.bankIfsc
+      || data.bankHolderName !== current.bankHolderName;
+    if (changedRegisteredField) {
+      throw new ApiError(409,
+        'A payout account is already registered with these details. To change the account number, IFSC or account holder name, submit a payout account change request instead.',
+        { code: 'USE_PAYOUT_CHANGE_REQUEST' });
+    }
+  }
+
   return prisma.user.update({
     where: { id: partnerId },
     data: { ...data, bankLinkedAt: new Date() },
@@ -416,7 +440,7 @@ async function listPayoutAccounts(filters, skip, limit) {
   };
 }
 
-async function createPayoutAccount(partnerId, data) {
+async function createPayoutAccount(partnerId, data, kycStatus) {
   const partner = await prisma.user.findUnique({
     where: { id: partnerId },
     select: { id: true, name: true, email: true, phone: true, payoutAccountStatus: true, razorpayContactId: true },
@@ -460,6 +484,17 @@ async function createPayoutAccount(partnerId, data) {
     note = err.message;
   }
 
+  // BE-14 — registration is allowed before KYC is approved (so a partner
+  // isn't blocked from adding bank details while KYC is still pending), but
+  // the account can't go ACTIVE — and therefore can't receive a real
+  // payout — until KYC actually clears. Admin's status route is still the
+  // only way to flip this to ACTIVE afterward, same as the existing
+  // NEEDS_CLARIFICATION path.
+  if (status === 'ACTIVE' && kycStatus !== 'VERIFIED') {
+    status = 'PENDING_VALIDATION';
+    note = 'Awaiting KYC verification before this account can receive payouts.';
+  }
+
   const updated = await prisma.user.update({
     where: { id: partnerId },
     data: {
@@ -481,21 +516,108 @@ async function createPayoutAccount(partnerId, data) {
   return maskPayout(updated);
 }
 
+// BE-14 — the way to change an ACTIVE account's bank details. createPayoutAccount
+// above still refuses outright (409 PAYOUT_ACCOUNT_EXISTS) once ACTIVE; this
+// is the only path from there. The OLD fund account stays live and in use
+// for any release until admin approves the change (setPayoutAccountStatus
+// below) — nothing here touches razorpayFundAccountId yet.
+async function requestPayoutAccountChange(partnerId, { legalName, accountNumber, ifsc, bankName, reason }) {
+  const partner = await prisma.user.findUnique({ where: { id: partnerId }, select: { id: true } });
+  if (!partner) throw new ApiError(404, 'User not found');
+
+  const existingChange = await prisma.payoutAccountChange.findFirst({ where: { partnerId, status: 'PENDING' } });
+  if (existingChange) {
+    throw new ApiError(409, 'A payout account change request is already pending review.', { code: 'CHANGE_ALREADY_PENDING' });
+  }
+
+  const change = await prisma.payoutAccountChange.create({
+    data: { partnerId, legalName, accountNumber, ifsc, bankName, reason },
+  });
+
+  await prisma.user.update({
+    where: { id: partnerId },
+    data: { payoutAccountStatus: 'PENDING_VALIDATION', payoutAccountNote: 'Bank account change requested — pending admin review.' },
+  });
+
+  await createNotification({
+    userId: partnerId,
+    title: 'Payout account change submitted',
+    message: 'Your request to change your payout bank account is under review. Your current account stays active until this is approved.',
+    type: 'PAYOUT_ACCOUNT_UPDATE',
+    linkUrl: '/partners/profile/bank',
+  });
+
+  return { id: change.id, status: change.status, createdAt: change.createdAt };
+}
+
 // 3.5 — admin side of the clarification flow: flag an account for
 // re-submission, or clear it once the partner has fixed things.
 async function setPayoutAccountStatus(partnerId, status, note, adminId, ip) {
-  const partner = await prisma.user.findFirst({ where: { id: partnerId, role: 'PARTNER' }, select: { id: true, payoutAccountStatus: true } });
+  const partner = await prisma.user.findFirst({
+    where: { id: partnerId, role: 'PARTNER' },
+    select: { id: true, email: true, phone: true, payoutAccountStatus: true, razorpayContactId: true },
+  });
   if (!partner) throw new ApiError(404, 'Partner not found');
+
+  let pendingChange = await prisma.payoutAccountChange.findFirst({ where: { partnerId, status: 'PENDING' } });
+
+  // BE-14 — a status change other than ACTIVE while a change is pending
+  // (e.g. admin flags NEEDS_CLARIFICATION generally, or SUSPENDED)
+  // supersedes it — the change request is rejected rather than left
+  // dangling, which would otherwise block the partner from ever submitting
+  // a new one (CHANGE_ALREADY_PENDING).
+  if (pendingChange && status !== 'ACTIVE') {
+    await prisma.payoutAccountChange.update({
+      where: { id: pendingChange.id },
+      data: { status: 'REJECTED', decidedBy: adminId, decidedAt: new Date() },
+    });
+    pendingChange = null;
+  }
+
+  const updateData = {
+    payoutAccountStatus: status,
+    payoutAccountNote: note ?? null,
+    ...(status === 'ACTIVE' ? { payoutValidatedAt: new Date() } : {}),
+  };
+
+  // Approving ACTIVE while a change is pending means this approval is for
+  // the NEW account the partner asked to switch to, not whatever fund
+  // account is already on file — re-run the penny drop on the new account
+  // before swapping it in. Approving a change must not skip the same
+  // validation a brand-new registration gets.
+  if (pendingChange) {
+    let fundAccountId;
+    try {
+      const contact = partner.razorpayContactId
+        ? { id: partner.razorpayContactId }
+        : await createPayoutContact(pendingChange.legalName, partner.email, partner.phone);
+      const fundAccount = await createPayoutFundAccount(contact.id, pendingChange.legalName, pendingChange.ifsc, pendingChange.accountNumber);
+      await validateFundAccountOrWarn(fundAccount.id, 'partner');
+      fundAccountId = fundAccount.id;
+      updateData.razorpayContactId = contact.id;
+    } catch (err) {
+      throw new ApiError(400, `The new bank account could not be validated: ${err.message}`, { code: 'FUND_ACCOUNT_REJECTED' });
+    }
+    updateData.razorpayFundAccountId = fundAccountId;
+    updateData.bankHolderName = pendingChange.legalName;
+    updateData.bankAccountNo = pendingChange.accountNumber;
+    updateData.bankIfsc = pendingChange.ifsc;
+    updateData.bankLinkedAt = new Date();
+    if (pendingChange.bankName) updateData.bankName = pendingChange.bankName;
+  }
 
   const updated = await prisma.user.update({
     where: { id: partnerId },
-    data: {
-      payoutAccountStatus: status,
-      payoutAccountNote: note ?? null,
-      ...(status === 'ACTIVE' ? { payoutValidatedAt: new Date() } : {}),
-    },
+    data: updateData,
     select: PAYOUT_PUBLIC_FIELDS,
   });
+
+  if (pendingChange) {
+    await prisma.payoutAccountChange.update({
+      where: { id: pendingChange.id },
+      data: { status: 'APPROVED', decidedBy: adminId, decidedAt: new Date() },
+    });
+  }
 
   await createNotification({
     userId: partnerId,
@@ -510,7 +632,7 @@ async function setPayoutAccountStatus(partnerId, status, note, adminId, ip) {
   await createAuditLog({
     adminId, action: 'PAYOUT_ACCOUNT_STATUS_SET', targetType: 'User', targetId: partnerId,
     before: { payoutAccountStatus: partner.payoutAccountStatus },
-    after: { payoutAccountStatus: status, note: note ?? null }, ipAddress: ip,
+    after: { payoutAccountStatus: status, note: note ?? null, approvedChangeId: pendingChange?.id }, ipAddress: ip,
   });
 
   return maskPayout(updated);
@@ -636,7 +758,7 @@ module.exports = {
   getFinanceSummary, getRatings, listMyPayouts,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount, getBilling, updateBilling,
-  getPayoutAccount, createPayoutAccount, setPayoutAccountStatus, listPayoutAccounts, maskPayout,
+  getPayoutAccount, createPayoutAccount, requestPayoutAccountChange, setPayoutAccountStatus, listPayoutAccounts, maskPayout,
   getSupportTickets, getSupportTicketById, createSupportTicket,
   getPartnerAnalytics,
 };

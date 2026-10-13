@@ -123,7 +123,9 @@ router.get('/audit-logs', ctrl.getAuditLogs);
 router.get('/partners',     ctrl.getPartnerMetrics);
 router.get('/partners/:id', ctrl.getPartnerById);
 // 3.5 — flag a payout account for clarification, or clear it once fixed.
-router.patch('/partners/:id/payout-account/status', ctrl.setPayoutAccountStatus);
+// BE-14 — FINANCE-gated: this also approves bank-account change requests,
+// which swaps the real payout destination (razorpayFundAccountId).
+router.patch('/partners/:id/payout-account/status', requirePermission('FINANCE'), ctrl.setPayoutAccountStatus);
 // R14 — every partner's payout account in one list.
 router.get('/payout-accounts', ctrl.listPayoutAccounts);
 

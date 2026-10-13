@@ -1,0 +1,25 @@
+// ─── PAYOUT ACCOUNT CHANGE ────────────────────────────────────────────────────
+// BE-14 — an ACTIVE payout account previously had no change flow at all
+// (POST /partner/payout-account refused outright with PAYOUT_ACCOUNT_EXISTS,
+// and PATCH /bank-account could silently overwrite the stored bank fields
+// without ever touching the fund account payouts actually go to — the
+// displayed bank and the real payout destination could drift apart). A
+// change request instead goes through admin approval, which re-runs the
+// penny drop on the NEW account before swapping it onto the partner's row.
+
+model PayoutAccountChange {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  partnerId     String    @db.ObjectId
+  legalName     String
+  accountNumber String
+  ifsc          String
+  bankName      String?
+  reason        String
+  status        String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  decidedBy     String?   @db.ObjectId
+  decidedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([partnerId])
+  @@index([status])
+}

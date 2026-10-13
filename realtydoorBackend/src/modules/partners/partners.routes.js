@@ -94,6 +94,8 @@ router.get('/bank-account',   requireKyc, ctrl.getBankAccount);
 // B12.1/B12.4 — RazorpayX payout account (no Route onboarding).
 router.get('/payout-account',  ctrl.getPayoutAccount);
 router.post('/payout-account', ctrl.createPayoutAccount);
+// BE-14 — the only way to change an ACTIVE account's bank details.
+router.post('/payout-account/change-request', ctrl.requestPayoutAccountChange);
 router.patch('/bank-account', requireKyc, ctrl.updateBankAccount);
 
 // R8 — billing details (for the commission invoice).

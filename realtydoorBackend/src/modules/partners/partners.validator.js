@@ -79,6 +79,15 @@ const createPayoutAccountSchema = z.object({
   bankName:      z.string().max(120).optional(),
 });
 
+// BE-14 — the only path to change an ACTIVE payout account's bank details.
+const requestPayoutAccountChangeSchema = z.object({
+  legalName:     z.string().min(2).max(120),
+  accountNumber: z.string().regex(/^\d{9,18}$/, 'Account number must be 9-18 digits'),
+  ifsc:          z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'Invalid IFSC code'),
+  bankName:      z.string().max(120).optional(),
+  reason:        z.string().min(5, 'A reason of at least 5 characters is required').max(500),
+});
+
 const PAYOUT_STATUSES = ['ACTIVE', 'PENDING_VALIDATION', 'NEEDS_CLARIFICATION', 'SUSPENDED'];
 
 const setPayoutStatusSchema = z.object({
@@ -91,6 +100,7 @@ const setPayoutStatusSchema = z.object({
 
 module.exports = {
   createPayoutAccountSchema,
+  requestPayoutAccountChangeSchema,
   setPayoutStatusSchema,
   PAYOUT_STATUSES,
   acceptTermsSchema,

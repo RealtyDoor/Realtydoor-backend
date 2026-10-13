@@ -8,6 +8,7 @@ const {
   createSupportTicketSchema,
   acceptTermsSchema,
   createPayoutAccountSchema,
+  requestPayoutAccountChangeSchema,
 } = require('./partners.validator');
 const ApiError = require('../../utils/ApiError');
 
@@ -159,10 +160,19 @@ async function getPayoutAccount(req, res, next) {
 async function createPayoutAccount(req, res, next) {
   try {
     const data = createPayoutAccountSchema.parse(req.body);
-    const result = await service.createPayoutAccount(req.user.id, data);
+    const result = await service.createPayoutAccount(req.user.id, data, req.user.kycStatus);
     created(res, result, result.payoutAccountStatus === 'ACTIVE'
       ? 'Payout account registered and verified'
       : 'Payout account registered — under review');
+  } catch (err) { next(err); }
+}
+
+// BE-14 — the only way to change an ACTIVE account's bank details.
+async function requestPayoutAccountChange(req, res, next) {
+  try {
+    const data = requestPayoutAccountChangeSchema.parse(req.body);
+    const result = await service.requestPayoutAccountChange(req.user.id, data);
+    created(res, result, 'Payout account change request submitted — pending admin review');
   } catch (err) { next(err); }
 }
 
@@ -194,6 +204,6 @@ module.exports = {
   getFinanceSummary, getAnalytics, getRatings, listMyPayouts,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount, getBilling, updateBilling,
-  getPayoutAccount, createPayoutAccount,
+  getPayoutAccount, createPayoutAccount, requestPayoutAccountChange,
   getSupportTickets, getSupportTicketById, createSupportTicket,
 };
