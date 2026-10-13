@@ -727,7 +727,12 @@ async function refund(escrowId, adminId, ip) {
 
 async function getAllEscrow(filters, skip, limit) {
   const where = {};
-  if (filters.status) where.status = filters.status;
+  // BE-11 — status is now pre-validated (and comma-split into an array) by
+  // the controller; a single value still works the same, multiple values
+  // map to Prisma's `{ in: [...] }`.
+  if (filters.status?.length) {
+    where.status = filters.status.length === 1 ? filters.status[0] : { in: filters.status };
+  }
   const [data, total] = await prisma.$transaction([
     prisma.escrowTransaction.findMany({
       where, skip, take: limit, orderBy: { createdAt: 'desc' },

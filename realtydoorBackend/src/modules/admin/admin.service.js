@@ -16,7 +16,7 @@ const { stalledInfoFor } = require('../leads/leads.service');
 const { CONTACT_STATUSES } = require('../contact/contact.admin.validator');
 const { generate, expiresAt } = require('../../lib/otp');
 const logger = require('../../lib/logger');
-const { cacheDel } = require('../../lib/cache');
+const { cacheDel, cacheDelPattern } = require('../../lib/cache');
 const dataAckService = require('../partners/dataAck.service');
 const { attachLoanDocuments } = require('../../lib/loanEligibility');
 const { assertLeadNotPaused } = require('../../lib/accountDeletion');
@@ -2016,7 +2016,7 @@ async function adminListServices() {
 async function adminCreateService(data) {
   // BE-9 — pricePaise alongside the existing rupee field.
   const svc = await prisma.service.create({ data: { ...data, ...(data.price != null && { pricePaise: Math.round(data.price * 100) }) } });
-  cacheDel(CACHE_KEYS.SERVICES_LIST);
+  cacheDelPattern(CACHE_KEYS.SERVICES_LIST_PATTERN); // BE-8 — every category's cache entry, not just the unfiltered one
   return svc;
 }
 
@@ -2027,7 +2027,7 @@ async function adminUpdateService(id, data) {
     where: { id },
     data: { ...data, ...(data.price != null && { pricePaise: Math.round(data.price * 100) }) },
   });
-  cacheDel(CACHE_KEYS.SERVICES_LIST);
+  cacheDelPattern(CACHE_KEYS.SERVICES_LIST_PATTERN); // BE-8 — every category's cache entry, not just the unfiltered one
   return updated;
 }
 
@@ -2036,7 +2036,7 @@ async function adminDeleteService(id) {
   if (!svc) throw new ApiError(404, 'Service not found');
   // Soft-delete — keeps existing subscriptions resolvable
   const deactivated = await prisma.service.update({ where: { id }, data: { isActive: false } });
-  cacheDel(CACHE_KEYS.SERVICES_LIST);
+  cacheDelPattern(CACHE_KEYS.SERVICES_LIST_PATTERN); // BE-8 — every category's cache entry, not just the unfiltered one
   return deactivated;
 }
 

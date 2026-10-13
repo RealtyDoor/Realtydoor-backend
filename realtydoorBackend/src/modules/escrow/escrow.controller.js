@@ -2,7 +2,7 @@ const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./escrow.service');
 const payoutService = require('./escrowPayout.service');
-const { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema, retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema } = require('./escrow.validator');
+const { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema, retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema, ESCROW_STATUSES } = require('./escrow.validator');
 const { verifyPaymentSignature } = require('../../lib/razorpay');
 const ApiError = require('../../utils/ApiError');
 
@@ -81,7 +81,19 @@ async function unfreezeEscrow(req, res, next) {
 async function getAllEscrow(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
-    const { data, total } = await service.getAllEscrow(req.query, skip, limit);
+    // BE-11 — req.query.status previously went straight to Prisma; an
+    // unknown value (typo, stale FE code) threw a raw Prisma error that
+    // surfaced as a 500 for the whole list instead of a clean 400.
+    // Comma-separated values map to a Prisma `{ in: [...] }` filter.
+    let statuses;
+    if (req.query.status) {
+      statuses = String(req.query.status).split(',').map((s) => s.trim());
+      const invalid = statuses.filter((s) => !ESCROW_STATUSES.includes(s));
+      if (invalid.length) {
+        throw new ApiError(400, `Invalid status value(s): ${invalid.join(', ')}. Must be one of: ${ESCROW_STATUSES.join(', ')}`, { code: 'INVALID_STATUS' });
+      }
+    }
+    const { data, total } = await service.getAllEscrow({ ...req.query, status: statuses }, skip, limit);
     success(res, paginate(data, total, page, limit));
   } catch (err) { next(err); }
 }

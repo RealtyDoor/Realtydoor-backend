@@ -6,7 +6,7 @@ const ApiError = require('../../utils/ApiError');
 
 async function getAll(req, res, next) {
   try {
-    const services = await service.getAllServices();
+    const services = await service.getAllServices(req.query.category);
     success(res, services);
   } catch (err) { next(err); }
 }

@@ -191,49 +191,16 @@ async function razorpay(req, res) {
       }
     }
 
+    // BE-12 — legacy Razorpay Route handler. release() has used RazorpayX
+    // payouts exclusively for a while now (never Route transfers), and
+    // nothing writes razorpayTransferId any more — this is dead weight,
+    // kept only so an actual delivery (if the Razorpay dashboard still has
+    // this event subscribed — see BE-15's checklist, which it shouldn't)
+    // gets a clean acknowledged-but-ignored response instead of silently
+    // falling through to nothing. razorpayTransferId itself is left on the
+    // schema for now; dropping the column is a separate migration.
     if (event === 'transfer.settled') {
-      // `source` is the payment the transfer was made from — Razorpay's own
-      // record of a real, completed transfer, independent of whether our
-      // release() call's own DB write succeeded.
-      const { id: transferId, source: sourcePaymentId } = payload.transfer.entity;
-      let escrow = await prisma.escrowTransaction.findFirst({ where: { razorpayTransferId: transferId } });
-
-      // Reconciliation fallback: escrow.service.js's release() now claims
-      // RELEASED atomically *before* calling Razorpay (so the escrow can
-      // never be stuck showing HELD while money actually moved), but its
-      // final write — persisting razorpayTransferId itself — could still
-      // fail after a successful transfer. That escrow is unreachable by
-      // transferId above; razorpayPaymentId, however, is written back at
-      // confirmPayment time, long before any release, so it's always
-      // reliably present. This is the only remaining signal for that narrow
-      // failure window, so use it to find and backfill the record.
-      if (!escrow && sourcePaymentId) {
-        escrow = await prisma.escrowTransaction.findFirst({ where: { razorpayPaymentId: sourcePaymentId } });
-        if (escrow) {
-          const needsStatusFix = escrow.status !== 'RELEASED';
-          await prisma.escrowTransaction.update({
-            where: { id: escrow.id },
-            data: {
-              razorpayTransferId: transferId,
-              ...(needsStatusFix && { status: 'RELEASED', releasedAt: escrow.releasedAt || new Date() }),
-            },
-          });
-          logger.warn('[RazorpayWebhook] Reconciled escrow via transfer.settled — razorpayTransferId (and possibly status) was missing', {
-            transferId, escrowId: escrow.id, hadWrongStatus: needsStatusFix,
-          });
-        }
-      }
-
-      if (escrow) {
-        logger.info('[RazorpayWebhook] Escrow transfer settled', { transferId, escrowId: escrow.id });
-        await createNotification({
-          userId: escrow.buyerId,
-          title: 'Token Advance Transferred to Seller',
-          message: 'The token advance for your property deal has been successfully transferred to the seller.',
-          type: 'ESCROW_RELEASED',
-          linkUrl: `/user/inquiries/${escrow.leadId}`,
-        });
-      }
+      logger.info('[RazorpayWebhook] transfer.settled received — ignored (legacy Route handler removed, BE-12)', { event });
     }
 
     // R31 — the payout only actually lands once RazorpayX confirms it, with

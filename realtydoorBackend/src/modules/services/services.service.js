@@ -7,9 +7,15 @@ const { createNotification } = require('../../lib/notifications');
 const { sendServiceActivated } = require('../../lib/email');
 const logger = require('../../lib/logger');
 
-async function getAllServices() {
-  return withCache(CACHE_KEYS.SERVICES_LIST, 900, () => prisma.service.findMany({
-    where: { isActive: true },
+// BE-8 — the FE previously fell back to services[0] when no MAINTENANCE
+// service was returned (fixed in the FE by refusing that fallback instead),
+// which could charge for the wrong service. The seed already guarantees at
+// least one active MAINTENANCE service exists (prisma/seed.js); this is the
+// filter so the FE can actually ask for one directly instead of filtering
+// client-side out of the full list.
+async function getAllServices(category) {
+  return withCache(CACHE_KEYS.servicesList(category), 900, () => prisma.service.findMany({
+    where: { isActive: true, ...(category && { category }) },
     orderBy: { sortOrder: 'asc' },
   }));
 }

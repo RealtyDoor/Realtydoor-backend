@@ -63,6 +63,19 @@ const freezeEscrowSchema = z.object({
   reason: z.string().min(5, 'A reason of at least 5 characters is required').max(500),
 });
 
+// BE-11 — GET /admin/escrow passed req.query.status straight to Prisma; an
+// unknown value 500'd instead of a clean 400. Mirrors prisma/schema/
+// _base.prisma's EscrowStatus enum exactly — kept as its own list (same
+// pattern as partners.validator.js's PAYOUT_STATUSES) rather than importing
+// the generated @prisma/client enum, which nothing else in this codebase
+// does. Validated by hand in the controller (not a z.enum) so the error
+// carries the exact `code: 'INVALID_STATUS'` the audit spec names —
+// errorHandler.js's ZodError branch never attaches a `data.code`.
+const ESCROW_STATUSES = [
+  'PAYMENT_PENDING', 'HELD', 'RELEASED', 'REFUNDED', 'FAILED', 'CANCELLED',
+  'HELD_PAYOUT_FAILED', 'PARTIALLY_REFUNDED', 'FROZEN',
+];
+
 // BE-2 — payout retry/resolve/refund-remaining, the way out of
 // HELD_PAYOUT_FAILED (escrowPayout.service.js).
 const retryPayoutSchema = z.object({
@@ -83,4 +96,5 @@ const refundRemainingSchema = z.object({
 module.exports = {
   createOrderSchema, releaseEscrowSchema, freezeEscrowSchema,
   retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema,
+  ESCROW_STATUSES,
 };
