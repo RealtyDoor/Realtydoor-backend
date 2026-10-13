@@ -12,6 +12,20 @@ model PhoneOtp {
   expiresAt   DateTime
   attempts    Int        @default(0)
   lockedUntil DateTime?
+  // Security fix, 2026-10-13 (B8) — griefing counter. Verify is public by
+  // design (see lib/otpAuth.js), so anyone who knows a phone number can
+  // trigger the 5-wrong-guess lock deliberately, repeatedly, for free. Each
+  // lock within 24h of the last one escalates the next lock's duration
+  // (lib/otpAuth.js's lockDurationMs), so sustained harassment of the same
+  // number gets steadily more expensive instead of resetting to a flat 10
+  // minutes every time. Untouched by a normal resend, so a one-off real
+  // lockout (someone fat-fingering their own code) doesn't escalate anything.
+  // Nullable, not @default(0) non-null — existing PhoneOtp rows from before
+  // this field existed are missing it entirely in Mongo, and a non-nullable
+  // Int would fail to deserialize a document where the field is simply
+  // absent. Code below treats a missing value as 0, same effect either way.
+  lockCount    Int?
+  lastLockedAt DateTime?
   sendCount   Int        @default(1)
   lastSentAt  DateTime   @default(now())
   payload     Json?      // { name, email } for SIGNUP; unused for other purposes

@@ -1,6 +1,21 @@
+const crypto = require('crypto');
 const prisma = require('../../lib/prisma');
 const logger = require('../../lib/logger');
 const { recordDeliveryEvent } = require('../wati/wati.service');
+
+// Security fix, 2026-10-13 (B2) — plain !== leaks timing information a
+// byte at a time; same constant-time-compare pattern as
+// lib/otpAuth.js::codeMatches. timingSafeEqual throws on a length
+// mismatch rather than returning false, so that has to be checked first —
+// still safe, since the length check alone doesn't leak anything about
+// the token's actual content.
+function tokenMatches(provided, expected) {
+  if (typeof provided !== 'string') return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
 
 // WATI sends both inbound replies and delivery-status callbacks to the same
 // webhook, distinguished by eventType. Map its vocabulary onto our log's.
@@ -34,7 +49,7 @@ function parseStatus(text) {
 
 async function watiWebhook(req, res) {
   const token = process.env.WATI_WEBHOOK_TOKEN;
-  if (token && req.headers['x-wati-token'] !== token) {
+  if (token && !tokenMatches(req.headers['x-wati-token'], token)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 

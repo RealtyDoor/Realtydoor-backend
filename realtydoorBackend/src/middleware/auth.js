@@ -3,6 +3,7 @@ const prisma = require('../lib/prisma');
 const ApiError = require('../utils/ApiError');
 const { computeOnboardingComplete } = require('../lib/onboarding');
 const authService = require('../modules/auth/auth.service');
+const { getAllowedOrigins } = require('../lib/allowedOrigins');
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -63,7 +64,11 @@ async function authenticate(req, res, next) {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) throw new ApiError(401, 'No token provided');
 
-    const payload = await clerk.verifyToken(token);
+    // Security fix, 2026-10-13 (B5) — without authorizedParties, Clerk
+    // never checks the token's azp claim against anything, so a valid
+    // token for this same Clerk instance verifies regardless of which
+    // origin it was actually issued for.
+    const payload = await clerk.verifyToken(token, { authorizedParties: getAllowedOrigins() });
     const clerkId = payload.sub;
 
     let dbUser = await prisma.user.findUnique({ where: { clerkId } });

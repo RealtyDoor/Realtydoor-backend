@@ -17,10 +17,29 @@ const EXPIRY_MS           = 10 * 60 * 1000;      // 10 minutes
 // raising the bar from 3 to 5 wrong guesses, and cutting the lock from 30
 // to 10 minutes, meaningfully reduces how disruptive that griefing is.
 const MAX_ATTEMPTS        = 5;
-const LOCK_MS             = 10 * 60 * 1000;      // 10 minutes
+const LOCK_MS             = 10 * 60 * 1000;      // 10 minutes, base duration
 const RESEND_COOLDOWN_MS  = 30 * 1000;           // 30 seconds
 const MAX_SENDS_PER_HOUR  = 3;
 const SEND_WINDOW_MS      = 60 * 60 * 1000;      // 1 hour
+
+// Security fix, 2026-10-13 (B8) — escalating lockout. A flat 10-minute lock
+// resets to the same 10 minutes no matter how many times it's deliberately
+// re-triggered, so griefing a number is cheap and repeatable. Each lock
+// within ESCALATION_RESET_MS of the previous one triples the next lock's
+// duration (10m, 30m, 90m, ...), capped at MAX_LOCK_MS — raising the cost of
+// sustained harassment while a single, isolated lockout still only costs the
+// base 10 minutes. The counter (PhoneOtp.lockCount) is untouched by a normal
+// resend, so it only grows across repeated *lockouts*, not repeated codes.
+const ESCALATION_RESET_MS = 24 * 60 * 60 * 1000; // 24 hours
+const ESCALATION_FACTOR   = 3;
+const MAX_LOCK_MS         = 4 * 60 * 60 * 1000;  // 4 hours
+
+function nextLockDurationMs(row, now) {
+  const withinEscalationWindow = row.lastLockedAt && now - row.lastLockedAt.getTime() < ESCALATION_RESET_MS;
+  const lockCount = withinEscalationWindow ? (row.lockCount || 0) + 1 : 1;
+  const lockMs = Math.min(LOCK_MS * ESCALATION_FACTOR ** (lockCount - 1), MAX_LOCK_MS);
+  return { lockCount, lockMs };
+}
 
 function generateCode() {
   return String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
@@ -116,10 +135,14 @@ async function verifyOtp({ phone, purpose, code }) {
   if (!codeMatches(code, row.codeHash)) {
     const attempts = row.attempts + 1;
     const locked = attempts >= MAX_ATTEMPTS;
-    await prisma.phoneOtp.update({
-      where: { id: row.id },
-      data: { attempts, lockedUntil: locked ? new Date(now.getTime() + LOCK_MS) : null },
-    });
+    const data = { attempts, lockedUntil: null };
+    if (locked) {
+      const { lockCount, lockMs } = nextLockDurationMs(row, now);
+      data.lockedUntil = new Date(now.getTime() + lockMs);
+      data.lockCount = lockCount;
+      data.lastLockedAt = now;
+    }
+    await prisma.phoneOtp.update({ where: { id: row.id }, data });
     throw genericError();
   }
 

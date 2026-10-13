@@ -1,7 +1,17 @@
 const { z } = require('zod');
 
 const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  // Security fix, 2026-10-13 (B3) — no default. The dev-bypass gate
+  // (middleware/auth.js) and the two .refine() checks below all key off
+  // `NODE_ENV === 'production'`; a defaulted 'development' meant a deploy
+  // that simply forgot to set NODE_ENV silently became "not production" in
+  // every one of those checks, so DEV_API_KEY (a full, unauthenticated
+  // login-as-anyone bypass) could sit active on a real internet-facing box
+  // with no validation error ever firing. Every real environment (.env,
+  // .env.example, Jest's own built-in default) already sets this
+  // explicitly — this only breaks a boot that genuinely forgot it, which
+  // is exactly the case that needs to fail loudly instead of silently.
+  NODE_ENV: z.enum(['development', 'production', 'test']),
   PORT: z.string().default('5000'),
   DATABASE_URL: z.string().min(1),
   CLERK_SECRET_KEY: z.string().min(1),
@@ -12,6 +22,12 @@ const envSchema = z.object({
   RAZORPAYX_ACCOUNT_NUMBER: z.string().min(1),
   WATI_API_ENDPOINT: z.string().url(),
   WATI_ACCESS_TOKEN: z.string().min(1),
+  // Security fix, 2026-10-13 (B2) — optional meant the webhook accepted
+  // unauthenticated requests whenever this wasn't set (wati.handler.js's
+  // check only runs `if (token && ...)`). Still optional outside
+  // production so local/dev setups that never configured WATI don't need
+  // a throwaway value — required once NODE_ENV is actually 'production',
+  // enforced by the .refine() below.
   WATI_WEBHOOK_TOKEN: z.string().optional(),
   AWS_ACCESS_KEY_ID: z.string().min(1),
   AWS_SECRET_ACCESS_KEY: z.string().min(1),
@@ -32,6 +48,9 @@ const envSchema = z.object({
 ).refine(
   (env) => !(env.NODE_ENV === 'production' && env.DEV_API_KEY),
   { message: 'DEV_API_KEY must not be set in production — it is a full auth bypass with no password/signature check.', path: ['DEV_API_KEY'] }
+).refine(
+  (env) => !(env.NODE_ENV === 'production' && !env.WATI_WEBHOOK_TOKEN),
+  { message: 'WATI_WEBHOOK_TOKEN must be set in production — without it, the WATI webhook accepts unauthenticated requests (fake replies, fake delivery events).', path: ['WATI_WEBHOOK_TOKEN'] }
 );
 
 function validateEnv() {

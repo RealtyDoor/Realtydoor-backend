@@ -9,6 +9,8 @@ const { computeOnboardingComplete } = require('../../lib/onboarding');
 const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
 const { nextRefCode } = require('../../lib/refCode');
 const { sendWelcomeEmail } = require('../../lib/email');
+const { getAllowedOrigins } = require('../../lib/allowedOrigins');
+const { anonymizeUser, hasMoneyInFlight } = require('../../lib/accountDeletion');
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -230,7 +232,9 @@ async function syncUser(token) {
   // surface as one, not look like an expired session to the frontend.
   let payload;
   try {
-    payload = await clerk.verifyToken(token);
+    // Security fix, 2026-10-13 (B5) — same authorizedParties check as
+    // middleware/auth.js's own verifyToken call.
+    payload = await clerk.verifyToken(token, { authorizedParties: getAllowedOrigins() });
   } catch (err) {
     throw new ApiError(401, 'Invalid or expired session.');
   }
@@ -264,15 +268,36 @@ async function syncUserByClerkId(clerkId, clerkUser) {
 
   // Email already belongs to a DIFFERENT Clerk identity — collision (B5).
   if (existing && existing.clerkId !== clerkId) {
-    const createdRecently = Date.now() - clerkUser.createdAt < RECENT_CLERK_USER_MS;
-    if (createdRecently) {
-      await clerk.users.deleteUser(clerkId).catch((err) =>
-        logger.warn('[authSync] cleanup of duplicate Clerk identity failed', { clerkId, error: err.message })
-      );
+    // Security fix, 2026-10-13 (B4) — email squatting. /auth/signup/otp
+    // never verifies the signer owns the email they typed (only the phone,
+    // via OTP), so anyone can "claim" another person's email that way. When
+    // that squatter's email was never actually verified and this NEW
+    // identity's email IS Clerk-verified (a real Google account — Clerk
+    // always verifies those), trust the newcomer over the squatter: free up
+    // the email (same anonymize-in-place mechanism as a self-requested
+    // account deletion) and fall through to create a fresh row below,
+    // instead of permanently locking the real owner out with EXISTING_USER.
+    // Skipped when the squatter has money in flight (escrow/loan) — wiping
+    // their bank/billing fields mid-transaction would be worse than the
+    // lockout this is meant to fix; that case still gets the 409 below.
+    const newcomerVerified = clerkUser.emailAddresses?.[0]?.verification?.status === 'verified';
+    if (!existing.emailVerified && newcomerVerified && !(await hasMoneyInFlight(existing.id))) {
+      await anonymizeUser(existing.id);
+      logger.warn('[authSync] reclaimed squatted, never-verified email for a verified sign-in', {
+        email, reclaimedUserId: existing.id, clerkId,
+      });
+      existing = null;
+    } else {
+      const createdRecently = Date.now() - clerkUser.createdAt < RECENT_CLERK_USER_MS;
+      if (createdRecently) {
+        await clerk.users.deleteUser(clerkId).catch((err) =>
+          logger.warn('[authSync] cleanup of duplicate Clerk identity failed', { clerkId, error: err.message })
+        );
+      }
+      throw new ApiError(409, 'An account with this email already exists. Please sign in with your original method.', {
+        code: 'EXISTING_USER',
+      });
     }
-    throw new ApiError(409, 'An account with this email already exists. Please sign in with your original method.', {
-      code: 'EXISTING_USER',
-    });
   }
 
   if (existing?.isSuspended) {

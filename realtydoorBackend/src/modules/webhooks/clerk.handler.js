@@ -2,6 +2,7 @@ const { Webhook } = require('svix');
 const prisma = require('../../lib/prisma');
 const logger = require('../../lib/logger');
 const { setUserRole } = require('../../lib/clerkAdmin');
+const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
 
 async function clerkWebhook(req, res) {
   const secret = process.env.CLERK_WEBHOOK_SECRET;
@@ -58,21 +59,63 @@ async function clerkWebhook(req, res) {
         const email = data.email_addresses?.[0]?.email_address;
         const metadataPhone = data.public_metadata?.phone;
 
-        await prisma.user.update({
-          where: { id: existing.id },
-          data: {
-            // name/profileImageUrl are owned by PATCH /user/profile once a
-            // row exists — this handler only ever fires for an existing row
-            // (see the `if (!existing)` branch above), so it must never
-            // overwrite them, same rule as /auth/sync's syncUser.
-            ...(email ? { email } : {}),
-            ...(metadataPhone ? { phone: metadataPhone } : {}),
-            // role is DB-authoritative — this handler only ever touches an
-            // existing row, so publicMetadata.role must never be applied
-            // here at all (it only seeds a brand-new row, in syncUser).
-          },
-        });
-        logger.info('[ClerkWebhook] user.updated synced', { clerkId: data.id });
+        // Security fix, 2026-10-13 (B6) — pre-checked, same as
+        // syncUserByClerkId's own email/phone collision checks, instead of
+        // writing straight through and relying on the DB's unique indexes
+        // to catch it after the fact (which then just got silently
+        // swallowed by the catch below). A colliding field is skipped, not
+        // retried — the collision won't resolve itself on a Clerk retry,
+        // so failing the whole event would just retry forever for no
+        // reason; the rest of the update (and future events) still apply.
+        const data_ = {};
+        if (email && email !== existing.email) {
+          const emailOwner = await prisma.user.findFirst({
+            where: { email, deletedAt: { isSet: false }, NOT: { id: existing.id } },
+          });
+          if (emailOwner) {
+            logger.warn('[ClerkWebhook] user.updated email collision — skipped', { clerkId: data.id, email });
+          } else {
+            data_.email = email;
+          }
+        }
+        if (metadataPhone && metadataPhone !== existing.phone) {
+          const phoneOwner = await prisma.user.findFirst({ where: { phone: metadataPhone, NOT: { id: existing.id } } });
+          if (phoneOwner) {
+            logger.warn('[ClerkWebhook] user.updated phone collision — skipped', { clerkId: data.id });
+          } else {
+            data_.phone = metadataPhone;
+          }
+        }
+
+        if (Object.keys(data_).length) {
+          try {
+            await prisma.user.update({
+              where: { id: existing.id },
+              data: data_,
+              // name/profileImageUrl are owned by PATCH /user/profile once a
+              // row exists — this handler only ever fires for an existing row
+              // (see the `if (!existing)` branch above), so it must never
+              // overwrite them, same rule as /auth/sync's syncUser.
+              // role is DB-authoritative — this handler only ever touches an
+              // existing row, so publicMetadata.role must never be applied
+              // here at all (it only seeds a brand-new row, in syncUser).
+            });
+            logger.info('[ClerkWebhook] user.updated synced', { clerkId: data.id, fields: Object.keys(data_) });
+          } catch (err) {
+            // The TOCTOU race the pre-checks above can't fully close —
+            // someone else claimed the email/phone between the check and
+            // this write. Logged and treated the same as a detected
+            // collision (skip, don't fail the whole event for a retry that
+            // can't succeed), not re-thrown into the outer catch.
+            if (isPhoneUniqueViolation(err) || err.code === 'P2002') {
+              logger.warn('[ClerkWebhook] user.updated race lost to a concurrent write — skipped', { clerkId: data.id, error: err.message });
+            } else {
+              throw err;
+            }
+          }
+        } else {
+          logger.info('[ClerkWebhook] user.updated — nothing to apply', { clerkId: data.id });
+        }
       }
     }
 
@@ -91,6 +134,14 @@ async function clerkWebhook(req, res) {
     }
   } catch (err) {
     logger.error('[ClerkWebhook] DB sync failed', { type, clerkId: data.id, error: err.message });
+    // Security/reliability fix, 2026-10-13 (B6) — this used to always
+    // respond 200 even here, so an unexpected failure (a DB blip, a bug)
+    // silently never happened as far as Clerk's retry logic was concerned.
+    // Clerk only retries on a non-2xx response; webhook handlers are
+    // expected to be safe to replay (this one already re-derives
+    // everything from `existing`/pre-checks rather than assuming prior
+    // state), so a real 500 here is the correct way to get that retry.
+    return res.status(500).json({ status: 'error' });
   }
 
   res.json({ status: 'ok' });

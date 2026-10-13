@@ -29,9 +29,14 @@ router.get('/:id/edit-logs', authenticate, requirePartner, requireKyc, ctrl.getE
 router.post('/:id/construction-updates', authenticate, requirePartner, requireKyc, ctrl.addConstructionUpdate);
 router.post('/', authenticate, requirePartner, requireKyc, ctrl.create);
 router.patch('/:id', authenticate, requirePartner, requireKyc, ctrl.update);
-router.post('/:id/images', authenticate, requirePartner, propertyImageUploader.array('images', 10), ctrl.uploadImages);
-router.post('/:id/videos', authenticate, requirePartner, propertyVideoUploader.array('videos', 5), ctrl.uploadVideos);
-router.post('/:id/documents', authenticate, requirePartner, propertyDocUploader.array('documents', 10), ctrl.uploadDocuments);
+// Security fix, 2026-10-13 (B7) — requireKyc added, matching create/update
+// just above (ownership alone was enforced, not verification status), and
+// placed before the multer uploader so an unverified partner's files never
+// reach S3 in the first place — previously the file landed before the
+// controller could reject anything, leaving an orphaned upload either way.
+router.post('/:id/images', authenticate, requirePartner, requireKyc, propertyImageUploader.array('images', 10), ctrl.uploadImages);
+router.post('/:id/videos', authenticate, requirePartner, requireKyc, propertyVideoUploader.array('videos', 5), ctrl.uploadVideos);
+router.post('/:id/documents', authenticate, requirePartner, requireKyc, propertyDocUploader.array('documents', 10), ctrl.uploadDocuments);
 // 4.1 — structured OWNER-persona checklist documents (sale deed, encumbrance
 // certificate, khata, society NOC), distinct from the free-form uploads
 // above (brochures, floor plans). One file per documentType; a re-upload
