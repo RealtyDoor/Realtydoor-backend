@@ -21,6 +21,7 @@ const server = app.listen(PORT, () => {
   require('./src/jobs/escrowAutoEscalate').start();
   require('./src/jobs/resetWeeklyViews').start();
   require('./src/jobs/processAccountDeletions').start();
+  require('./src/jobs/paymentReconcile').start();
 });
 
 process.on('unhandledRejection', (err) => {

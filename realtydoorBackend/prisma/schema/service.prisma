@@ -29,6 +29,8 @@ model Service {
   shortDesc   String
   description String
   price       Float
+  // BE-9 — integer paise, additive (see EscrowTransaction.amountPaise).
+  pricePaise  Int?
   category    String
   features    String[]
   isActive    Boolean  @default(true)
@@ -53,9 +55,14 @@ model UserSubscription {
   razorpayPaymentId String?
   paymentStatus     PaymentStatus @default(PENDING)
   amountPaid        Float
+  // BE-9 — integer paise, additive (see EscrowTransaction.amountPaise).
+  amountPaidPaise   Int?
   currency          String   @default("INR")
   startDate         DateTime @default(now())
   endDate           DateTime
+  // BE-6 — same dedup/running-total tracking as EscrowTransaction.
+  refundedAmountPaise Int?     @default(0)
+  refundIds           String[]
 
   tickets ServiceTicket[]
 

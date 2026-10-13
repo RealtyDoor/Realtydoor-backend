@@ -118,6 +118,11 @@ enum EscrowStatus {
   // review; release()/refund() both reject anything that isn't HELD, so this
   // status deliberately blocks the normal retry path until someone looks.
   HELD_PAYOUT_FAILED
+  // BE-6 — a refund.created webhook's amount didn't cover the whole escrow
+  // amount (a partial dashboard refund). Distinct from REFUNDED so a partial
+  // refund is never mistaken for a full one — see webhooks.controller.js's
+  // refund.created handler.
+  PARTIALLY_REFUNDED
   // R10 — admin froze this escrow for a dispute. Restricted to escrows that
   // were HELD at the time of freezing: release() and refund() already reject
   // anything that isn't HELD, so setting this status blocks both for free,

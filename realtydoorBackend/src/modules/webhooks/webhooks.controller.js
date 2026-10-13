@@ -19,6 +19,7 @@ async function razorpay(req, res) {
   // processing error threw a *second*, independent ReferenceError from
   // inside the error handler itself, itself unhandled.
   let event;
+  let eventId;
   try {
     const signature = req.headers['x-razorpay-signature'];
 
@@ -28,6 +29,27 @@ async function razorpay(req, res) {
 
     let payload;
     ({ event, payload } = req.body);
+    eventId = req.headers['x-razorpay-event-id'];
+
+    // BE-5 — dedup against a redelivered event. Razorpay retries on
+    // anything but a 2xx — including our own 500 below, added for a real
+    // processing failure — so a retry of an event that already fully
+    // completed last time must not run every side effect again. Every
+    // branch below is independently idempotent too, but this is the first
+    // line of defense, and the one that matters once paymentReconcile.js
+    // (BE-5) starts re-fetching and replaying missed state. A duplicate
+    // create() losing the unique-index race to a concurrent delivery of the
+    // SAME event is ignored — whichever request wins owns processing it.
+    if (eventId) {
+      const existingEvent = await prisma.webhookEvent.findUnique({ where: { eventId } });
+      if (existingEvent?.processedAt) {
+        logger.info('[RazorpayWebhook] Duplicate delivery — already processed', { eventId, event });
+        return res.json({ status: 'ok' });
+      }
+      if (!existingEvent) {
+        await prisma.webhookEvent.create({ data: { eventId, event } }).catch(() => {});
+      }
+    }
 
     if (event === 'payment.captured') {
       const { order_id: orderId, id: paymentId } = payload.payment.entity;
@@ -36,17 +58,16 @@ async function razorpay(req, res) {
       const escrow = await prisma.escrowTransaction.findUnique({ where: { razorpayOrderId: orderId } });
       if (escrow) {
         await confirmPayment(orderId, paymentId);
-        return res.json({ status: 'ok' });
-      }
-
-      // Route: service subscription payment. BE-3 — activateSubscription is
-      // the one atomic path shared with the buyer-facing verify-payment
-      // route (services.controller.js); whichever of the two reaches it
-      // first wins the claim and creates the ticket/notification/email,
-      // the other is a no-op.
-      const subscription = await prisma.userSubscription.findUnique({ where: { razorpayOrderId: orderId } });
-      if (subscription) {
-        await activateSubscription(orderId, paymentId);
+      } else {
+        // Route: service subscription payment. BE-3 — activateSubscription is
+        // the one atomic path shared with the buyer-facing verify-payment
+        // route (services.controller.js); whichever of the two reaches it
+        // first wins the claim and creates the ticket/notification/email,
+        // the other is a no-op.
+        const subscription = await prisma.userSubscription.findUnique({ where: { razorpayOrderId: orderId } });
+        if (subscription) {
+          await activateSubscription(orderId, paymentId);
+        }
       }
     }
 
@@ -64,41 +85,38 @@ async function razorpay(req, res) {
         // telling the buyer their successful payment failed.
         if (escrow.status !== 'PAYMENT_PENDING') {
           logger.warn('[RazorpayWebhook] payment.failed for a non-pending escrow — ignoring', { escrowId: escrow.id, status: escrow.status });
-          return res.json({ status: 'ok' });
+        } else {
+          await prisma.escrowTransaction.update({
+            where: { razorpayOrderId: orderId },
+            data: { status: 'FAILED', failedAt: new Date() },
+          });
+
+          await createNotification({
+            userId: escrow.buyerId,
+            title: 'Token Advance Payment Failed',
+            message: 'Your token advance payment could not be processed. Please retry from your dashboard.',
+            type: 'PAYMENT_FAILED',
+            linkUrl: `/user/inquiries/${escrow.leadId}`,
+          });
+
+          const buyer = await prisma.user.findUnique({ where: { id: escrow.buyerId }, select: { email: true } });
+          if (buyer) sendEscrowPaymentFailed(buyer.email).catch(() => {});
         }
-
-        await prisma.escrowTransaction.update({
-          where: { razorpayOrderId: orderId },
-          data: { status: 'FAILED', failedAt: new Date() },
-        });
-
-        await createNotification({
-          userId: escrow.buyerId,
-          title: 'Token Advance Payment Failed',
-          message: 'Your token advance payment could not be processed. Please retry from your dashboard.',
-          type: 'PAYMENT_FAILED',
-          linkUrl: `/user/inquiries/${escrow.leadId}`,
-        });
-
-        const buyer = await prisma.user.findUnique({ where: { id: escrow.buyerId }, select: { email: true } });
-        if (buyer) sendEscrowPaymentFailed(buyer.email).catch(() => {});
-
-        return res.json({ status: 'ok' });
-      }
-
-      const failedSub = await prisma.userSubscription.findUnique({ where: { razorpayOrderId: orderId } });
-      if (failedSub) {
-        await prisma.userSubscription.update({
-          where: { razorpayOrderId: orderId },
-          data: { paymentStatus: 'FAILED' },
-        });
-        await createNotification({
-          userId: failedSub.userId,
-          title: 'Service Payment Failed',
-          message: 'Your service subscription payment could not be processed. Please retry from your dashboard.',
-          type: 'PAYMENT_FAILED',
-          linkUrl: '/dashboard/services',
-        });
+      } else {
+        const failedSub = await prisma.userSubscription.findUnique({ where: { razorpayOrderId: orderId } });
+        if (failedSub) {
+          await prisma.userSubscription.update({
+            where: { razorpayOrderId: orderId },
+            data: { paymentStatus: 'FAILED' },
+          });
+          await createNotification({
+            userId: failedSub.userId,
+            title: 'Service Payment Failed',
+            message: 'Your service subscription payment could not be processed. Please retry from your dashboard.',
+            type: 'PAYMENT_FAILED',
+            linkUrl: '/dashboard/services',
+          });
+        }
       }
     }
 
@@ -106,31 +124,67 @@ async function razorpay(req, res) {
       const { payment_id: paymentId, id: refundId, amount } = payload.refund.entity;
       const amountRupees = `₹${(amount / 100).toLocaleString('en-IN')}`;
 
+      // BE-6 — previously ANY refund amount set REFUNDED unconditionally,
+      // so a partial dashboard refund (or a redelivered webhook re-applying
+      // the same refund) looked identical to a full one, and a RELEASED/
+      // FROZEN escrow could be flipped to REFUNDED with no basis at all.
       const escrow = await prisma.escrowTransaction.findFirst({ where: { razorpayPaymentId: paymentId } });
-      if (escrow && escrow.status !== 'REFUNDED') {
-        await prisma.escrowTransaction.update({
-          where: { id: escrow.id },
-          data: { status: 'REFUNDED', razorpayRefundId: refundId, refundedAt: new Date() },
-        });
-        await createNotification({
-          userId: escrow.buyerId,
-          title: 'Token Advance Refunded',
-          message: `Your token advance of ${amountRupees} has been refunded.`,
-          type: 'PAYMENT_REFUNDED',
-          linkUrl: `/user/inquiries/${escrow.leadId}`,
-        });
+      if (escrow && !escrow.refundIds.includes(refundId)) {
+        if (!['HELD', 'FROZEN', 'HELD_PAYOUT_FAILED'].includes(escrow.status)) {
+          logger.warn('[RazorpayWebhook] refund.created for an escrow not in a refundable state — not touching status', { escrowId: escrow.id, status: escrow.status, refundId });
+          const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
+          if (admins.length > 0) {
+            await broadcastNotification({
+              userIds: admins.map((a) => a.id),
+              title: 'Unexpected refund on a non-held escrow',
+              message: `A refund of ${amountRupees} was recorded on an escrow with status ${escrow.status} — this needs manual review.`,
+              type: 'ESCROW_PAYOUT_FAILED',
+            });
+          }
+        } else {
+          const refundedAmountPaise = (escrow.refundedAmountPaise || 0) + amount;
+          const fullyRefunded = refundedAmountPaise >= Math.round(escrow.amount * 100);
+          await prisma.escrowTransaction.update({
+            where: { id: escrow.id },
+            data: {
+              refundedAmountPaise,
+              refundIds: { push: refundId },
+              razorpayRefundId: refundId,
+              ...(fullyRefunded
+                ? { status: 'REFUNDED', refundedAt: new Date() }
+                : { status: 'PARTIALLY_REFUNDED' }),
+            },
+          });
+          await createNotification({
+            userId: escrow.buyerId,
+            title: fullyRefunded ? 'Token Advance Refunded' : 'Partial Refund Received',
+            message: fullyRefunded
+              ? `Your token advance of ${amountRupees} has been refunded.`
+              : `A partial refund of ${amountRupees} has been issued against your token advance.`,
+            type: 'PAYMENT_REFUNDED',
+            linkUrl: `/user/inquiries/${escrow.leadId}`,
+          });
+        }
       }
 
       const subscription = await prisma.userSubscription.findFirst({ where: { razorpayPaymentId: paymentId } });
-      if (subscription && subscription.paymentStatus !== 'REFUNDED') {
+      if (subscription && !subscription.refundIds.includes(refundId) && subscription.paymentStatus !== 'REFUNDED') {
+        const refundedAmountPaise = (subscription.refundedAmountPaise || 0) + amount;
+        const fullyRefunded = refundedAmountPaise >= Math.round(subscription.amountPaid * 100);
         await prisma.userSubscription.update({
           where: { id: subscription.id },
-          data: { paymentStatus: 'REFUNDED' },
+          data: {
+            refundedAmountPaise,
+            refundIds: { push: refundId },
+            ...(fullyRefunded && { paymentStatus: 'REFUNDED' }),
+          },
         });
         await createNotification({
           userId: subscription.userId,
-          title: 'Service Payment Refunded',
-          message: `Your service subscription payment of ${amountRupees} has been refunded.`,
+          title: fullyRefunded ? 'Service Payment Refunded' : 'Partial Refund Received',
+          message: fullyRefunded
+            ? `Your service subscription payment of ${amountRupees} has been refunded.`
+            : `A partial refund of ${amountRupees} has been issued against your service subscription payment.`,
           type: 'PAYMENT_REFUNDED',
           linkUrl: '/dashboard/services',
         });
@@ -281,8 +335,22 @@ async function razorpay(req, res) {
     }
   } catch (err) {
     logger.error('[RazorpayWebhook] Error processing event', { event, error: err.message });
+    // BE-5 — a processing failure (as opposed to a bad/missing signature,
+    // which already returns 400 above) now gets a real 500 instead of a
+    // blanket 200, so Razorpay's own retry mechanism actually kicks in —
+    // every handler branch above is idempotent (status-guarded updates,
+    // atomic claims, dedup-by-id checks), so a retry is safe.
+    if (eventId) {
+      await prisma.webhookEvent.updateMany({ where: { eventId }, data: { error: err.message } }).catch(() => {});
+    }
+    return res.status(500).json({ status: 'error' });
   }
 
+  if (eventId) {
+    await prisma.webhookEvent.updateMany({ where: { eventId }, data: { processedAt: new Date() } }).catch((err) => {
+      logger.warn('[RazorpayWebhook] Failed to mark event processed', { eventId, error: err.message });
+    });
+  }
   res.json({ status: 'ok' });
 }
 

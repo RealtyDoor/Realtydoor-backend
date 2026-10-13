@@ -216,14 +216,19 @@ async function refundRemaining(escrowId, note, adminId, ip) {
     throw new ApiError(502, `RazorpayX refund failed: ${err?.error?.description || err.message}`, { code: 'RAZORPAY_ERROR' });
   }
 
-  // Tier-3 (BE-6) distinguishes a partial refund (PARTIALLY_REFUNDED) from a
-  // full one — this route is new, so REFUNDED unconditionally is correct for
-  // now; BE-6 revisits this once that status exists.
+  // BE-6 — this refund closes out whatever was left (remainingPaise), so
+  // combined with whatever was already refunded before, the escrow is
+  // always FULLY refunded at this point — PARTIALLY_REFUNDED is for a
+  // refund.created webhook landing a partial amount with no further action
+  // taken yet, which doesn't apply to this route's own refund.
+  const totalRefundedPaise = (escrow.refundedAmountPaise || 0) + remainingPaise;
   const updated = await prisma.escrowTransaction.update({
     where: { id: escrowId },
     data: {
       status: 'REFUNDED',
       razorpayRefundId: refundResult.id,
+      refundedAmountPaise: totalRefundedPaise,
+      refundIds: { push: refundResult.id },
       refundedAt: new Date(),
       adminNote: `${escrow.adminNote ? `${escrow.adminNote} | ` : ''}Refunded remaining ₹${(remainingPaise / 100).toFixed(2)}: ${note}`,
     },

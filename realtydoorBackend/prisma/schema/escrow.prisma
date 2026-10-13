@@ -16,6 +16,12 @@ model EscrowTransaction {
   razorpayPayoutId   String?      // seller/primary payout
   razorpayPartnerPayoutId String? // optional second payout, when partnerDetails is given at release
   razorpayRefundId   String?
+  // BE-6 — running total + dedup for refund.created, which previously
+  // treated ANY refund amount as a full refund of the whole escrow. Summed
+  // across every refundId seen (deduped, since a redelivered webhook must
+  // not double count); REFUNDED is only set once this equals the amount.
+  refundedAmountPaise Int?      @default(0)
+  refundIds           String[]
 
   // R31 — a RazorpayX payout settles asynchronously after creation, so its
   // id alone (above) doesn't say whether the money actually landed. Status
@@ -30,6 +36,13 @@ model EscrowTransaction {
   partnerPayoutUtr    String?
 
   amount    Float
+  // BE-9 — integer paise, additive alongside the existing Float rupee
+  // fields (never a replacement — every existing API response keeps
+  // reading the rupee field unchanged). Backfilled for pre-existing rows by
+  // scripts/backfillPaise.js. Float rupees drift at the margins (49999.99
+  // stored/read back is not guaranteed bit-exact); paise is what's actually
+  // sent to Razorpay/RazorpayX, so it's the one worth keeping exact.
+  amountPaise Int?
   currency  String       @default("INR")
   // R30 — what the seller actually netted at release (amount minus whatever
   // was held back for partner/platform). Only ever set by release() itself;
@@ -38,10 +51,15 @@ model EscrowTransaction {
   // stored here, because it's a projection that can still change before the
   // real release happens.
   netAmount Float?
+  netAmountPaise Int?
   // BE-2 — the partner leg has no equivalent of netAmount's durable record;
   // without this, a retried partner payout (after the original failed) has
   // no stored amount to retry with. Set alongside netAmount at release() time.
   partnerShareAmount Float?
+  partnerSharePaise  Int?
+  // BE-9 — the platform's retained cost-recovery amount at release time, in
+  // paise (release()'s rupee platformFee is still what's shown/audited).
+  platformFeePaise Int?
 
   status      EscrowStatus @default(PAYMENT_PENDING)
   heldAt      DateTime?

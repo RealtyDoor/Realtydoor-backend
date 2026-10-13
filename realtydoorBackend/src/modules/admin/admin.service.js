@@ -2014,7 +2014,8 @@ async function adminListServices() {
 }
 
 async function adminCreateService(data) {
-  const svc = await prisma.service.create({ data });
+  // BE-9 — pricePaise alongside the existing rupee field.
+  const svc = await prisma.service.create({ data: { ...data, ...(data.price != null && { pricePaise: Math.round(data.price * 100) }) } });
   cacheDel(CACHE_KEYS.SERVICES_LIST);
   return svc;
 }
@@ -2022,7 +2023,10 @@ async function adminCreateService(data) {
 async function adminUpdateService(id, data) {
   const svc = await prisma.service.findUnique({ where: { id } });
   if (!svc) throw new ApiError(404, 'Service not found');
-  const updated = await prisma.service.update({ where: { id }, data });
+  const updated = await prisma.service.update({
+    where: { id },
+    data: { ...data, ...(data.price != null && { pricePaise: Math.round(data.price * 100) }) },
+  });
   cacheDel(CACHE_KEYS.SERVICES_LIST);
   return updated;
 }

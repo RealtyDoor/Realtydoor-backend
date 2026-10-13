@@ -1,6 +1,6 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
-const { createOrder } = require('../../lib/razorpay');
+const { razorpay, createOrder } = require('../../lib/razorpay');
 const { withCache } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 const { createNotification } = require('../../lib/notifications');
@@ -14,9 +14,25 @@ async function getAllServices() {
   }));
 }
 
+const DUPLICATE_ORDER_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 async function createServiceOrder(userId, serviceId) {
   const service = await prisma.service.findUnique({ where: { id: serviceId, isActive: true } });
   if (!service) throw new ApiError(404, 'Service not found');
+
+  // BE-7 — previously every call created a brand-new Razorpay order and
+  // UserSubscription row, so a double-click (or a retried request after a
+  // slow response) left an orphaned order/row per click. A recent,
+  // still-PENDING subscription for the same (userId, serviceId) means that
+  // attempt is still live — reuse its order instead of creating another.
+  const recentPending = await prisma.userSubscription.findFirst({
+    where: { userId, serviceId, paymentStatus: 'PENDING', startDate: { gte: new Date(Date.now() - DUPLICATE_ORDER_WINDOW_MS) } },
+    orderBy: { startDate: 'desc' },
+  });
+  if (recentPending) {
+    const razorpayOrder = await razorpay.orders.fetch(recentPending.razorpayOrderId);
+    return { subscription: recentPending, razorpayOrder, key: process.env.RAZORPAY_KEY_ID };
+  }
 
   const amountInPaise = Math.round(service.price * 100);
   const order = await createOrder(amountInPaise, `svc_${Date.now()}`);
@@ -28,6 +44,7 @@ async function createServiceOrder(userId, serviceId) {
       razorpayOrderId: order.id,
       paymentStatus: 'PENDING',
       amountPaid: service.price,
+      amountPaidPaise: amountInPaise, // BE-9
     },
   });
 
@@ -48,6 +65,29 @@ async function activateSubscription(orderId, paymentId, userId = null) {
     throw new ApiError(404, 'Subscription not found');
   }
   if (subscription.paymentStatus === 'SUCCESS') return subscription;
+
+  // BE-10 — verify path only (userId is only ever passed by the
+  // buyer-facing controller, never by the webhook), same reasoning as
+  // escrow.service.js's confirmPayment: the signature alone doesn't prove
+  // the payment was actually captured, and with auto-capture off a merely
+  // "authorized" payment could otherwise get marked SUCCESS here.
+  if (userId) {
+    let payment;
+    try {
+      payment = await razorpay.payments.fetch(paymentId);
+    } catch (err) {
+      throw new ApiError(502, 'Could not verify the payment with Razorpay. Please try again.');
+    }
+    if (payment.order_id !== orderId) {
+      throw new ApiError(400, 'This payment does not belong to this order.');
+    }
+    if (payment.status !== 'captured') {
+      throw new ApiError(409, `Payment has not been captured yet (status: ${payment.status}).`, { code: 'PAYMENT_NOT_CAPTURED' });
+    }
+    if (payment.amount !== Math.round(subscription.amountPaid * 100) || payment.currency !== 'INR') {
+      throw new ApiError(400, "This payment's amount or currency does not match the order.", { code: 'AMOUNT_MISMATCH' });
+    }
+  }
 
   const now = new Date();
   const endDate = new Date(now);

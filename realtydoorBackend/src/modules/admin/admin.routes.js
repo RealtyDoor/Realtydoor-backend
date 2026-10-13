@@ -132,9 +132,11 @@ router.get('/payout-accounts', ctrl.listPayoutAccounts);
 // Escrow (admin actions) — release/refund move real money, gated by FINANCE.
 router.patch('/escrow/:id/release', requirePermission('FINANCE'), escrowCtrl.releaseEscrow);
 router.post('/escrow/:id/refund', requirePermission('FINANCE'), escrowCtrl.refundEscrow);
-// R10 — freeze / unfreeze for dispute.
-router.post('/escrow/:id/freeze',   escrowCtrl.freezeEscrow);
-router.post('/escrow/:id/unfreeze', escrowCtrl.unfreezeEscrow);
+// R10 — freeze / unfreeze for dispute. BE-4 — FINANCE-gated, same as
+// release/refund: freezing/unfreezing changes what release()/refund() will
+// accept, so it's a money-moving-adjacent action, not a plain status flag.
+router.post('/escrow/:id/freeze',   requirePermission('FINANCE'), escrowCtrl.freezeEscrow);
+router.post('/escrow/:id/unfreeze', requirePermission('FINANCE'), escrowCtrl.unfreezeEscrow);
 router.get('/escrow', escrowCtrl.getAllEscrow);
 router.get('/escrow/stats', escrowCtrl.getEscrowStats);
 // backend-work-still-open.md #5 — owner success fees (R26) that are

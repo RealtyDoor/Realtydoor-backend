@@ -160,6 +160,7 @@ async function createOrder(leadId, buyerId, amountInRupees) {
         buyerId,
         razorpayOrderId: order.id,
         amount: amountInRupees,
+        amountPaise: amountInPaise, // BE-9
         status: 'PAYMENT_PENDING',
       },
     });
@@ -195,6 +196,35 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
   // either a redelivered webhook or a stale/out-of-order one, and must never
   // blindly flip a resolved escrow back to HELD.
   if (escrow.status !== 'PAYMENT_PENDING') return escrow;
+
+  // BE-10 — verify path only (buyerId is only ever passed by the
+  // buyer-facing controller, never by the webhook — see the comment above
+  // this function). The HMAC signature checked before this is called only
+  // proves the (orderId, paymentId, signature) triplet is authentic, not
+  // that the payment actually captured — with auto-capture off, a merely
+  // "authorized" payment could otherwise get marked HELD here. The webhook
+  // path doesn't need this: payment.captured itself only ever fires once
+  // Razorpay has actually captured the payment.
+  if (buyerId) {
+    let payment;
+    try {
+      payment = await razorpay.payments.fetch(razorpayPaymentId);
+    } catch (err) {
+      throw new ApiError(502, 'Could not verify the payment with Razorpay. Please try again.');
+    }
+    if (payment.order_id !== razorpayOrderId) {
+      throw new ApiError(400, 'This payment does not belong to this order.');
+    }
+    if (payment.status !== 'captured') {
+      // Left PAYMENT_PENDING — the webhook (once it actually captures) or
+      // paymentReconcile.js (BE-5) will finish this, same as any other
+      // not-yet-paid order.
+      throw new ApiError(409, `Payment has not been captured yet (status: ${payment.status}).`, { code: 'PAYMENT_NOT_CAPTURED' });
+    }
+    if (payment.amount !== Math.round(escrow.amount * 100) || payment.currency !== 'INR') {
+      throw new ApiError(400, "This payment's amount or currency does not match the order.", { code: 'AMOUNT_MISMATCH' });
+    }
+  }
 
   // Atomic claim, same shape as release()/refund(): this can race a webhook
   // delivery against the createOrder() resume-path self-heal hitting the same
@@ -610,7 +640,9 @@ async function release(escrowId, adminId, releaseData, ip) {
     data: {
       adminNote,
       netAmount: sellerAmount,
-      ...(partnerShare > 0 && { partnerShareAmount: partnerShare }),
+      netAmountPaise: Math.round(sellerAmount * 100), // BE-9
+      platformFeePaise: Math.round(platformFee * 100), // BE-9
+      ...(partnerShare > 0 && { partnerShareAmount: partnerShare, partnerSharePaise: Math.round(partnerShare * 100) }),
       ...(sellerPayoutId && { razorpayPayoutId: sellerPayoutId, sellerPayoutStatus: sellerPayoutStatusVal }),
       ...(partnerPayoutId && { razorpayPartnerPayoutId: partnerPayoutId, partnerPayoutStatus: partnerPayoutStatusVal }),
     },
@@ -711,7 +743,10 @@ async function getAllEscrow(filters, skip, limit) {
     }),
     prisma.escrowTransaction.count({ where }),
   ]);
-  return { data, total };
+  // BE-6 — razorpayRefundId is already a plain scalar on every row (no select
+  // restricting it above); refundedAmount is the one derived rupee figure the
+  // admin page needs on top of that, from the new refundedAmountPaise column.
+  return { data: data.map((e) => ({ ...e, refundedAmount: round2((e.refundedAmountPaise || 0) / 100) })), total };
 }
 
 // Real DB-side aggregates over the full table — the admin Escrow page's stat
@@ -770,10 +805,19 @@ async function freeze(escrowId, reason, adminId, ip) {
   if (!escrow) throw new ApiError(404, 'Escrow not found');
   if (escrow.status !== 'HELD') throw new ApiError(400, `Cannot freeze escrow with status ${escrow.status} — only a HELD escrow can be frozen`);
 
-  const updated = await prisma.escrowTransaction.update({
-    where: { id: escrowId },
+  // BE-4 — same atomic-claim pattern as release()/refund(): a read-then-write
+  // here could race a concurrent release() for the same escrow — whichever
+  // of the two writes last would silently overwrite the other (FROZEN
+  // clobbering a real RELEASED, or vice versa). The claim conditions on the
+  // status this function itself just checked, so only one of two concurrent
+  // calls can ever affect a row.
+  const claim = await prisma.escrowTransaction.updateMany({
+    where: { id: escrowId, status: 'HELD' },
     data: { status: 'FROZEN', frozenAt: new Date(), frozenReason: reason, frozenByAdminId: adminId, unfrozenAt: null },
   });
+  if (claim.count === 0) throw new ApiError(409, 'This escrow is no longer HELD — it may have just been released or refunded.', { code: 'ESCROW_STATE_CHANGED' });
+
+  const updated = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
 
   await createAuditLog({
     adminId, action: 'ESCROW_FROZEN', targetType: 'EscrowTransaction', targetId: escrowId,
@@ -790,10 +834,14 @@ async function unfreeze(escrowId, adminId, ip) {
   if (!escrow) throw new ApiError(404, 'Escrow not found');
   if (escrow.status !== 'FROZEN') throw new ApiError(400, `Escrow is not frozen (status: ${escrow.status})`);
 
-  const updated = await prisma.escrowTransaction.update({
-    where: { id: escrowId },
+  // BE-4 — same atomic claim as freeze() above.
+  const claim = await prisma.escrowTransaction.updateMany({
+    where: { id: escrowId, status: 'FROZEN' },
     data: { status: 'HELD', unfrozenAt: new Date() },
   });
+  if (claim.count === 0) throw new ApiError(409, 'This escrow is no longer FROZEN.', { code: 'ESCROW_STATE_CHANGED' });
+
+  const updated = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
 
   await createAuditLog({
     adminId, action: 'ESCROW_UNFROZEN', targetType: 'EscrowTransaction', targetId: escrowId,

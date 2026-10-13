@@ -1,0 +1,16 @@
+// ─── WEBHOOK EVENT ────────────────────────────────────────────────────────────
+// BE-5 — dedup + audit trail for inbound Razorpay/RazorpayX webhook
+// deliveries. eventId is Razorpay's own x-razorpay-event-id header; a
+// redelivery of the same id with processedAt already set is a no-op
+// (webhooks.controller.js), rather than re-running every side effect.
+
+model WebhookEvent {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  eventId     String    @unique
+  event       String
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  error       String?
+
+  @@index([processedAt])
+}

@@ -451,17 +451,45 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
     where: { id: leadId },
     select: {
       id: true, assignedPartnerId: true, commissionLockedAt: true, commissionVersion: true,
-      feePct: true, dealPriceAtLock: true, property: { select: { price: true } },
+      feePct: true, dealPriceAtLock: true, city: true, propertyId: true,
+      property: { select: { price: true, city: true, partner: { select: { partnerSubType: true } } } },
     },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
 
+  // BE-13 — city/sellerType on the error data so the FE can deep-link
+  // straight to the missing rate card/default, instead of admin having to
+  // go find it themselves. A lightweight sellerType (listing partner's own
+  // subtype, no self-listed fold) — good enough for "here's what's
+  // missing," not a substitute for previewTermsForLead's real resolution.
+  const diagnosticCity = lead.property?.city || lead.city || null;
+  const diagnosticSellerType = lead.property?.partner?.partnerSubType || 'AGENT';
+
   const effectiveFeePct = feePct ?? lead.feePct;
   if (!(effectiveFeePct > 0)) {
-    throw new ApiError(400, 'feePct is required (no default could be resolved)', { code: 'FEE_PCT_REQUIRED' });
+    throw new ApiError(400, 'feePct is required (no default could be resolved)', {
+      code: 'FEE_PCT_REQUIRED', city: diagnosticCity, sellerType: diagnosticSellerType,
+    });
   }
   const effectivePrice = dealPrice ?? lead.dealPriceAtLock ?? lead.property?.price ?? null;
   const feeAmount = effectivePrice != null ? round2((effectivePrice * effectiveFeePct) / 100) : null;
+
+  // BE-13 — mirrors FEE_PCT_REQUIRED above: no lines were submitted and
+  // there's nothing to fall back to (no rate card for this city/sellerType,
+  // no platform-wide default_partner_share_pct) — a more actionable error
+  // than resolvePartnerLines' own generic NO_COMMISSION_LINES, which says
+  // nothing about WHY nothing could be pre-filled.
+  if (!lines?.length) {
+    const [{ card }, defaultPartnerShare] = await Promise.all([
+      resolveRateCard({ propertyId: lead.propertyId, city: diagnosticCity, sellerType: diagnosticSellerType }),
+      getConfigNumber(DEFAULT_PARTNER_SHARE_PCT_KEY, null),
+    ]);
+    if (!card && defaultPartnerShare == null) {
+      throw new ApiError(400,
+        'No commission lines were given, and no rate card or platform default exists for this city/seller type to fall back to.',
+        { code: 'PARTNER_SHARE_PCT_REQUIRED', city: diagnosticCity, sellerType: diagnosticSellerType });
+    }
+  }
 
   // A line that names neither pct nor flatAmountPaise is only legal for
   // ADVISOR, and only when that advisor has a standard rate on file — filled
