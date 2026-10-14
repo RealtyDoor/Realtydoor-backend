@@ -78,10 +78,41 @@ async function retryPayout(escrowId, { leg, sellerDetails, note }, adminId, ip) 
   if (!amount) {
     throw new ApiError(400, `No ${leg} amount is on file for this escrow — nothing to retry.`, { code: 'ESCROW_NOT_PAYOUT_FAILED' });
   }
+  if (leg === 'seller' && !sellerDetails) throw new ApiError(400, 'sellerDetails is required to retry the seller payout.');
+
+  // M3 fix — the claim now runs BEFORE any fund-account/Razorpay call, and
+  // is keyed on the EXACT payoutAttempt value just read, not just on
+  // status. Previously the claim only bumped payoutAttempt AFTER creating
+  // a (seller: brand-new, ad-hoc) fund account and was keyed on status
+  // alone — two concurrent retries for the same leg both passed every
+  // check above, both created their own fund account, and BOTH claims
+  // then succeeded too (status stayed HELD_PAYOUT_FAILED between them;
+  // nothing else in the where clause changed), so both went on to create
+  // a real payout with different fund accounts/idempotency keys. Keying
+  // on payoutAttempt makes the claim genuinely exclusive: the second
+  // caller's updateMany matches zero rows once the first has already
+  // bumped it, so only one request can ever reach the Razorpay calls below.
+  //
+  // Nullable field, Mongo missing-vs-null — a row that's never been
+  // retried has payoutAttempt entirely ABSENT, not explicitly 0, so
+  // matching `null` wouldn't match it (same gotcha fixed elsewhere this
+  // session); `{ isSet: false }` is the real "still at its original,
+  // never-retried attempt" condition in that case.
+  const currentAttempt = escrow.payoutAttempt || 0;
+  const nextAttempt = currentAttempt + 1;
+  const claim = await prisma.escrowTransaction.updateMany({
+    where: {
+      id: escrowId, status: 'HELD_PAYOUT_FAILED',
+      payoutAttempt: escrow.payoutAttempt != null ? escrow.payoutAttempt : { isSet: false },
+    },
+    data: { payoutAttempt: nextAttempt },
+  });
+  if (claim.count === 0) {
+    throw new ApiError(409, 'This escrow is already being retried, or its state just changed — refresh and try again.', { code: 'ESCROW_NOT_PAYOUT_FAILED' });
+  }
 
   let fundAccountId;
   if (leg === 'seller') {
-    if (!sellerDetails) throw new ApiError(400, 'sellerDetails is required to retry the seller payout.');
     const contact = await createPayoutContact(sellerDetails.name, sellerDetails.email, sellerDetails.phone);
     const fundAccount = await createPayoutFundAccount(contact.id, sellerDetails.name, sellerDetails.ifsc, sellerDetails.accountNumber);
     await validateFundAccountOrWarn(fundAccount.id, 'seller');
@@ -98,16 +129,6 @@ async function retryPayout(escrowId, { leg, sellerDetails, note }, adminId, ip) 
     }
     fundAccountId = partner.razorpayFundAccountId;
   }
-
-  // Atomic bump of payoutAttempt, double-click safe — also what makes the
-  // idempotency key below a genuinely new one, not a dedupe against the
-  // failed attempt (see escrow.service.js's release(), BE-1).
-  const nextAttempt = (escrow.payoutAttempt || 0) + 1;
-  const claim = await prisma.escrowTransaction.updateMany({
-    where: { id: escrowId, status: 'HELD_PAYOUT_FAILED' },
-    data: { payoutAttempt: nextAttempt },
-  });
-  if (claim.count === 0) throw new ApiError(400, 'This escrow is not in a payout-failed state', { code: 'ESCROW_NOT_PAYOUT_FAILED' });
 
   const amountPaise = Math.round(amount * 100);
   // BE-1-followup — same split as release(): a short, human-readable
@@ -191,11 +212,10 @@ async function refundRemaining(escrowId, note, adminId, ip) {
   if (!escrow.razorpayPaymentId) throw new ApiError(400, 'Payment not yet captured');
 
   // Only a leg that actually reached RazorpayX's "processed" state took real
-  // money out of the collected payment — queued/pending/processing could
-  // still land, and a leg that outright failed never did.
+  // money out of the collected payment — a leg that outright failed never did.
   const legs = [];
-  if (escrow.razorpayPayoutId) legs.push({ payoutId: escrow.razorpayPayoutId, storedStatus: escrow.sellerPayoutStatus, amount: escrow.netAmount || 0 });
-  if (escrow.razorpayPartnerPayoutId) legs.push({ payoutId: escrow.razorpayPartnerPayoutId, storedStatus: escrow.partnerPayoutStatus, amount: escrow.partnerShareAmount || 0 });
+  if (escrow.razorpayPayoutId) legs.push({ leg: 'seller', payoutId: escrow.razorpayPayoutId, storedStatus: escrow.sellerPayoutStatus, amount: escrow.netAmount || 0 });
+  if (escrow.razorpayPartnerPayoutId) legs.push({ leg: 'partner', payoutId: escrow.razorpayPartnerPayoutId, storedStatus: escrow.partnerPayoutStatus, amount: escrow.partnerShareAmount || 0 });
 
   let processedPaise = 0;
   for (const l of legs) {
@@ -206,18 +226,50 @@ async function refundRemaining(escrowId, note, adminId, ip) {
     } catch (err) {
       logger.warn('[EscrowPayout] Live payout fetch failed during refund-remaining — using stored status', { payoutId: l.payoutId, error: err.message });
     }
+    // H3 fix — a leg still queued/pending/processing could still land
+    // AFTER this refund issues (it was previously treated the same as an
+    // outright-failed leg, i.e. "not paid, safe to refund the full
+    // remainder") — that's a double payment waiting to happen the moment
+    // RazorpayX finishes settling it. Refuse outright instead; the FE
+    // already disables this action while any leg is in flight, but the BE
+    // has to enforce it too.
+    if (IN_FLIGHT_STATUSES.includes(status)) {
+      throw new ApiError(409, `The ${l.leg} payout is still ${status} — wait for it to settle before refunding the remainder.`, { code: 'PAYOUT_STILL_IN_FLIGHT' });
+    }
     if (status === 'processed') processedPaise += Math.round(l.amount * 100);
   }
 
-  const remainingPaise = Math.round(escrow.amount * 100) - processedPaise;
+  // H3 fix — subtract whatever's already been refunded via refund.created
+  // too (e.g. an earlier partial refund applied from the Razorpay
+  // dashboard directly), not just processed payouts. Previously this only
+  // subtracted processedPaise, so a prior partial refund's amount was
+  // never accounted for and this route could refund more than was
+  // actually still outstanding.
+  const remainingPaise = Math.round(escrow.amount * 100) - processedPaise - (escrow.refundedAmountPaise || 0);
   if (remainingPaise <= 0) {
-    throw new ApiError(409, 'Nothing left to refund — the full amount already paid out.', { code: 'NOTHING_TO_REFUND' });
+    throw new ApiError(409, 'Nothing left to refund — the full amount already paid out or refunded.', { code: 'NOTHING_TO_REFUND' });
   }
+
+  // H3 fix — atomic claim BEFORE calling Razorpay, same pattern as
+  // refund()/release(): previously there was no claim here at all, so a
+  // double-click (or a retried request after a slow response) could pass
+  // every check above twice and call refundPayment twice.
+  const claim = await prisma.escrowTransaction.updateMany({
+    where: { id: escrowId, status: 'HELD_PAYOUT_FAILED' },
+    data: { status: 'REFUNDED', refundedAt: new Date() },
+  });
+  if (claim.count === 0) throw new ApiError(400, 'This escrow is not in a payout-failed state', { code: 'ESCROW_NOT_PAYOUT_FAILED' });
 
   let refundResult;
   try {
     refundResult = await refundPayment(escrow.razorpayPaymentId, remainingPaise);
   } catch (err) {
+    // Undo the claim so a retry after a transient Razorpay failure can
+    // still go through, same as refund()'s own rollback.
+    await prisma.escrowTransaction.update({
+      where: { id: escrowId },
+      data: { status: 'HELD_PAYOUT_FAILED', refundedAt: null },
+    });
     throw new ApiError(502, `RazorpayX refund failed: ${err?.error?.description || err.message}`, { code: 'RAZORPAY_ERROR' });
   }
 
@@ -230,11 +282,9 @@ async function refundRemaining(escrowId, note, adminId, ip) {
   const updated = await prisma.escrowTransaction.update({
     where: { id: escrowId },
     data: {
-      status: 'REFUNDED',
       razorpayRefundId: refundResult.id,
       refundedAmountPaise: totalRefundedPaise,
       refundIds: { push: refundResult.id },
-      refundedAt: new Date(),
       adminNote: `${escrow.adminNote ? `${escrow.adminNote} | ` : ''}Refunded remaining ₹${(remainingPaise / 100).toFixed(2)}: ${note}`,
     },
   });

@@ -21,6 +21,12 @@ const STATUS_DEFAULT_CODES = {
   409: 'CONFLICT',
   429: 'RATE_LIMITED',
   502: 'UPSTREAM_ERROR',
+  // L3 fix — an explicit `new ApiError(500, ...)` with no code previously
+  // fell through to the generic `HTTP_500` fallback below, a DIFFERENT
+  // code than a non-ApiError exception gets (INTERNAL_ERROR, a few lines
+  // down) — two codes for what's the same thing from the FE's perspective
+  // ("something broke server-side"). Both now resolve to INTERNAL_ERROR.
+  500: 'INTERNAL_ERROR',
 };
 
 function notFound(req, res, next) {

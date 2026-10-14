@@ -8,4 +8,10 @@ const createOrderSchema = z.object({
   serviceId: objectId,
 });
 
-module.exports = { createOrderSchema };
+// L4 fix — mirrors prisma/schema/service.prisma's category comment
+// (MAINTENANCE | CONSTRUCTION | LEGAL | LOAN | VALUATION). Previously
+// unvalidated: a typo'd ?category silently returned an empty list instead
+// of a clear error.
+const SERVICE_CATEGORIES = ['MAINTENANCE', 'CONSTRUCTION', 'LEGAL', 'LOAN', 'VALUATION'];
+
+module.exports = { createOrderSchema, SERVICE_CATEGORIES };

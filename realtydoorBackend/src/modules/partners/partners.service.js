@@ -516,14 +516,51 @@ async function createPayoutAccount(partnerId, data, kycStatus) {
   return maskPayout(updated);
 }
 
+// M5/BE-23 followup — auto-promote on KYC approval. createPayoutAccount
+// above forces a would-be-ACTIVE account to PENDING_VALIDATION purely
+// because KYC wasn't verified yet (the fund account itself already passed
+// the penny-drop check at registration time — see its kycStatus branch).
+// Without this, that promotion never happened automatically once KYC
+// later cleared; an admin had to separately remember to flip the status
+// by hand via PATCH /admin/partners/:id/payout-account/status. Called
+// from admin.service.js's verifyKyc on APPROVE. A no-op for every other
+// payoutAccountStatus (NEEDS_CLARIFICATION/SUSPENDED/unset) — those still
+// need an admin's explicit look, same as before.
+async function promotePayoutAccountOnKycApproval(partnerId) {
+  const partner = await prisma.user.findUnique({
+    where: { id: partnerId },
+    select: { payoutAccountStatus: true, razorpayFundAccountId: true },
+  });
+  if (partner?.payoutAccountStatus !== 'PENDING_VALIDATION' || !partner.razorpayFundAccountId) return;
+
+  await prisma.user.update({
+    where: { id: partnerId },
+    data: { payoutAccountStatus: 'ACTIVE', payoutAccountNote: null, payoutValidatedAt: new Date() },
+  });
+
+  await createNotification({
+    userId: partnerId,
+    title: 'Payout account approved',
+    message: 'Your KYC is verified — your payout account is now active. Escrow releases will be paid to it.',
+    type: 'PAYOUT_ACCOUNT_UPDATE',
+    linkUrl: '/partners/profile/bank',
+  });
+}
+
 // BE-14 — the way to change an ACTIVE account's bank details. createPayoutAccount
 // above still refuses outright (409 PAYOUT_ACCOUNT_EXISTS) once ACTIVE; this
 // is the only path from there. The OLD fund account stays live and in use
 // for any release until admin approves the change (setPayoutAccountStatus
 // below) — nothing here touches razorpayFundAccountId yet.
 async function requestPayoutAccountChange(partnerId, { legalName, accountNumber, ifsc, bankName, reason }) {
-  const partner = await prisma.user.findUnique({ where: { id: partnerId }, select: { id: true } });
+  const partner = await prisma.user.findUnique({ where: { id: partnerId }, select: { id: true, razorpayFundAccountId: true } });
   if (!partner) throw new ApiError(404, 'User not found');
+  // H4 fix — "change" implies there's an existing account to change. A
+  // partner with none should register one via POST /payout-account
+  // instead; this route isn't a substitute first-registration path.
+  if (!partner.razorpayFundAccountId) {
+    throw new ApiError(400, 'No payout account is registered yet — use POST /partner/payout-account to register one first.', { code: 'NO_FUND_ACCOUNT' });
+  }
 
   const existingChange = await prisma.payoutAccountChange.findFirst({ where: { partnerId, status: 'PENDING' } });
   if (existingChange) {
@@ -534,11 +571,15 @@ async function requestPayoutAccountChange(partnerId, { legalName, accountNumber,
     data: { partnerId, legalName, accountNumber, ifsc, bankName, reason },
   });
 
-  await prisma.user.update({
-    where: { id: partnerId },
-    data: { payoutAccountStatus: 'PENDING_VALIDATION', payoutAccountNote: 'Bank account change requested — pending admin review.' },
-  });
-
+  // H4 fix — deliberately NOT touching payoutAccountStatus here. It was
+  // previously flipped to PENDING_VALIDATION immediately, but release()
+  // only pays out to a partner whose payoutAccountStatus is exactly
+  // 'ACTIVE' — so submitting a change request instantly stopped payouts
+  // to the CURRENT, still-valid account, directly contradicting this same
+  // function's own notification message below ("stays active until
+  // approved"). The pending change is tracked solely via this
+  // PayoutAccountChange row; the user's status/fund account are only ever
+  // touched once admin approves it (setPayoutAccountStatus below).
   await createNotification({
     userId: partnerId,
     title: 'Payout account change submitted',
@@ -771,6 +812,7 @@ module.exports = {
   getSettings, updateSettings,
   getBankAccount, updateBankAccount, getBilling, updateBilling,
   getPayoutAccount, createPayoutAccount, requestPayoutAccountChange, setPayoutAccountStatus, listPayoutAccounts, maskPayout,
+  promotePayoutAccountOnKycApproval,
   getSupportTickets, getSupportTicketById, createSupportTicket,
   getPartnerAnalytics,
 };

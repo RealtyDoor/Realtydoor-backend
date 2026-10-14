@@ -1075,6 +1075,13 @@ async function verifyKyc(userId, action, note, adminId, ip) {
 
   if (action === 'APPROVE') {
     sendKycVerified(user.email, user).catch(() => {});
+    // M5/BE-23 followup — promote a payout account that was only ever
+    // held back by KYC (see partners.service.js's createPayoutAccount),
+    // instead of leaving it PENDING_VALIDATION until an admin separately
+    // remembers to flip it by hand.
+    partnerService.promotePayoutAccountOnKycApproval(userId).catch((err) =>
+      logger.warn('[verifyKyc] Failed to auto-promote payout account', { userId, error: err.message })
+    );
   } else {
     sendKycRejected(user.email, note, user).catch(() => {});
   }

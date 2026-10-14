@@ -37,17 +37,36 @@ async function razorpay(req, res) {
     // completed last time must not run every side effect again. Every
     // branch below is independently idempotent too, but this is the first
     // line of defense, and the one that matters once paymentReconcile.js
-    // (BE-5) starts re-fetching and replaying missed state. A duplicate
-    // create() losing the unique-index race to a concurrent delivery of the
-    // SAME event is ignored — whichever request wins owns processing it.
+    // (BE-5) starts re-fetching and replaying missed state.
+    //
+    // L1 fix — the create() itself is now the exclusive claim, not just a
+    // best-effort row insert. Previously a findUnique-then-create (losing
+    // the create's unique-index race silently via .catch(() => {})) meant
+    // two concurrent deliveries of the SAME event could both pass the
+    // findUnique check (neither had processedAt yet) and both go on to run
+    // the full handler body below — the dedup only ever prevented a
+    // duplicate ROW, never duplicate PROCESSING. Now, losing the create's
+    // unique-index race is treated as "someone else owns this delivery"
+    // and returns immediately, before any handler logic runs.
     if (eventId) {
-      const existingEvent = await prisma.webhookEvent.findUnique({ where: { eventId } });
-      if (existingEvent?.processedAt) {
-        logger.info('[RazorpayWebhook] Duplicate delivery — already processed', { eventId, event });
-        return res.json({ status: 'ok' });
-      }
-      if (!existingEvent) {
-        await prisma.webhookEvent.create({ data: { eventId, event } }).catch(() => {});
+      try {
+        await prisma.webhookEvent.create({ data: { eventId, event } });
+      } catch (err) {
+        if (err.code !== 'P2002') throw err;
+        // A row for this eventId already exists. If it's already fully
+        // processed, this is a genuine duplicate delivery — skip. If not,
+        // either a previous processing attempt failed (a legitimate retry
+        // that must NOT be swallowed — that's the entire point of BE-5's
+        // 500-on-failure) or a truly concurrent delivery is racing this
+        // one right now; either way, every handler branch below has its
+        // own atomic claim/dedup guard, so letting this proceed is a
+        // bounded residual risk, not a hole.
+        const existing = await prisma.webhookEvent.findUnique({ where: { eventId } });
+        if (existing?.processedAt) {
+          logger.info('[RazorpayWebhook] Duplicate delivery — already processed', { eventId, event });
+          return res.json({ status: 'ok' });
+        }
+        logger.info('[RazorpayWebhook] Re-processing an event that previously failed or is racing a concurrent delivery', { eventId, event });
       }
     }
 
@@ -130,7 +149,15 @@ async function razorpay(req, res) {
       // FROZEN escrow could be flipped to REFUNDED with no basis at all.
       const escrow = await prisma.escrowTransaction.findFirst({ where: { razorpayPaymentId: paymentId } });
       if (escrow && !escrow.refundIds.includes(refundId)) {
-        if (!['HELD', 'FROZEN', 'HELD_PAYOUT_FAILED'].includes(escrow.status)) {
+        // M2 fix — PARTIALLY_REFUNDED added (a second/third partial refund
+        // on the same escrow previously hit the "unexpected" branch below
+        // instead of continuing to accumulate toward REFUNDED).
+        // HELD_PAYOUT_FAILED removed — that status specifically means a
+        // payout leg already landed (see escrow.service.js's release()),
+        // so a refund arriving while HELD_PAYOUT_FAILED is itself a
+        // double-payment already in progress, not a normal refund to wave
+        // through. It needs a human, same as any other unexpected state.
+        if (!['HELD', 'FROZEN', 'PARTIALLY_REFUNDED'].includes(escrow.status)) {
           logger.warn('[RazorpayWebhook] refund.created for an escrow not in a refundable state — not touching status', { escrowId: escrow.id, status: escrow.status, refundId });
           const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
           if (admins.length > 0) {

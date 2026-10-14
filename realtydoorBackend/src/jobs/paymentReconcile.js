@@ -15,6 +15,12 @@ const { createNotification, broadcastNotification } = require('../lib/notificati
 // so re-running this on a row that's already fine is always a safe no-op.
 
 const STALE_PENDING_MS = 10 * 60 * 1000; // 10 minutes
+// L2 fix — without an upper bound, a row that never gets paid (an
+// abandoned Checkout, a buyer who gave up) got rescanned — one Razorpay
+// orders.fetch call, every 15 minutes, forever. 48h is well past any
+// realistic "buyer came back and finished paying" window; anything still
+// PENDING past that is for admin to chase manually, not this job.
+const RECONCILE_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
 const STALE_PAYOUT_MS = 60 * 60 * 1000;  // 1 hour
 const IN_FLIGHT_PAYOUT_STATUSES = ['queued', 'pending', 'processing'];
 
@@ -27,8 +33,9 @@ async function fetchCapturedPayment(orderId) {
 
 async function reconcilePendingEscrows() {
   const cutoff = new Date(Date.now() - STALE_PENDING_MS);
+  const maxAgeCutoff = new Date(Date.now() - RECONCILE_MAX_AGE_MS);
   const stale = await prisma.escrowTransaction.findMany({
-    where: { status: 'PAYMENT_PENDING', createdAt: { lte: cutoff } },
+    where: { status: 'PAYMENT_PENDING', createdAt: { lte: cutoff, gte: maxAgeCutoff } },
     select: { id: true, razorpayOrderId: true },
   });
 
@@ -53,8 +60,9 @@ async function reconcilePendingSubscriptions() {
   // subscription actually activates, so for a still-PENDING row it's the
   // original creation time.
   const cutoff = new Date(Date.now() - STALE_PENDING_MS);
+  const maxAgeCutoff = new Date(Date.now() - RECONCILE_MAX_AGE_MS);
   const stale = await prisma.userSubscription.findMany({
-    where: { paymentStatus: 'PENDING', startDate: { lte: cutoff } },
+    where: { paymentStatus: 'PENDING', startDate: { lte: cutoff, gte: maxAgeCutoff } },
     select: { id: true, razorpayOrderId: true },
   });
 

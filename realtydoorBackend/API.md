@@ -155,6 +155,7 @@ call site within that file.
 | `FLAT_AMOUNT_EXCEEDS_FEE` | 400 | `src/modules/commission/commission.service.js` |
 | `FLAT_AMOUNT_NEEDS_FEE` | 400 | `src/modules/commission/commission.service.js` |
 | `FUND_ACCOUNT_REJECTED` | 400 | `src/modules/partners/partners.service.js` |
+| `INVALID_CATEGORY` | 400 | `src/modules/services/services.controller.js` |
 | `INVALID_COMMISSION_STATUS` | 400 | `src/modules/commission/commission.service.js` |
 | `INVALID_INVOICE_STATUS` | 400 | `src/modules/projects/builderInvoice.service.js` |
 | `INVALID_STATUS` | 400 | `src/modules/escrow/escrow.controller.js` |
@@ -3439,10 +3440,11 @@ until admin approves the request.
 
 **Response `201`:** `{ "success": true, "message": "Payout account change request submitted — pending admin review", "data": { "id", "status": "PENDING", "createdAt" } }`
 
-**Errors:** `409 CHANGE_ALREADY_PENDING` — a request is already awaiting
-review. On approval (admin's status route, below), RazorpayX re-validates
-the **new** account before `razorpayFundAccountId` is swapped onto the
-partner's row.
+**Errors:** `400 NO_FUND_ACCOUNT` — no payout account is registered yet;
+use `POST /api/partner/payout-account` first. `409 CHANGE_ALREADY_PENDING`
+— a request is already awaiting review. On approval (admin's status
+route, below), RazorpayX re-validates the **new** account before
+`razorpayFundAccountId` is swapped onto the partner's row.
 
 ---
 
@@ -3615,6 +3617,9 @@ All active services in the catalog.
 **Query Parameters:** `category` (BE-8, optional) — one of `MAINTENANCE` |
 `CONSTRUCTION` | `LEGAL` | `LOAN` | `VALUATION`. The seed guarantees at
 least one active `MAINTENANCE` service always exists.
+
+**Errors:** `400 INVALID_CATEGORY` — an unrecognized value (previously
+silently returned an empty list instead).
 
 **Response `200`:**
 
