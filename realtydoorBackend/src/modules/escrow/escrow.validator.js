@@ -84,9 +84,15 @@ const retryPayoutSchema = z.object({
   note: z.string().max(500).optional(),
 });
 
+// Live-tested finding — note's presence/length requirement is deliberately
+// NOT enforced here (just typed as an optional string). escrowPayout.
+// service.js's resolvePayout already enforces 5-500 chars with the
+// specific NOTE_REQUIRED code the BE-2 spec/API.md name; a Zod min()
+// here would reject it FIRST with the generic VALIDATION_ERROR instead,
+// silently shadowing that code on every missing-note request.
 const resolvePayoutSchema = z.object({
   resolution: z.enum(['PAID_OUTSIDE', 'PAYOUT_CONFIRMED']),
-  note: z.string().min(5, 'A reason of at least 5 characters is required').max(500),
+  note: z.string().optional(),
 });
 
 const refundRemainingSchema = z.object({

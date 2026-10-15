@@ -141,7 +141,7 @@ async function retryPayout(escrowId, { leg, sellerDetails, note }, adminId, ip) 
   try {
     payout = await createPayout(fundAccountId, amountPaise, referenceId, idempotencyKeyInput);
   } catch (err) {
-    throw new ApiError(502, `RazorpayX rejected the retried ${leg} payout: ${err?.error?.description || err.message}`, { code: 'RAZORPAYX_ERROR' });
+    throw new ApiError(502, `RazorpayX rejected the retried ${leg} payout: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAYX_ERROR' });
   }
 
   const legData = leg === 'seller'
@@ -270,7 +270,10 @@ async function refundRemaining(escrowId, note, adminId, ip) {
       where: { id: escrowId },
       data: { status: 'HELD_PAYOUT_FAILED', refundedAt: null },
     });
-    throw new ApiError(502, `RazorpayX refund failed: ${err?.error?.description || err.message}`, { code: 'RAZORPAY_ERROR' });
+    // Live-tested finding — Razorpay's own error shape here has neither
+    // .error.description nor .message (a bare {statusCode, error:{}}), so
+    // without a final fallback this literally printed "...failed: undefined".
+    throw new ApiError(502, `RazorpayX refund failed: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAY_ERROR' });
   }
 
   // BE-6 — this refund closes out whatever was left (remainingPaise), so

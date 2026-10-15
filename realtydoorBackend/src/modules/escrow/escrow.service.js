@@ -145,7 +145,17 @@ async function createOrder(leadId, buyerId, amountInRupees) {
   }
 
   const amountInPaise = Math.round(amountInRupees * 100);
-  const order = await createEscrowOrder(amountInPaise, `escrow_${leadId}`);
+  // Live-tested finding — Razorpay rejects a bad/expired key pair with a
+  // plain {statusCode, error} throw (not an Error instance), which
+  // previously fell through to the generic 500 INTERNAL_ERROR instead of
+  // a proper 502 — same wrapping already applied to release()/refund()/
+  // confirmPayment() elsewhere in this file.
+  let order;
+  try {
+    order = await createEscrowOrder(amountInPaise, `escrow_${leadId}`);
+  } catch (err) {
+    throw new ApiError(502, `Could not create the Razorpay order: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAY_ERROR' });
+  }
 
   // The findFirst check above has the same TOCTOU race as every other
   // check-then-write in this codebase — two concurrent requests for the same

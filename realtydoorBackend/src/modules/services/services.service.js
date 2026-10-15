@@ -35,13 +35,28 @@ async function createServiceOrder(userId, serviceId) {
     where: { userId, serviceId, paymentStatus: 'PENDING', startDate: { gte: new Date(Date.now() - DUPLICATE_ORDER_WINDOW_MS) } },
     orderBy: { startDate: 'desc' },
   });
+  // Live-tested finding — Razorpay rejects a bad/expired key pair with a
+  // plain {statusCode, error} throw (not an Error instance), which
+  // previously fell through to the generic 500 INTERNAL_ERROR instead of
+  // a proper 502 RAZORPAY_ERROR. Only the Razorpay calls themselves are
+  // wrapped — a Prisma error just below must not be mislabeled as one.
   if (recentPending) {
-    const razorpayOrder = await razorpay.orders.fetch(recentPending.razorpayOrderId);
+    let razorpayOrder;
+    try {
+      razorpayOrder = await razorpay.orders.fetch(recentPending.razorpayOrderId);
+    } catch (err) {
+      throw new ApiError(502, `Could not fetch the existing Razorpay order: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAY_ERROR' });
+    }
     return { subscription: recentPending, razorpayOrder, key: process.env.RAZORPAY_KEY_ID };
   }
 
   const amountInPaise = Math.round(service.price * 100);
-  const order = await createOrder(amountInPaise, `svc_${Date.now()}`);
+  let order;
+  try {
+    order = await createOrder(amountInPaise, `svc_${Date.now()}`);
+  } catch (err) {
+    throw new ApiError(502, `Could not create the Razorpay order: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAY_ERROR' });
+  }
 
   const subscription = await prisma.userSubscription.create({
     data: {
