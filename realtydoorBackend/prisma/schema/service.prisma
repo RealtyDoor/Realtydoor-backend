@@ -59,7 +59,16 @@ model UserSubscription {
   amountPaidPaise   Int?
   currency          String   @default("INR")
   startDate         DateTime @default(now())
-  endDate           DateTime
+  // Live-tested finding — this was `DateTime` (required, no default) with
+  // no value ever supplied at creation (createServiceOrder creates a
+  // PENDING row before the subscription term even starts — there's
+  // nothing real to put here yet). Every service purchase's order
+  // creation succeeded against Razorpay, then crashed on this exact
+  // Prisma validation error the moment it tried to persist the PENDING
+  // row — a pre-existing bug, not introduced this session. Nullable now;
+  // activateSubscription still sets the real value once the subscription
+  // actually activates (startDate + endDate are set together there).
+  endDate           DateTime?
   // BE-6 — same dedup/running-total tracking as EscrowTransaction.
   refundedAmountPaise Int?     @default(0)
   refundIds           String[]
