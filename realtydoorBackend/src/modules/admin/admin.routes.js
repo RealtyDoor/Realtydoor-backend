@@ -20,7 +20,24 @@ const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { requirePermission } = require('../../middleware/requirePermission');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
-const { videoTourUploader } = require('../../lib/fileUpload');
+const { videoTourUploader, buildMulter, IMAGE_FORMATS } = require('../../lib/fileUpload');
+const ApiError = require('../../utils/ApiError');
+
+// CMS image upload — a bare `multer()` instance (not the buildUploader()
+// factory the other uploaders use), per the spec: no S3 folder is implied
+// by a route/entity here, since this must work for an unsaved blog post
+// (no post id yet to hang the upload off of). multer's own errors (a
+// rejected file type from buildMulter's fileFilter, or the 10MB
+// LIMIT_FILE_SIZE) are plain Errors/MulterErrors, not ApiError — left
+// alone, they'd hit errorHandler.js's generic 500 INTERNAL_ERROR path
+// instead of the clean, readable 400 the spec calls for.
+const contentImageUpload = buildMulter(IMAGE_FORMATS, 10);
+function uploadContentImageMiddleware(req, res, next) {
+  contentImageUpload.single('image')(req, res, (err) => {
+    if (err) return next(new ApiError(400, err.message));
+    next();
+  });
+}
 
 router.use(authenticate, requireAdmin, perUserLimiter);
 
@@ -161,6 +178,9 @@ router.get('/content/:id',    cmsCtrl.getByIdForAdmin);
 router.post('/content',       cmsCtrl.create);
 router.patch('/content/:id',  cmsCtrl.update);
 router.delete('/content/:id', cmsCtrl.remove);
+// Not tied to a post id — works for an unsaved post; the editor PATCHes
+// imageUrl onto the post separately once it has one.
+router.post('/content/upload-image', uploadContentImageMiddleware, cmsCtrl.uploadImage);
 
 // Notifications
 router.post('/notifications/broadcast', notifCtrl.broadcast);

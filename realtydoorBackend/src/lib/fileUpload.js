@@ -140,4 +140,6 @@ module.exports = {
   partnerProfilePhotoUploader,
   deleteFile,
   s3Upload,
+  buildMulter,
+  IMAGE_FORMATS,
 };

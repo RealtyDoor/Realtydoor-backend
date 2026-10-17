@@ -65,4 +65,12 @@ async function remove(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { getPublished, getBySlug, getAllForAdmin, getByIdForAdmin, create, update, remove };
+async function uploadImage(req, res, next) {
+  try {
+    if (!req.file) throw new ApiError(400, 'Image is required');
+    const result = await service.uploadImage(req.file);
+    success(res, result);
+  } catch (err) { next(err); }
+}
+
+module.exports = { getPublished, getBySlug, getAllForAdmin, getByIdForAdmin, create, update, remove, uploadImage };

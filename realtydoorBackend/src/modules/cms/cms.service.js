@@ -2,6 +2,17 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { withCache, cacheDel, cacheDelPattern } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
+const { s3Upload } = require('../../lib/fileUpload');
+
+// CMS image upload spec — not tied to a post id, so it works for an
+// unsaved post (the editor PATCHes imageUrl onto the post once it has
+// one). Deliberately writes nothing to the DB and clears no cache — this
+// is pure file storage, the same as any other S3 upload helper in this
+// codebase.
+async function uploadImage(file) {
+  const { url } = await s3Upload(file.buffer, 'blog', file.originalname, file.mimetype);
+  return { url };
+}
 
 async function getPublished(type, skip, limit) {
   return withCache(CACHE_KEYS.blogList(type, skip, limit), 600, async () => {
@@ -79,4 +90,4 @@ async function remove(id) {
   return deleted;
 }
 
-module.exports = { getPublished, getBySlug, getAllForAdmin, getByIdForAdmin, create, update, remove };
+module.exports = { getPublished, getBySlug, getAllForAdmin, getByIdForAdmin, create, update, remove, uploadImage };

@@ -8199,6 +8199,30 @@ Delete a CMS content block.
 
 ---
 
+### POST /api/admin/content/upload-image
+
+Uploads an image to S3 for use as a blog post's featured image. Not tied to
+a post id — works for an unsaved post in the editor; the `url` this
+returns is saved onto the post later via `PATCH /api/admin/content/:id`'s
+`imageUrl` field. Writes nothing to the DB and clears no cache itself.
+
+**Auth:** ADMIN
+
+**Request:** `multipart/form-data`, a single file in the field `image`.
+Allowed types: `jpg`, `jpeg`, `png`, `webp`. Max size: 10MB.
+
+**Response `200`:**
+
+```json
+{ "success": true, "message": "Success", "data": { "url": "https://<bucket>.s3.<region>.amazonaws.com/blog/<uuid>.jpg" } }
+```
+
+**Errors:** `400` — no file provided ("Image is required"), or the file's
+type/size was rejected (readable message, e.g. "File type .gif not
+allowed. Accepted: jpg, jpeg, png, webp").
+
+---
+
 ### GET /api/admin/tickets
 
 All support tickets (paginated).
