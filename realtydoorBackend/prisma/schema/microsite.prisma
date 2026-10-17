@@ -1,0 +1,21 @@
+// ─── MICROSITE ────────────────────────────────────────────────────────────────
+// A standalone public page for one APPROVED property, served at
+// /m/<slug> — no site navigation, just that property's gallery, price,
+// facts, description, amenities, map and an enquiry CTA. Admin picks the
+// slug; it's independent of Property.slug (the two may differ).
+//
+// Approval gates visibility (see microsite.service.js): the row survives a
+// property leaving APPROVED (rejected/archived/back to pending) so it
+// automatically starts resolving again if the property is re-approved —
+// un-approval never deletes the microsite.
+
+model Microsite {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  propertyId String   @unique @db.ObjectId // one microsite per property
+  property   Property @relation(fields: [propertyId], references: [id])
+  slug       String   @unique // always stored lowercase
+  enabled    Boolean  @default(true)
+  createdBy  String   @db.ObjectId
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}

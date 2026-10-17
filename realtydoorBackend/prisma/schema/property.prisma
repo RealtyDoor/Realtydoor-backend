@@ -180,6 +180,7 @@ model Property {
   conflicts           ListingConflict[]
   checklistDocuments  PropertyDocument[]
   ownerConfirmations  OwnerConfirmation[]
+  microsite           Microsite?
 
   @@index([publishStatus, isB2BOnly])
   @@index([partnerId])

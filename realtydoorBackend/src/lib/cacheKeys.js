@@ -18,4 +18,6 @@ module.exports = {
   blogList: (type, skip, limit) => `cache:blog:list:${type || 'all'}:${skip}:${limit}`,
   blogSlug: (slug) => `cache:blog:slug:${slug}`,
   BLOG_LIST_PATTERN: 'cache:blog:list:*',
+  // Microsites spec — FE revalidates every 60s, so the TTL matches that.
+  micrositeSlug: (slug) => `cache:microsite:slug:${slug}`,
 };

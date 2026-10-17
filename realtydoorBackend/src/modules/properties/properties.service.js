@@ -190,7 +190,12 @@ function withValuePresence(where, field, present) {
 // here outright (findUnique only ever matched slug). Same
 // approved-only/not-B2B-only rules either way — this is not a back door to
 // an unpublished or B2B-only listing via its id.
-async function getPropertyByIdOrSlug(idOrSlug) {
+// Microsites spec — a microsite view must NOT count toward the property's
+// own viewsThisWeek (spec: "count them separately so listing analytics
+// aren't skewed" — decided not to count microsite views at all for now).
+// countView defaults to true so the one existing caller (the real property
+// detail page) is unaffected.
+async function getPropertyByIdOrSlug(idOrSlug, { countView = true } = {}) {
   const property = await prisma.property.findFirst({
     where: {
       publishStatus: 'APPROVED',
@@ -216,10 +221,12 @@ async function getPropertyByIdOrSlug(idOrSlug) {
 
   // Fire-and-forget — a view counter shouldn't add latency to the page load,
   // and a lost increment under a race is harmless for this metric.
-  prisma.property.update({
-    where: { id: property.id },
-    data: { viewsThisWeek: { increment: 1 } },
-  }).catch(() => {});
+  if (countView) {
+    prisma.property.update({
+      where: { id: property.id },
+      data: { viewsThisWeek: { increment: 1 } },
+    }).catch(() => {});
+  }
 
   const [peers, localityInsight] = await Promise.all([
     prisma.property.findMany({

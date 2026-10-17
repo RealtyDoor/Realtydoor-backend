@@ -16,10 +16,12 @@ const locationCtrl = require('../listings/location.controller');
 const checklistCtrl = require('../listings/checklist.controller');
 const projectCtrl = require('../projects/project.controller');
 const builderInvoiceCtrl = require('../projects/builderInvoice.controller');
+const micrositeCtrl = require('../microsites/microsite.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { requirePermission } = require('../../middleware/requirePermission');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
+const { validateObjectId } = require('../../middleware/validateObjectId');
 const { videoTourUploader, buildMulter, IMAGE_FORMATS } = require('../../lib/fileUpload');
 const ApiError = require('../../utils/ApiError');
 
@@ -181,6 +183,15 @@ router.delete('/content/:id', cmsCtrl.remove);
 // Not tied to a post id — works for an unsaved post; the editor PATCHes
 // imageUrl onto the post separately once it has one.
 router.post('/content/upload-image', uploadContentImageMiddleware, cmsCtrl.uploadImage);
+
+// Microsites — standalone public property pages (/m/<slug>). Writes are
+// gated the same as properties (LISTINGS), since a microsite is an
+// extension of a listing; reads use the router's own authenticate +
+// requireAdmin only, same as the CMS /content routes above.
+router.get('/microsites',          micrositeCtrl.listForAdmin);
+router.post('/microsites',         requirePermission('LISTINGS'), micrositeCtrl.create);
+router.patch('/microsites/:id',    requirePermission('LISTINGS'), validateObjectId('id'), micrositeCtrl.update);
+router.delete('/microsites/:id',   requirePermission('LISTINGS'), validateObjectId('id'), micrositeCtrl.remove);
 
 // Notifications
 router.post('/notifications/broadcast', notifCtrl.broadcast);

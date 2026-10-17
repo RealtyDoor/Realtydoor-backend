@@ -26,6 +26,7 @@ const { buildTicketChargeReceiptPdf } = require('../../lib/pdfReceipt');
 const { s3Upload } = require('../../lib/fileUpload');
 const { getConfigNumber } = require('../config/config.service');
 const { distanceMetres } = require('../../lib/mapLink');
+const { invalidateCacheForPropertyStatusChange: invalidateMicrositeCache } = require('../microsites/microsite.service');
 const {
   ADMIN_PERMISSION_SCOPES, ADMIN_STAFF_ROLES, DEFAULT_PERMISSIONS_BY_STAFF_ROLE,
 } = require('../../utils/adminPermissions');
@@ -862,6 +863,7 @@ async function approveProperty(propertyId, adminId, ip, visibility = {}) {
   if (property.partner) sendPropertyApproved(property.partner.email, property.title, property.partner).catch(() => {});
   cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
   cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
+  invalidateMicrositeCache(propertyId).catch(() => {});
   return updated;
 }
 
@@ -891,6 +893,7 @@ async function rejectProperty(propertyId, note, adminId, ip) {
   if (property.partner) sendPropertyRejected(property.partner.email, property.title, note, property.partner).catch(() => {});
   cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
   cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
+  invalidateMicrositeCache(propertyId).catch(() => {});
   return updated;
 }
 

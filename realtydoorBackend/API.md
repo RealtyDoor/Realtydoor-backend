@@ -6847,6 +6847,30 @@ Public. Returns `404` for anything not currently `APPROVED` — same as a
 
 ---
 
+### GET /api/microsites/:slug
+
+Public, no auth. Returns the full standalone-page data for one property
+microsite — a property reached by its own admin-chosen slug rather than
+the property's own slug, served by the frontend at `/m/<slug>`. Reuses the
+exact same property payload `GET /api/properties/:idOrSlug` returns (same
+`APPROVED` + `!isB2BOnly` gating, same safe partner fetch), plus
+`micrositeSlug`. Does **not** increment the property's `viewsThisWeek` —
+microsite views aren't counted.
+
+`:slug` is matched case-sensitively as stored (always lowercase); a
+disabled microsite (`enabled: false`), a deleted microsite, or a microsite
+whose property is no longer `APPROVED` or is `isB2BOnly` all return the
+same `404`. Cached 60s per slug.
+
+**Response `200`:** the property object (same shape as
+`GET /api/properties/:idOrSlug`) plus `"micrositeSlug": "<slug>"`.
+
+**Errors:** `404` — `"Property not found"` (same message/shape for every
+reason above, so the public page can't distinguish "never existed" from
+"paused" from "property no longer approved").
+
+---
+
 ### POST /api/partner/projects
 
 Builder submits a new project. Lands `PENDING_APPROVAL`, invisible publicly.
@@ -8220,6 +8244,103 @@ Allowed types: `jpg`, `jpeg`, `png`, `webp`. Max size: 10MB.
 **Errors:** `400` — no file provided ("Image is required"), or the file's
 type/size was rejected (readable message, e.g. "File type .gif not
 allowed. Accepted: jpg, jpeg, png, webp").
+
+---
+
+### GET /api/admin/microsites
+
+List microsites (paginated, newest first). Not filtered by permission
+scope beyond the router's blanket `ADMIN` auth.
+
+**Auth:** ADMIN
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `page` | number | Default: `1` |
+| `limit` | number | Default: `50` (higher than most admin lists, since the frontend reads one page) |
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "items": [
+      { "id": "...", "propertyId": "...", "slug": "whitefield-3bhk-villa", "enabled": true, "createdAt": "..." }
+    ],
+    "total": 1,
+    "page": 1,
+    "limit": 50
+  }
+}
+```
+
+---
+
+### POST /api/admin/microsites
+
+Create a microsite for an `APPROVED` property. One microsite per
+property; the slug is independent of the property's own slug.
+
+**Auth:** ADMIN, permission `LISTINGS`
+
+**Request Body:**
+
+```json
+{ "propertyId": "<ObjectId>", "slug": "whitefield-3bhk-villa" }
+```
+
+`slug`: 3-60 chars, lowercase letters/digits/single-hyphens only
+(`^[a-z0-9]+(?:-[a-z0-9]+)*$`), lowercased automatically before validation
+(`Villa-X` and `villa-x` are the same slug). Rejects the reserved words
+`admin`, `api`, `new`, `edit`, `search`, `properties`, `partners`, `user`.
+
+**Response `201`:** the created microsite row.
+
+**Errors:**
+- `400` — property not `APPROVED` (current status is named in the message), or slug fails validation.
+- `404` — property not found.
+- `409 SLUG_TAKEN` — another microsite already uses this slug.
+- `409 MICROSITE_EXISTS` — this property already has a microsite.
+
+---
+
+### PATCH /api/admin/microsites/:id
+
+Update a microsite's `slug` and/or `enabled` flag. At least one field is
+required.
+
+**Auth:** ADMIN, permission `LISTINGS`
+
+**Request Body:** `{ "slug": "new-slug" }` and/or `{ "enabled": false }`
+
+Changing the slug kills the old URL immediately — the old slug 404s as
+soon as this returns, the new one resolves right away (cache is cleared
+for both). Setting `enabled: false` hides the microsite publicly (`404`)
+while it stays visible in the admin list.
+
+**Response `200`:** the updated microsite row.
+
+**Errors:**
+- `400` — invalid `:id`, or neither `slug` nor `enabled` provided, or slug fails validation.
+- `404` — microsite not found.
+- `409 SLUG_TAKEN` — the new slug is already taken by another microsite.
+
+---
+
+### DELETE /api/admin/microsites/:id
+
+Delete a microsite. The property itself is untouched; its public property
+page (if any) is unaffected — only the `/m/<slug>` URL stops resolving.
+
+**Auth:** ADMIN, permission `LISTINGS`
+
+**Response `204`:** _(no body)_
+
+**Errors:** `400` — invalid `:id`. `404` — microsite not found.
 
 ---
 
