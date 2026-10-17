@@ -1,7 +1,20 @@
 const { z } = require('zod');
-const { objectId, roleEnum } = require('../../utils/validators');
+const { objectId, roleEnum, userStatusEnum } = require('../../utils/validators');
 const { phoneField } = require('../../lib/phoneUtils');
 const { ADMIN_PERMISSION_SCOPES, ADMIN_STAFF_ROLES } = require('../../utils/adminPermissions');
+
+// GET /admin/users — previously req.query went straight to getAllUsers with
+// no validation at all, so `status`/`isNRI` were silently ignored (the
+// service only ever read `role`/`search`) rather than rejected or applied.
+// isNRI is 'true'/'false' as a query string, not a real boolean — z.coerce.
+// boolean() would treat ANY non-empty string (including the literal text
+// "false") as true, which is exactly wrong here.
+const getUsersQuerySchema = z.object({
+  role: roleEnum.optional(),
+  status: userStatusEnum.optional(),
+  isNRI: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
+  search: z.string().trim().min(1).max(100).optional(),
+});
 
 // 6.4a — admin logs a lead that came in off-platform. Either propertyId (a
 // live listing) or propertyInterest (free text, when the property isn't
@@ -330,6 +343,7 @@ const updateRoutingRuleSchema = z.object({
 );
 
 module.exports = {
+  getUsersQuerySchema,
   assignLeadSchema,
   createLeadSchema,
   confirmLeadSchema,

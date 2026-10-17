@@ -11,6 +11,7 @@ const {
 const { sendLeadAssignedNotice, sendSiteVisitOtp } = require('../../lib/wati');
 const { setUserRole } = require('../../lib/clerkAdmin');
 const { ROLES } = require('../../utils/validators');
+const { normalizePhone } = require('../../lib/phoneUtils');
 const { nextRefCode } = require('../../lib/refCode');
 const { stalledInfoFor } = require('../leads/leads.service');
 const { CONTACT_STATUSES } = require('../contact/contact.admin.validator');
@@ -1355,6 +1356,15 @@ async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields 
 
 // ─── USER MANAGEMENT ─────────────────────────────────────────────────────────
 
+// User.prisma has no `status` column — derived from isSuspended/phoneVerified
+// (see utils/validators.js's USER_STATUSES, the single source of truth for
+// the three values this endpoint recognizes). Mirrors deriveUserStatus below.
+function deriveUserStatus(user) {
+  if (user.isSuspended) return 'SUSPENDED';
+  if (!user.phoneVerified) return 'PHONE_UNVERIFIED';
+  return 'ACTIVE';
+}
+
 async function getAllUsers(filters, skip, limit) {
   // Soft-deleted rows (clerk.handler.js's user.deleted) are kept only to
   // preserve foreign keys on records they used to own — they should never
@@ -1362,24 +1372,69 @@ async function getAllUsers(filters, skip, limit) {
   // every pre-existing row has the field missing entirely (added after they
   // were created), and a plain `null` filter only matches an *explicit*
   // null, so it would have matched zero rows and emptied this whole list.
-  const where = { deletedAt: { isSet: false } };
-  if (filters.role)   where.role = filters.role;
-  if (filters.search) where.OR   = [
-    { name:    { contains: filters.search, mode: 'insensitive' } },
-    { email:   { contains: filters.search, mode: 'insensitive' } },
-    { refCode: { contains: filters.search, mode: 'insensitive' } },
-  ];
+  // Built without `status` — the status tab is layered on separately below,
+  // since the same base (role/isNRI/search) also drives the per-tab
+  // summary counts, which must NOT themselves be scoped to one tab.
+  const baseWhere = { deletedAt: { isSet: false } };
+  if (filters.role) baseWhere.role = filters.role;
+  if (filters.isNRI !== undefined) baseWhere.isNRI = filters.isNRI;
 
-  const [data, total] = await Promise.all([
+  if (filters.search) {
+    // refCode/name/email all do a case-insensitive substring match. Phone
+    // is different: numbers are stored in E.164 (phoneUtils.js's
+    // phoneField, applied at signup) but admins type a bare national
+    // number — normalizePhone resolves a COMPLETE number to the same
+    // E.164 form for an exact match, while a partial fragment (e.g.
+    // "9000000") fails to normalize (it isn't a valid number) and falls
+    // back to a plain digits-only substring match instead. Normalizing a
+    // partial number to a full +91… form isn't possible — there's nothing
+    // to pad it with — so the two paths are deliberately not merged into one.
+    const normalizedPhone = normalizePhone(filters.search);
+    const digitsOnly = filters.search.replace(/\D/g, '');
+    baseWhere.OR = [
+      { name:    { contains: filters.search, mode: 'insensitive' } },
+      { email:   { contains: filters.search, mode: 'insensitive' } },
+      { refCode: { contains: filters.search, mode: 'insensitive' } },
+      ...(normalizedPhone ? [{ phone: normalizedPhone }] : []),
+      // Guarded to 4+ digits — a shorter fragment would match an
+      // unreasonably large slice of the phone index for little benefit.
+      ...(!normalizedPhone && digitsOnly.length >= 4 ? [{ phone: { contains: digitsOnly } }] : []),
+    ];
+  }
+
+  const where = { ...baseWhere };
+  if (filters.status === 'SUSPENDED') {
+    where.isSuspended = true;
+  } else if (filters.status === 'PHONE_UNVERIFIED') {
+    where.phoneVerified = false;
+  } else if (filters.status === 'ACTIVE') {
+    where.isSuspended = false;
+    where.phoneVerified = true;
+  }
+
+  const [data, total, suspendedCount, phoneUnverifiedCount, activeCount] = await Promise.all([
     prisma.user.findMany({
       where, skip, take: limit,
-      select: { id: true, refCode: true, name: true, email: true, phone: true, phoneVerified: true, role: true, kycStatus: true, partnerSubType: true, createdAt: true },
+      select: {
+        id: true, refCode: true, name: true, email: true, phone: true, phoneVerified: true,
+        role: true, kycStatus: true, partnerSubType: true, isNRI: true, isSuspended: true, createdAt: true,
+      },
       orderBy: { createdAt: 'desc' },
     }),
     prisma.user.count({ where }),
+    // Summary — per-status counts for the filter tabs, scoped to the SAME
+    // role/isNRI/search filters but deliberately NOT the status filter
+    // itself, so switching tabs doesn't reset what the other tabs show.
+    prisma.user.count({ where: { ...baseWhere, isSuspended: true } }),
+    prisma.user.count({ where: { ...baseWhere, phoneVerified: false } }),
+    prisma.user.count({ where: { ...baseWhere, isSuspended: false, phoneVerified: true } }),
   ]);
 
-  return { data, total };
+  return {
+    data: data.map((u) => ({ ...u, status: deriveUserStatus(u) })),
+    total,
+    summary: { active: activeCount, suspended: suspendedCount, phoneUnverified: phoneUnverifiedCount },
+  };
 }
 
 async function changeUserRole(targetUserId, newRole, adminId, ip) {

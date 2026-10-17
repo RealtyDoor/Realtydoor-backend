@@ -2,6 +2,7 @@ const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./admin.service');
 const {
+  getUsersQuerySchema,
   assignLeadSchema,
   createLeadSchema,
   confirmLeadSchema,
@@ -283,8 +284,9 @@ async function getPartnerMetrics(req, res, next) {
 async function getUsers(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
-    const { data, total } = await service.getAllUsers(req.query, skip, limit);
-    success(res, paginate(data, total, page, limit));
+    const filters = getUsersQuerySchema.parse(req.query);
+    const { data, total, summary } = await service.getAllUsers(filters, skip, limit);
+    success(res, { ...paginate(data, total, page, limit), summary });
   } catch (err) { next(err); }
 }
 
