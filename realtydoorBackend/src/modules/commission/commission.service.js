@@ -819,13 +819,31 @@ async function listFeesDue(skip, limit) {
         id: true, refCode: true, buyerName: true, commissionStatus: true,
         feePct: true, dealPriceAtLock: true, commissionAmountPaise: true,
         invoiceUrl: true, invoicedAt: true,
-        property: { select: { id: true, title: true, partnerId: true, partner: { select: { name: true, companyName: true } } } },
+        // Not `partner: { select: {...} } }` nested here — Property.partner
+        // is a required relation, so Prisma throws ("Field partner is
+        // required to return data, got null instead") the moment one lead's
+        // property belongs to a hard-deleted partner, instead of returning
+        // null. Fetched separately below, same fix as fetchPropertyWithPartner
+        // in admin.service.js / the safe partner fetch in properties.service.js.
+        property: { select: { id: true, title: true, partnerId: true } },
         feeReminders: { orderBy: { createdAt: 'desc' }, select: { id: true, sentByAdminId: true, createdAt: true } },
       },
     }),
     prisma.lead.count({ where }),
   ]);
-  return { data: rows, total };
+
+  const partnerIds = [...new Set(rows.map((r) => r.property?.partnerId).filter(Boolean))];
+  const partners = partnerIds.length
+    ? await prisma.user.findMany({ where: { id: { in: partnerIds } }, select: { id: true, name: true, companyName: true } })
+    : [];
+  const partnerById = new Map(partners.map((p) => [p.id, p]));
+
+  const data = rows.map((r) => ({
+    ...r,
+    property: r.property ? { ...r.property, partner: partnerById.get(r.property.partnerId) || null } : null,
+  }));
+
+  return { data, total };
 }
 
 async function sendFeeReminder(leadId, adminId, ip) {
