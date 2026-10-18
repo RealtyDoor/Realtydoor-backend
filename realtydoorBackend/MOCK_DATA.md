@@ -205,18 +205,24 @@ it were complete.
 ---
 
 **Current state of real locality data on this server**, updated 2026-10-18:
-16 `LocalityInsight` rows, all in Bengaluru (Kanakapura Road, Whitefield,
-Koramangala, Indiranagar, Electronic City, Sarjapur Road, HSR Layout,
-JP Nagar, Marathahalli, Yelahanka, Bellandur, Jayanagar, Hebbal,
-Banashankari, Rajajinagar, BTM Layout), each with the full market-
+25 `LocalityInsight` rows across six cities — 16 in Bengaluru (Kanakapura
+Road, Whitefield, Koramangala, Indiranagar, Electronic City, Sarjapur
+Road, HSR Layout, JP Nagar, Marathahalli, Yelahanka, Bellandur, Jayanagar,
+Hebbal, Banashankari, Rajajinagar, BTM Layout) and 9 in Andhra Pradesh —
+Visakhapatnam (MVP Colony, Madhurawada), Vijayawada (Benz Circle,
+Governorpet), Guntur (Lakshmipuram, Brodipet), Amaravati (Capital Region),
+Tirupati (Town Centre, Renigunta Road). Each has the full market-
 intelligence section filled in from real research (price trends,
 connectivity, infrastructure projects, pros/cons, investment score, FAQs,
-headline/about/mapCenter/lastReviewedBy, livability/localTruth wherever a
-genuine sourced basis was found). Pune rows and the earlier MockQA Layout
-locality-page fixture were removed — Pune isn't required for this product;
-Andhra Pradesh coverage is pending. Sourcing and what was deliberately left
-out for lack of a reliable figure is in this session's research notes, not
-repeated here — ask if you need the citation trail for a specific field.
+headline/about/imageUrl/mapCenter/lastReviewedBy, livability/localTruth
+wherever a genuine sourced basis was found — several AP localities,
+especially Amaravati and Governorpet, have thinner portal coverage than
+the Bengaluru set, so more fields are genuinely `null` there, not
+withheld). Pune rows and the earlier MockQA Layout locality-page fixture
+were removed — Pune isn't required for this product. Sourcing and what
+was deliberately left out for lack of a reliable figure is in this
+session's research notes, not repeated here — ask if you need the
+citation trail for a specific field.
 
 Six property localities with live listings still have no `LocalityInsight`
 row at all and return `404` from both `/insight` and `/page`: `Hoskote`,
