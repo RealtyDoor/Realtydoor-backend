@@ -223,6 +223,10 @@ enum DisputeStatus {
 enum SupportTicketStatus {
   OPEN
   IN_PROGRESS
+  // Admin partner-ticket admin endpoints — set automatically when adminReply
+  // is written and no other status was explicitly given. Only PartnerSupportTicket
+  // uses this enum, so adding a value here can't affect anything else.
+  ANSWERED
   RESOLVED
   CLOSED
 }

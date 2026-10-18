@@ -3606,6 +3606,82 @@ Single support ticket detail.
 
 ---
 
+### GET /api/admin/partner-support-tickets
+
+Admin view of every partner's support ticket (not scoped to one partner, unlike the `/partner/support-tickets` endpoints above).
+
+**Auth:** ADMIN
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `status` | string | `OPEN` \| `IN_PROGRESS` \| `ANSWERED` \| `RESOLVED` \| `CLOSED` |
+| `category` | string | `LEAD` \| `ESCROW` \| `LISTING` \| `PAYMENT` \| `GENERAL` |
+| `search` | string | Matches ticket number, subject, or the partner's name/phone |
+| `page` | number | Default: `1` |
+| `limit` | number | Default: `20` |
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "data": [
+      {
+        "id": "64tkt...",
+        "ticketNo": "SUP-1042",
+        "subject": "Escrow release delayed for D-0038",
+        "description": "The deal was closed 5 days ago but the escrow has not been released yet.",
+        "category": "ESCROW",
+        "status": "OPEN",
+        "adminReply": null,
+        "repliedAt": null,
+        "resolvedAt": null,
+        "createdAt": "2024-06-27T00:00:00.000Z",
+        "partner": { "id": "64usr...", "name": "Ramesh Kumar", "phone": "+919000000001", "email": "ramesh@example.com" }
+      }
+    ],
+    "pagination": { "total": 42, "page": 1, "limit": 20, "totalPages": 3, "hasNext": true, "hasPrev": false },
+    "statusCounts": { "OPEN": 12, "IN_PROGRESS": 3, "ANSWERED": 8, "RESOLVED": 18, "CLOSED": 1 }
+  }
+}
+```
+
+`statusCounts` is scoped to the same `category`/`search` filters but **not** `status`, so the tab counts don't reset to the filtered total once a tab is selected — same behavior as `GET /api/admin/contact`. `partner` is `null` if the partner account no longer exists (hard-deleted) rather than the request failing.
+
+---
+
+### GET /api/admin/partner-support-tickets/:id
+
+Single ticket, same shape as one row above.
+
+**Auth:** ADMIN
+
+**Errors:** `400` invalid `:id` · `404` ticket not found.
+
+---
+
+### PATCH /api/admin/partner-support-tickets/:id
+
+Reply to and/or change the status of a partner's ticket.
+
+**Auth:** ADMIN, permission `TICKETS`
+
+**Request Body:** `{ "status"?: "...", "adminReply"?: "..." }` — at least one required.
+
+Setting `adminReply` stamps `repliedAt` and moves `status` to `ANSWERED`, unless the body also explicitly sets a different `status` in the same call (e.g. reply + resolve together). Setting `status` to `RESOLVED` (whether alone or alongside a reply) stamps `resolvedAt`.
+
+Every successful change: writes an audit log entry (`PARTNER_TICKET_UPDATED`), creates an in-app notification for the partner, and emails them if `notifEmail` is on (silently skipped if the partner has no email, or if their account was hard-deleted — the ticket update itself still succeeds either way).
+
+**Response `200`:** the updated ticket, same shape as the list row.
+
+**Errors:** `400` invalid `:id` or neither `status` nor `adminReply` given · `404` ticket not found.
+
+---
+
 ## 6. Services
 
 ### GET /api/services

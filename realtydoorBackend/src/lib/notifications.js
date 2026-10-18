@@ -48,6 +48,10 @@ const CATEGORY_BY_TYPE = {
   TICKET_VENDOR_REASSIGNED: 'SERVICES',
   TICKET_RESOLVED: 'SERVICES',
   TICKET_ADMIN_REPLY: 'SERVICES',
+  // Partner support tickets (Help & Support, partner side) — distinct from
+  // the buyer-facing post-purchase TICKET_* types above, so SYSTEM rather
+  // than SERVICES.
+  PARTNER_TICKET_UPDATED: 'SYSTEM',
   LOAN_STATUS_UPDATE: 'SYSTEM',
   ANNOUNCEMENT: 'SYSTEM',
   // R32 — a partner's own earnings on a deal, distinct from ESCROW (whether

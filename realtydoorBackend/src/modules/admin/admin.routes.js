@@ -17,6 +17,7 @@ const checklistCtrl = require('../listings/checklist.controller');
 const projectCtrl = require('../projects/project.controller');
 const builderInvoiceCtrl = require('../projects/builderInvoice.controller');
 const micrositeCtrl = require('../microsites/microsite.controller');
+const partnerTicketCtrl = require('../partners/partnerTicket.admin.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { requirePermission } = require('../../middleware/requirePermission');
@@ -264,6 +265,15 @@ router.get('/contact/:id',              contactCtrl.getThread);
 router.patch('/contact/:id/read',       ctrl.markContactRead);
 router.patch('/contact/:id/status',     contactCtrl.setStatus);
 router.post('/contact/:id/reply',       contactCtrl.reply);
+
+// Partner support tickets (Help & Support, partner side) — mirrors the
+// contact inbox's list shape (pagination + statusCounts). Reads sit on the
+// router's blanket authenticate+requireAdmin only, same as /contact above;
+// the write (reply/status) is gated with TICKETS since it can email the
+// partner and change a ticket's state.
+router.get('/partner-support-tickets',       partnerTicketCtrl.listPartnerTickets);
+router.get('/partner-support-tickets/:id',   validateObjectId('id'), partnerTicketCtrl.getPartnerTicketById);
+router.patch('/partner-support-tickets/:id', requirePermission('TICKETS'), validateObjectId('id'), partnerTicketCtrl.updatePartnerTicket);
 
 // NRI leads inbox
 router.get('/nri-leads',             ctrl.listNriLeads);
