@@ -4312,7 +4312,6 @@ Public point-lookup for a city + locality pair. Both params are required. Return
     "localTruth": null,
     "mapCenter": null,
     "lastReviewedBy": null,
-    "imageUrl": null,
     "dataAsOfDate": "2024-01-15T00:00:00.000Z",
     "updatedByAdminId": "64admin...",
     "createdAt": "2024-01-01T00:00:00.000Z",
@@ -4334,9 +4333,8 @@ are free-form JSON — see `prisma/schema/locality.prisma` for each one's
 expected inner shape. `headline`, `about`, `livability`, `localTruth`,
 `mapCenter`, `lastReviewedBy` were added 2026-10-18 (locality-page-backend-
 spec.md) to power the redesigned `/locality/<city>/<locality>` page.
-`imageUrl` (hero photo for that page) was added the same day — the spec
-originally said a shared stock photo was enough, product asked for a real
-one per locality after.
+A per-locality `imageUrl` was briefly added and removed the same day —
+the page uses a shared stock photo instead, per the spec's original call.
 
 Money fields are in **paise** (₹1 = 100 paise). `dataAsOfDate`/`updatedAt` reflect the last admin refresh (monthly cadence).
 
@@ -4364,7 +4362,6 @@ Public — full locality market-intelligence landing page. Merges the admin-cura
     "subtitle": "India's most dynamic IT corridor",
     "headline": "Where the IT corridor meets family homes",
     "about": "Whitefield sits on the edge of the main IT corridor, which means short commutes for people who work nearby and a steady stream of renters. It has established schools and hospitals within a few kilometres, a metro station, and a mix of apartments and plotted layouts.",
-    "imageUrl": "https://<bucket>.s3.<region>.amazonaws.com/locality/whitefield.jpg",
     "snapshot": {
       "localityScore": 8.6,
       "marketStage": "Mature Growth",
@@ -4429,9 +4426,9 @@ Any curated section with no admin-entered data returns `null` (or `[]`/`{total:0
 
 `headline`, `about`, `livability`, `localTruth`, `mapCenter`, `lastReviewedBy`
 were added 2026-10-18 for the redesigned `/locality/<city>/<locality>` page
-(locality-page-backend-spec.md). `imageUrl` was added the same day. Each is
-independently optional — a block on the page only renders if its field is
-non-null.
+(locality-page-backend-spec.md). Each is independently optional — a block
+on the page only renders if its field is non-null. No per-locality
+`imageUrl` — the page uses a shared stock photo, per the spec's own call.
 
 **Errors:** `400` if either query param is missing · `404` no curated locality data found for that city+locality (create one via `POST /api/locality-insights` first).
 
@@ -4592,12 +4589,11 @@ Create or update (upsert by city + locality). `dataAsOfDate` defaults to now if 
   "livability":             { "safety": 7.5, "walkability": 6.0, "greenery": 8.0 },
   "localTruth":             [{ "note": "Water supply is by tanker in summer in some inner layouts.", "source": "Field team" }],
   "mapCenter":              { "lat": 12.9698, "lng": 77.75 },
-  "lastReviewedBy":         "Locality research team",
-  "imageUrl":               "https://<bucket>.s3.<region>.amazonaws.com/locality/whitefield.jpg"
+  "lastReviewedBy":         "Locality research team"
 }
 ```
 
-`city`, `locality`, and `avgPricePerSqftPaise` are required. Every market-intelligence field (`subtitle` through `imageUrl`) is optional and independently updatable — send only the fields you're refreshing. `headline` ≤120 chars, `about` ≤1200 chars, `lastReviewedBy` ≤100 chars (a team/role, not a personal name). `livability` is `{ [name]: number 0-10 }` — any keys, one speedometer drawn per key. `localTruth` is `[{ note, source? }]`. `mapCenter` is `{ lat, lng }`. `imageUrl` must be a valid URL — upload the file first via `POST /api/admin/content/upload-image` (any admin image upload, not locality-specific) and save the returned `url` here.
+`city`, `locality`, and `avgPricePerSqftPaise` are required. Every market-intelligence field (`subtitle` through `lastReviewedBy`) is optional and independently updatable — send only the fields you're refreshing. `headline` ≤120 chars, `about` ≤1200 chars, `lastReviewedBy` ≤100 chars (a team/role, not a personal name). `livability` is `{ [name]: number 0-10 }` — any keys, one speedometer drawn per key. `localTruth` is `[{ note, source? }]`. `mapCenter` is `{ lat, lng }`. No `imageUrl` — the page uses a shared stock photo, not a per-locality one.
 
 `marketStage` (`Emerging` · `Growth` · `Mature Growth` · `Mature`), `rentalDemand` (`Low` · `Moderate` · `High` · `Very High`), and `infrastructureStrength` (`Weak` · `Moderate` · `Strong` · `Very Strong`) are validated as enums as of 2026-10-18 — the page only draws the stage track / level meter for these exact words, so any other value is now rejected with `400` rather than silently falling back to a plain label.
 
