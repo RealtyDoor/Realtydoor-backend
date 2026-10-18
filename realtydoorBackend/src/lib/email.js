@@ -145,6 +145,7 @@ async function sendWelcomeEmail(email, name, role, user) {
 }
 
 module.exports = {
+  send,
   sendLeadAssigned,
   sendPropertyApproved,
   sendPropertyRejected,
