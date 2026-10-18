@@ -48,6 +48,7 @@ model LocalityInsight {
   localTruth               Json?     // [{ note, source? }] — field-team / local-enquiry notes
   mapCenter                Json?     // { lat, lng } — used for a "View on map" link
   lastReviewedBy           String?   // team/role, not a personal name — shown as "reviewed by ..."
+  imageUrl                 String?   // hero photo for the locality page; spec originally said a stock photo was enough, product asked for a real one per locality
 
   dataAsOfDate             DateTime
   updatedByAdminId         String?  @db.ObjectId

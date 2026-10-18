@@ -96,6 +96,7 @@ async function buildLocalityPage(city, locality) {
     subtitle: insight.subtitle ?? null,
     headline: insight.headline ?? null,
     about: insight.about ?? null,
+    imageUrl: insight.imageUrl ?? null,
     snapshot: {
       localityScore: insight.localityScore ?? null,
       marketStage: insight.marketStage ?? null,

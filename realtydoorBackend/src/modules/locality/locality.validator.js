@@ -136,6 +136,7 @@ const upsertLocalitySchema = z.object({
   localTruth:              localTruthSchema.optional(),
   mapCenter:               mapCenterSchema.optional(),
   lastReviewedBy:          z.string().max(100).optional(),
+  imageUrl:                z.string().url().optional(),
 });
 
 module.exports = { upsertLocalitySchema, MARKET_STAGES, DEMAND_LEVELS, INFRA_STRENGTHS };

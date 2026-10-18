@@ -6,7 +6,7 @@ this session's commits — the ones listed in `API.md` under: listing change
 requests, exclusive mandates & conflicts, location check, mortgage/NOC,
 listing visibility & requested changes, the persona checklist & owner
 confirmation, KYC document requests, escrow freeze, data acknowledgments,
-auto-assign, and the locality page.
+and auto-assign.
 
 **Nothing here is real data.** Every user is `*@mockqa.test`, every property
 title starts with `MOCK QA —`, every mock lead's `refCode` starts with
@@ -204,40 +204,18 @@ it were complete.
 
 ---
 
-## 13. Locality page, every block filled (locality-page-backend-spec.md)
-
-| Field | Value |
-| --- | --- |
-| `LocalityInsight` id | `6ad49bd5856feb8ec252837e` |
-| URL | `GET /api/locality-insights/page?city=Pune&locality=MockQA%20Layout` → frontend `/locality/Pune/MockQA-Layout` |
-
-Every field on the model is filled, including the 6 **[NEW]** ones from
-locality-page-backend-spec.md — `headline`, `about`, `livability`,
-`localTruth`, `mapCenter`, `lastReviewedBy` — so every block the redesigned
-page can draw is visible at once, without waiting on a real locality to be
-curated. All the numbers are made up for this fixture (clearly labelled as
-such in `about`/`prosAndCons`) — never treat them as a real market figure.
-
-`stats.inventoryLive` on this page is **not** mocked — it's the server's
-live count over the 29 real `MOCK QA —` properties already seeded into
-`city: Pune, locality: "MockQA Layout"` by section 1 onward of this same
-script, so `inventoryLive.total` will shift if you add/remove mock
-properties in that locality.
-
-**Current state of real (non-mock) locality data on this server**, updated
-2026-10-18: all 20 real `LocalityInsight` rows (4 in Pune — Baner, Kothrud,
-Hinjewadi, Aundh; 16 in Bengaluru — Kanakapura Road, Whitefield,
+**Current state of real locality data on this server**, updated 2026-10-18:
+16 `LocalityInsight` rows, all in Bengaluru (Kanakapura Road, Whitefield,
 Koramangala, Indiranagar, Electronic City, Sarjapur Road, HSR Layout,
 JP Nagar, Marathahalli, Yelahanka, Bellandur, Jayanagar, Hebbal,
-Banashankari, Rajajinagar, BTM Layout) now have the full market-
+Banashankari, Rajajinagar, BTM Layout), each with the full market-
 intelligence section filled in from real research (price trends,
 connectivity, infrastructure projects, pros/cons, investment score, FAQs,
-plus the 6 new fields — `headline`/`about`/`mapCenter`/`lastReviewedBy`
-on every row, `livability`/`localTruth` wherever a genuine sourced basis
-was found, left `null` otherwise rather than guessed). Sourcing and what
-was deliberately left out for lack of a reliable figure (e.g.
-`priceChangeLastMonthPct`, `propertyMix` on most rows, `buyerDemandPct`/
-`sellerDemandPct` everywhere) is in this session's research notes, not
+headline/about/mapCenter/lastReviewedBy, livability/localTruth wherever a
+genuine sourced basis was found). Pune rows and the earlier MockQA Layout
+locality-page fixture were removed — Pune isn't required for this product;
+Andhra Pradesh coverage is pending. Sourcing and what was deliberately left
+out for lack of a reliable figure is in this session's research notes, not
 repeated here — ask if you need the citation trail for a specific field.
 
 Six property localities with live listings still have no `LocalityInsight`
@@ -248,6 +226,4 @@ of the `Marathahalli` row that already exists; locality matching is
 case-insensitive but not fuzzy, so the dropped letter still 404s — worth
 fixing the `Property` rows' spelling or adding an alias, not a backend
 bug). These were deliberately left uncreated rather than filled with
-invented numbers for a locality with no researched data yet. Use the
-**MockQA Layout** fixture above if you need a guaranteed-non-404 page for
-UI testing that isn't tied to real market data.
+invented numbers for a locality with no researched data yet.
