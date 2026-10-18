@@ -224,18 +224,30 @@ live count over the 29 real `MOCK QA —` properties already seeded into
 script, so `inventoryLive.total` will shift if you add/remove mock
 properties in that locality.
 
-**Current state of real (non-mock) locality data on this server**, checked
-2026-10-18: `Bengaluru/Kanakapura Road` is the only real locality with the
-market-intelligence section filled in (score, stage, rental demand,
-price trend, pros/cons, 1 FAQ) — and even it doesn't yet have the 6 new
-fields set. Every other real `LocalityInsight` row has only the core price
-fields (`avgPricePerSqftPaise` etc.), and six property localities with live
-listings (`Hoskote`, `Jigani`, `Chintamani Road`, `Hoskote-Bagalur Road`,
-`Bommasandra`, `Marathahalli`) have no `LocalityInsight` row at all and
-return `404` from both `/insight` and `/page`. (One of these, `marthahalli`,
-is a different spelling of the `Marathahalli` row that already exists —
-locality matching is case-insensitive but not fuzzy, so a dropped letter
-still 404s; worth fixing the `Property` rows' spelling or adding an alias,
-not a backend bug.) Use the **MockQA Layout**
-fixture above to see the full page design, not a real locality, until
-someone curates one.
+**Current state of real (non-mock) locality data on this server**, updated
+2026-10-18: all 20 real `LocalityInsight` rows (4 in Pune — Baner, Kothrud,
+Hinjewadi, Aundh; 16 in Bengaluru — Kanakapura Road, Whitefield,
+Koramangala, Indiranagar, Electronic City, Sarjapur Road, HSR Layout,
+JP Nagar, Marathahalli, Yelahanka, Bellandur, Jayanagar, Hebbal,
+Banashankari, Rajajinagar, BTM Layout) now have the full market-
+intelligence section filled in from real research (price trends,
+connectivity, infrastructure projects, pros/cons, investment score, FAQs,
+plus the 6 new fields — `headline`/`about`/`mapCenter`/`lastReviewedBy`
+on every row, `livability`/`localTruth` wherever a genuine sourced basis
+was found, left `null` otherwise rather than guessed). Sourcing and what
+was deliberately left out for lack of a reliable figure (e.g.
+`priceChangeLastMonthPct`, `propertyMix` on most rows, `buyerDemandPct`/
+`sellerDemandPct` everywhere) is in this session's research notes, not
+repeated here — ask if you need the citation trail for a specific field.
+
+Six property localities with live listings still have no `LocalityInsight`
+row at all and return `404` from both `/insight` and `/page`: `Hoskote`,
+`Jigani`, `Chintamani Road`, `Hoskote-Bagalur Road`, `Bommasandra`,
+`marthahalli` (lowercase typo on the `Property` rows — a different spelling
+of the `Marathahalli` row that already exists; locality matching is
+case-insensitive but not fuzzy, so the dropped letter still 404s — worth
+fixing the `Property` rows' spelling or adding an alias, not a backend
+bug). These were deliberately left uncreated rather than filled with
+invented numbers for a locality with no researched data yet. Use the
+**MockQA Layout** fixture above if you need a guaranteed-non-404 page for
+UI testing that isn't tied to real market data.
