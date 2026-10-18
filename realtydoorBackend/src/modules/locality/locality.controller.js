@@ -72,7 +72,15 @@ async function getCitiesSummary(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getLocalitiesList(req, res, next) {
+  try {
+    const { city } = req.query;
+    const data = await service.getLocalitiesList(city);
+    success(res, data);
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   getLocality, getLocalityPage, listLocalities, getLocalityById, upsertLocality, deleteLocality,
-  getCitiesSummary, downloadReport,
+  getCitiesSummary, downloadReport, getLocalitiesList,
 };

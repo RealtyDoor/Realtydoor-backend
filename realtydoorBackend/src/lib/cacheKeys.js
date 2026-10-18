@@ -4,6 +4,7 @@ module.exports = {
   FEATURED_PROPERTIES: 'cache:properties:featured',
   PUBLIC_CONFIG: 'cache:config:public',
   CITIES_SUMMARY: 'cache:locality:cities-summary',
+  LOCALITIES_LIST: 'cache:locality:localities-list',
   // BE-8 — GET /services now takes an optional ?category filter; each
   // category gets its own cache entry rather than one flat key, so a
   // filtered and an unfiltered call never collide. servicesList(undefined)

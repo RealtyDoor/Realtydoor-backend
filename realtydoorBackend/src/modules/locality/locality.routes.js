@@ -10,6 +10,9 @@ router.get('/insight',        ctrl.getLocality);
 router.get('/page',           ctrl.getLocalityPage);
 // Public — homepage city cards aggregate
 router.get('/cities-summary', ctrl.getCitiesSummary);
+// Public — every locality that has a page (optional ?city filter); must sit
+// before /:id below, or "localities" would be read as an :id.
+router.get('/localities',     ctrl.getLocalitiesList);
 // Public — downloadable PDF report (requires ?city=&locality=); PDF generation is
 // heavier than a plain JSON read, so it shares the tighter search-tier rate limit.
 router.get('/report',         searchLimiter, ctrl.downloadReport);

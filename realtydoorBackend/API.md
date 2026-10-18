@@ -4476,6 +4476,50 @@ Aggregated city-level stats for all cities that have locality insight data. Used
 
 ---
 
+### GET /api/locality-insights/localities
+
+Every locality that has a `LocalityInsight` row (i.e. has a page), for the
+Home page and an "All locality reports" page. No pagination — the full
+set is small. Sorted by city, then locality.
+
+**Auth:** Public
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `city` | string | No | Filter to one city, e.g. `Bengaluru` |
+
+**Response `200`:**
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "city": "Bengaluru",
+      "locality": "Indiranagar",
+      "avgPricePerSqftPaise": 1875000,
+      "priceChangeLastMonthPct": 1.9,
+      "localityScore": 8.9,
+      "subtitle": "Established, walkable, high-rent",
+      "listingsCount": 0
+    }
+  ]
+}
+```
+
+Every field except `city` and `locality` may be `null`. `listingsCount` is
+never omitted — `0` if there are no `APPROVED` `Property` rows for that
+exact city+locality, computed via one `groupBy`, not a count per row.
+`city` is canonicalized the same way as `/cities-summary` (`Bangalore`/
+`Bangaluru`/`Banglore` all collapse to `Bengaluru`), so the same city never
+appears under two spellings. Cached 15 min, same as `/cities-summary`;
+cleared on every `POST`/`DELETE` to this resource.
+
+---
+
 ### GET /api/locality-insights
 
 List all locality records (paginated). Optional city filter.

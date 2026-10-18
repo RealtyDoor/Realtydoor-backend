@@ -28,7 +28,7 @@ async function upsertLocality(data, adminId) {
     update: { ...rest, dataAsOfDate: resolvedDataAsOfDate, updatedByAdminId: adminId },
     create: { city, locality, ...rest, dataAsOfDate: resolvedDataAsOfDate, updatedByAdminId: adminId },
   });
-  cacheDel(CACHE_KEYS.CITIES_SUMMARY, CACHE_KEYS.localityPage(city, locality));
+  cacheDel(CACHE_KEYS.CITIES_SUMMARY, CACHE_KEYS.LOCALITIES_LIST, CACHE_KEYS.localityPage(city, locality));
   return saved;
 }
 
@@ -53,7 +53,7 @@ async function deleteLocality(id) {
   const insight = await prisma.localityInsight.findUnique({ where: { id } });
   if (!insight) throw new ApiError(404, 'Locality insight not found');
   const deleted = await prisma.localityInsight.delete({ where: { id } });
-  cacheDel(CACHE_KEYS.CITIES_SUMMARY, CACHE_KEYS.localityPage(insight.city, insight.locality));
+  cacheDel(CACHE_KEYS.CITIES_SUMMARY, CACHE_KEYS.LOCALITIES_LIST, CACHE_KEYS.localityPage(insight.city, insight.locality));
   return deleted;
 }
 
@@ -150,6 +150,50 @@ async function getLocalityReportPdf(city, locality) {
   return buildLocalityReportPdf(page);
 }
 
+// New-endpoint spec, 2026-10-18 — lets the frontend list every locality
+// that has a page, for the Home page and an "All locality reports" page.
+// Cached 15 min same as cities-summary; the ?city filter is applied after
+// the cache read so there's one cached entry, not one per city.
+async function getLocalitiesList(city) {
+  const all = await withCache(CACHE_KEYS.LOCALITIES_LIST, 900, buildLocalitiesList);
+  if (!city) return all;
+  const canonical = canonicalizeCity(city);
+  return all.filter((l) => l.city === canonical);
+}
+
+async function buildLocalitiesList() {
+  const [insights, grouped] = await Promise.all([
+    prisma.localityInsight.findMany({
+      select: {
+        city: true, locality: true, avgPricePerSqftPaise: true,
+        priceChangeLastMonthPct: true, localityScore: true, subtitle: true,
+      },
+      orderBy: [{ city: 'asc' }, { locality: 'asc' }],
+    }),
+    // One groupBy for every locality's live count, not a count-per-locality
+    // loop — same reasoning as buildCitiesSummary's own aggregation below.
+    prisma.property.groupBy({
+      by: ['city', 'locality'],
+      where: { publishStatus: 'APPROVED' },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const countMap = new Map(grouped.map((g) => [`${g.city}|${g.locality}`, g._count._all]));
+
+  return insights
+    .map((i) => ({
+      city: canonicalizeCity(i.city),
+      locality: i.locality,
+      avgPricePerSqftPaise: i.avgPricePerSqftPaise,
+      priceChangeLastMonthPct: i.priceChangeLastMonthPct ?? null,
+      localityScore: i.localityScore ?? null,
+      subtitle: i.subtitle ?? null,
+      listingsCount: countMap.get(`${i.city}|${i.locality}`) ?? 0,
+    }))
+    .sort((a, b) => a.city.localeCompare(b.city) || a.locality.localeCompare(b.locality));
+}
+
 async function getCitiesSummary() {
   return withCache(CACHE_KEYS.CITIES_SUMMARY, 900, buildCitiesSummary);
 }
@@ -201,5 +245,5 @@ async function buildCitiesSummary() {
 
 module.exports = {
   getLocality, getLocalityPage, listLocalities, getLocalityById, upsertLocality, deleteLocality,
-  getCitiesSummary, getLocalityReportPdf,
+  getCitiesSummary, getLocalityReportPdf, getLocalitiesList,
 };
