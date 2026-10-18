@@ -29,7 +29,10 @@ const uploadDocumentSchema = z.object({
 });
 
 const raiseTicketSchema = z.object({
-  subscriptionId: objectId,
+  // Optional — services aren't live yet, so most tickets today have no
+  // subscription behind them. Omitted entirely when the user has none; sent
+  // when they do (still validated for ownership in raiseTicket itself).
+  subscriptionId: objectId.optional(),
   subject: z.string().min(3, 'Subject must be at least 3 characters').max(200),
   description: z.string().min(5, 'Description must be at least 5 characters').max(2000),
   category: z.enum(['PLUMBING', 'ELECTRICAL', 'PAINTING', 'GENERAL']).optional(),

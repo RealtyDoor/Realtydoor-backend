@@ -87,8 +87,11 @@ model ServiceTicket {
   id             String           @id @default(auto()) @map("_id") @db.ObjectId
   userId         String           @db.ObjectId
   user           User             @relation(fields: [userId], references: [id])
-  subscriptionId String           @db.ObjectId
-  subscription   UserSubscription @relation(fields: [subscriptionId], references: [id])
+  // Nullable — services aren't live yet, so a ticket can be raised with just
+  // a subject/description and no subscription behind it. Existing tickets
+  // all have a real subscriptionId already, so this is additive.
+  subscriptionId String?           @db.ObjectId
+  subscription   UserSubscription? @relation(fields: [subscriptionId], references: [id])
   propertyId     String?          @db.ObjectId
   property       Property?        @relation(fields: [propertyId], references: [id])
   subject        String

@@ -2153,7 +2153,7 @@ Single ticket detail (must belong to authenticated user).
 
 ### POST /api/user/tickets
 
-Raise a service ticket under an active subscription.
+Raise a service ticket, optionally under an active subscription.
 
 **Auth:** USER + phone verified
 
@@ -2174,9 +2174,13 @@ Raise a service ticket under an active subscription.
 
 `category`: `PLUMBING` · `ELECTRICAL` · `PAINTING` · `GENERAL`  
 `priority`: `NORMAL` (default) · `HIGH` · `URGENT`  
-`propertyId`, `leadId`, and `photos` are all optional. `leadId` (7.8) is the
-deal this post-purchase ticket traces back to, when the user knows it —
-admin can also set/correct it afterward via `PATCH /admin/tickets/:id/link-deal`.
+`subscriptionId`, `propertyId`, `leadId`, and `photos` are all optional.
+`subscriptionId` is optional because services aren't live yet — most
+tickets today are raised with none. When it is sent, it's still validated
+exactly as before: `404` if it doesn't belong to the caller, `400` if the
+subscription's payment isn't `SUCCESS`. `leadId` (7.8) is the deal this
+post-purchase ticket traces back to, when the user knows it — admin can
+also set/correct it afterward via `PATCH /admin/tickets/:id/link-deal`.
 
 **Response `201`:**
 

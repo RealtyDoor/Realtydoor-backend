@@ -594,13 +594,21 @@ async function getSubscriptions(userId) {
 }
 
 async function raiseTicket(userId, subscriptionId, data) {
-  const sub = await prisma.userSubscription.findFirst({ where: { id: subscriptionId, userId } });
-  if (!sub) throw new ApiError(404, 'Subscription not found');
-  if (sub.paymentStatus !== 'SUCCESS') throw new ApiError(400, 'Service not active');
+  // Services aren't live yet — most tickets today have no subscription at
+  // all. Only run the ownership/active checks when one was actually sent;
+  // the 404-for-someone-else's-subscription behaviour is unchanged when it is.
+  if (subscriptionId) {
+    const sub = await prisma.userSubscription.findFirst({ where: { id: subscriptionId, userId } });
+    if (!sub) throw new ApiError(404, 'Subscription not found');
+    if (sub.paymentStatus !== 'SUCCESS') throw new ApiError(400, 'Service not active');
+  }
 
+  // Dropped from `rest` unconditionally, then re-added only when present —
+  // an explicit `subscriptionId: undefined` in the create data is fine for
+  // Prisma, but this keeps the intent explicit rather than relying on that.
   const { subscriptionId: _sid, ...rest } = data;
   return prisma.serviceTicket.create({
-    data: { ...rest, userId, subscriptionId },
+    data: { ...rest, userId, ...(subscriptionId && { subscriptionId }) },
   });
 }
 
