@@ -2,16 +2,17 @@
  * Populates every state, status and edge case introduced in this session's
  * commits (listing change requests, mandates/conflicts, location, visibility/
  * request-changes, the persona checklist, owner confirmation, KYC document
- * requests, escrow freeze, data acknowledgments, auto-assign) so a frontend
- * engineer can hit a real, documented record for each one instead of guessing
- * from the API docs alone.
+ * requests, escrow freeze, data acknowledgments, auto-assign, the locality
+ * page) so a frontend engineer can hit a real, documented record for each one
+ * instead of guessing from the API docs alone.
  *
  * Deliberately goes through the real service functions (propSvc.createProperty,
  * adminSvc.approveProperty, integritySvc.createMandate, checklistSvc.*,
- * listingsAdminSvc.*, locationSvc.updateLocation, escrowSvc.freeze, ...)
- * rather than writing rows by hand — the point is that this data is byte for
- * byte what the real flow produces, not a hand-rolled approximation that
- * could quietly diverge from actual validation.
+ * listingsAdminSvc.*, locationSvc.updateLocation, escrowSvc.freeze,
+ * localitySvc.upsertLocality, ...) rather than writing rows by hand — the
+ * point is that this data is byte for byte what the real flow produces, not
+ * a hand-rolled approximation that could quietly diverge from actual
+ * validation.
  *
  * Every created user/property/lead is clearly marked (email domain
  * @mockqa.test, titles prefixed "MOCK QA —") so it is never mistaken for real
@@ -37,6 +38,7 @@ const checklistSvc = require('../src/modules/listings/checklist.service');
 const locationSvc = require('../src/modules/listings/location.service');
 const escrowSvc = require('../src/modules/escrow/escrow.service');
 const dataAckSvc = require('../src/modules/partners/dataAck.service');
+const localitySvc = require('../src/modules/locality/locality.service');
 const { nextRefCode } = require('../src/lib/refCode');
 
 const DAY = 86400000;
@@ -395,6 +397,53 @@ async function main() {
 
   index.dataAcknowledgments = { accepted: agent.id, acceptedLeadId: autoAssignLead.id, none: noAck.id };
   console.log('Data acknowledgments: 1 partner with both types accepted, 1 partner with none at all.');
+
+  // 12. Locality page (locality-page-backend-spec.md) -------------------------
+  // Keyed to the same city/locality as `baseProp` above, so the live
+  // inventoryLive/topVerifiedPicks counts on this page reflect the mock
+  // properties already seeded into "MockQA Layout" — not just a bare row.
+  // Every field is filled, including the 6 [NEW] ones (headline, about,
+  // livability, localTruth, mapCenter, lastReviewedBy), so a frontend
+  // engineer can see every block on the redesigned locality page rendered
+  // at once without waiting on real content to be curated.
+  const localityPage = await localitySvc.upsertLocality({
+    city: 'Pune', locality: 'MockQA Layout',
+    avgPricePerSqftPaise: 650000, minPricePerSqftPaise: 500000, maxPricePerSqftPaise: 820000,
+    priceChangeLastMonthPct: 2.1, medianPricePaise: 75000000, medianPricePropertyType: '2BHK', avgRentYieldPct: 3.1,
+    subtitle: 'Mock QA fixture locality — every block on the redesigned page, filled.',
+    headline: 'A fixture locality with every block switched on',
+    about: 'MockQA Layout is not a real place — it is the fixture locality this script creates so a frontend engineer can see every block of the redesigned locality page rendered at once, with plausible but entirely made-up numbers. Nothing here should be used to judge any real area, and none of these figures are backed by an actual survey.',
+    localityScore: 7.0, marketStage: 'Growth', rentalDemand: 'Moderate', infrastructureStrength: 'Moderate',
+    bestFor: ['QA testing', 'Frontend integration'],
+    priceTrends: {
+      historical: [{ period: 'Oct 2025', price: 5800 }, { period: 'Apr 2026', price: 6200 }, { period: 'Oct 2026', price: 6500 }],
+      growth: { oneYear: 5.2, threeYear: 12.0, fiveYear: 20.0 },
+    },
+    propertyMix: [{ type: '2BHK', percentage: 55, count: 16 }, { type: '3BHK', percentage: 45, count: 13 }],
+    microMarkets: [{ name: 'Mock Block A', avgPricePerSqft: 6800, rentalDemand: 'High' }, { name: 'Mock Block B', avgPricePerSqft: 6000, rentalDemand: 'Moderate' }],
+    keyInfrastructure: [
+      { name: 'Mock General Hospital', category: 'Healthcare', distance: '2.0 km' },
+      { name: 'Mock Public School', category: 'Education', distance: '1.2 km' },
+    ],
+    connectivity: {
+      metro: [{ name: 'Mock Metro Station', line: 'Mock Line', status: 'Planned' }],
+      airports: [{ name: 'Mock International Airport', code: 'MQA', distance: '30 km' }],
+      majorRoads: ['Mock Ring Road'],
+      travelTimes: [{ destination: 'Mock City Centre', time: '40 min' }],
+    },
+    infrastructureProjects: [{ name: 'Mock Flyover', category: 'Roads', status: 'Under construction', year: 2027, impact: 'Medium' }],
+    prosAndCons: { pros: ['Fully seeded fixture, safe to re-test against'], cons: ['Not a real place — numbers are illustrative only'] },
+    investmentScore: { overall: 6.5, factors: { priceGrowth: 6.0, rentalDemand: 6.5, connectivity: 5.5, infrastructure: 6.0, liquidity: 6.0, risk: 4.0 } },
+    livability: { safety: 6.5, walkability: 6.0, greenery: 7.0 },
+    buyVsRent: { buyerDemandPct: 60, sellerDemandPct: 40, avgRentByBhk: { '2BHK': 16000, '3BHK': 22000 }, rentalYieldPct: 3.1, rentTrend1yPct: 3.0 },
+    localTruth: [{ note: 'This note is a fixture, not a real field-team observation.', source: 'Field team' }],
+    faqs: [{ question: 'Is this a real locality?', answer: 'No — this is a seeded QA fixture for the locality page.' }],
+    mapCenter: { lat: 18.5, lng: 73.9 },
+    lastReviewedBy: 'QA fixture (not a real review)',
+  }, admin.id);
+
+  index.localityPage = { id: localityPage.id, city: 'Pune', locality: 'MockQA Layout' };
+  console.log('Locality page: 1 fully-curated LocalityInsight for Pune/MockQA Layout, every block (including headline/about/livability/localTruth/mapCenter/lastReviewedBy) filled.');
 
   console.log('\n=== DONE — writing index to scripts/.mockStatesIndex.json for MOCK_DATA.md ===\n');
   require('fs').writeFileSync(

@@ -41,6 +41,14 @@ model LocalityInsight {
   buyVsRent                Json?     // { buyerDemandPct, sellerDemandPct, avgRentByBhk:{}, rentalYieldPct, rentTrend1yPct }
   faqs                     Json?     // [{ question, answer }]
 
+  // locality-page-backend-spec.md — redesigned /locality/<city>/<locality> page
+  headline                 String?   // "Where the IT corridor meets family homes" (4-10 words)
+  about                    String?   // plain-language description, 80-150 words
+  livability               Json?     // { [name]: number 0-10 } — one speedometer per key (safety, walkability, ...)
+  localTruth               Json?     // [{ note, source? }] — field-team / local-enquiry notes
+  mapCenter                Json?     // { lat, lng } — used for a "View on map" link
+  lastReviewedBy           String?   // team/role, not a personal name — shown as "reviewed by ..."
+
   dataAsOfDate             DateTime
   updatedByAdminId         String?  @db.ObjectId
   createdAt                DateTime @default(now())

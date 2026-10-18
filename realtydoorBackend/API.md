@@ -4306,6 +4306,12 @@ Public point-lookup for a city + locality pair. Both params are required. Return
     "investmentScore": null,
     "buyVsRent": null,
     "faqs": null,
+    "headline": null,
+    "about": null,
+    "livability": null,
+    "localTruth": null,
+    "mapCenter": null,
+    "lastReviewedBy": null,
     "dataAsOfDate": "2024-01-15T00:00:00.000Z",
     "updatedByAdminId": "64admin...",
     "createdAt": "2024-01-01T00:00:00.000Z",
@@ -4322,8 +4328,11 @@ down through `faqs` is the admin-curated market-intelligence section
 (`/admin/cms/locality-insights`), all `null` until an admin fills it in
 for that city/locality. `priceTrends`/`propertyMix`/`microMarkets`/
 `keyInfrastructure`/`connectivity`/`infrastructureProjects`/
-`prosAndCons`/`investmentScore`/`buyVsRent`/`faqs` are free-form JSON —
-see `prisma/schema/locality.prisma` for each one's expected inner shape.
+`prosAndCons`/`investmentScore`/`livability`/`buyVsRent`/`localTruth`/`faqs`
+are free-form JSON — see `prisma/schema/locality.prisma` for each one's
+expected inner shape. `headline`, `about`, `livability`, `localTruth`,
+`mapCenter`, `lastReviewedBy` were added 2026-10-18 (locality-page-backend-
+spec.md) to power the redesigned `/locality/<city>/<locality>` page.
 
 Money fields are in **paise** (₹1 = 100 paise). `dataAsOfDate`/`updatedAt` reflect the last admin refresh (monthly cadence).
 
@@ -4349,6 +4358,8 @@ Public — full locality market-intelligence landing page. Merges the admin-cura
     "city": "Bengaluru",
     "locality": "Whitefield",
     "subtitle": "India's most dynamic IT corridor",
+    "headline": "Where the IT corridor meets family homes",
+    "about": "Whitefield sits on the edge of the main IT corridor, which means short commutes for people who work nearby and a steady stream of renters. It has established schools and hospitals within a few kilometres, a metro station, and a mix of apartments and plotted layouts.",
     "snapshot": {
       "localityScore": 8.6,
       "marketStage": "Mature Growth",
@@ -4382,7 +4393,9 @@ Public — full locality market-intelligence landing page. Merges the admin-cura
     "infrastructureProjects": [{ "name": "Whitefield Metro Phase 2", "category": "Metro", "status": "Operational", "year": 2026, "impact": "High" }],
     "prosAndCons": { "pros": ["Strong IT employment base"], "cons": ["Peak-hour traffic"] },
     "investmentScore": { "overall": 8.4, "factors": { "priceGrowth": 8.8, "rentalDemand": 9.1 } },
+    "livability": { "safety": 7.5, "walkability": 6.0, "greenery": 8.0 },
     "buyVsRent": { "buyerDemandPct": 76, "sellerDemandPct": 24, "avgRentByBhk": { "2BHK": 32000, "3BHK": 48000 }, "rentalYieldPct": 3.2 },
+    "localTruth": [{ "note": "Water supply is by tanker in the summer months in some inner layouts.", "source": "Field team" }],
     "faqs": [{ "question": "Is Whitefield good for investment?", "answer": "Yes." }],
     "topVerifiedPicks": [
       {
@@ -4399,6 +4412,8 @@ Public — full locality market-intelligence landing page. Merges the admin-cura
         "slug": "prestige-falcon-city-..."
       }
     ],
+    "mapCenter": { "lat": 12.9698, "lng": 77.75 },
+    "lastReviewedBy": "Locality research team",
     "dataAsOfDate": "2026-08-24T00:00:00.000Z",
     "updatedAt": "2026-08-24T00:00:00.000Z"
   }
@@ -4406,6 +4421,11 @@ Public — full locality market-intelligence landing page. Merges the admin-cura
 ```
 
 Any curated section with no admin-entered data returns `null` (or `[]`/`{total:0,addedThisWeek:0}` for the live sections). `badge` on a pick is `"PREMIUM"` if the listing is admin-featured, `"NEW"` if created within the last 30 days, else `null`. `topVerifiedPicks` only includes `APPROVED` + `isVerified` listings, newest/featured first, capped at 6.
+
+`headline`, `about`, `livability`, `localTruth`, `mapCenter`, `lastReviewedBy`
+were added 2026-10-18 for the redesigned `/locality/<city>/<locality>` page
+(locality-page-backend-spec.md). Each is independently optional — a block
+on the page only renders if its field is non-null.
 
 **Errors:** `400` if either query param is missing · `404` no curated locality data found for that city+locality (create one via `POST /api/locality-insights` first).
 
@@ -4515,11 +4535,22 @@ Create or update (upsert by city + locality). `dataAsOfDate` defaults to now if 
   "prosAndCons":            { "pros": ["Strong IT employment base"], "cons": ["Peak-hour traffic"] },
   "investmentScore":        { "overall": 8.4, "factors": { "priceGrowth": 8.8 } },
   "buyVsRent":              { "buyerDemandPct": 76, "sellerDemandPct": 24, "avgRentByBhk": { "3BHK": 48000 }, "rentalYieldPct": 3.2 },
-  "faqs":                   [{ "question": "Is this locality good for investment?", "answer": "Yes." }]
+  "faqs":                   [{ "question": "Is this locality good for investment?", "answer": "Yes." }],
+
+  "headline":               "Where the IT corridor meets family homes",
+  "about":                  "80-150 words, plain language, no marketing claims.",
+  "livability":             { "safety": 7.5, "walkability": 6.0, "greenery": 8.0 },
+  "localTruth":             [{ "note": "Water supply is by tanker in summer in some inner layouts.", "source": "Field team" }],
+  "mapCenter":              { "lat": 12.9698, "lng": 77.75 },
+  "lastReviewedBy":         "Locality research team"
 }
 ```
 
-`city`, `locality`, and `avgPricePerSqftPaise` are required. Every market-intelligence field (`subtitle` through `faqs`) is optional and independently updatable — send only the fields you're refreshing.
+`city`, `locality`, and `avgPricePerSqftPaise` are required. Every market-intelligence field (`subtitle` through `lastReviewedBy`) is optional and independently updatable — send only the fields you're refreshing. `headline` ≤120 chars, `about` ≤1200 chars, `lastReviewedBy` ≤100 chars (a team/role, not a personal name). `livability` is `{ [name]: number 0-10 }` — any keys, one speedometer drawn per key. `localTruth` is `[{ note, source? }]`. `mapCenter` is `{ lat, lng }`.
+
+`marketStage` (`Emerging` · `Growth` · `Mature Growth` · `Mature`), `rentalDemand` (`Low` · `Moderate` · `High` · `Very High`), and `infrastructureStrength` (`Weak` · `Moderate` · `Strong` · `Very Strong`) are validated as enums as of 2026-10-18 — the page only draws the stage track / level meter for these exact words, so any other value is now rejected with `400` rather than silently falling back to a plain label.
+
+`inventoryLive` and `topVerifiedPicks` are computed live by the server from the `Property` collection and are never accepted in this body (not in the validator).
 
 **Response `201`:** `{ "success": true, "message": "Locality insight saved", "data": { ... } }`
 

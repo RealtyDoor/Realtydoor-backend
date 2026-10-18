@@ -73,6 +73,26 @@ const buyVsRentSchema = z.object({
 
 const faqsSchema = z.array(z.object({ question: z.string(), answer: z.string() }));
 
+// locality-page-backend-spec.md #4 — the page only draws the stage track /
+// level meters for these exact words; anything else still shows as a plain
+// label, so lock the saved value to what the page actually recognizes.
+const MARKET_STAGES = ['Emerging', 'Growth', 'Mature Growth', 'Mature'];
+const DEMAND_LEVELS = ['Low', 'Moderate', 'High', 'Very High'];
+const INFRA_STRENGTHS = ['Weak', 'Moderate', 'Strong', 'Very Strong'];
+
+// [NEW] fields from locality-page-backend-spec.md #3
+const livabilitySchema = z.record(z.string(), z.number().min(0).max(10));
+
+const localTruthSchema = z.array(z.object({
+  note: z.string().min(1),
+  source: z.string().optional(),
+}));
+
+const mapCenterSchema = z.object({
+  lat: z.number(),
+  lng: z.number(),
+});
+
 const upsertLocalitySchema = z.object({
   city:     z.string().min(2).max(100),
   locality: z.string().min(2).max(100),
@@ -91,9 +111,9 @@ const upsertLocalitySchema = z.object({
   // Locality market-intelligence page (admin-curated)
   subtitle:                z.string().max(200).optional(),
   localityScore:           z.number().min(0).max(10).optional(),
-  marketStage:             z.string().max(100).optional(),
-  rentalDemand:            z.string().max(100).optional(),
-  infrastructureStrength:  z.string().max(100).optional(),
+  marketStage:             z.enum(MARKET_STAGES).optional(),
+  rentalDemand:            z.enum(DEMAND_LEVELS).optional(),
+  infrastructureStrength:  z.enum(INFRA_STRENGTHS).optional(),
   bestFor:                 z.array(z.string()).optional(),
   medianPricePaise:        z.number().int().positive().optional(),
   medianPricePropertyType: z.string().max(50).optional(),
@@ -108,6 +128,14 @@ const upsertLocalitySchema = z.object({
   investmentScore:         investmentScoreSchema.optional(),
   buyVsRent:               buyVsRentSchema.optional(),
   faqs:                    faqsSchema.optional(),
+
+  // [NEW] — locality-page-backend-spec.md #3
+  headline:                z.string().max(120).optional(),
+  about:                   z.string().max(1200).optional(),
+  livability:              livabilitySchema.optional(),
+  localTruth:              localTruthSchema.optional(),
+  mapCenter:               mapCenterSchema.optional(),
+  lastReviewedBy:          z.string().max(100).optional(),
 });
 
-module.exports = { upsertLocalitySchema };
+module.exports = { upsertLocalitySchema, MARKET_STAGES, DEMAND_LEVELS, INFRA_STRENGTHS };

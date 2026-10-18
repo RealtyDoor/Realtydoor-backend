@@ -94,6 +94,8 @@ async function buildLocalityPage(city, locality) {
     city: insight.city,
     locality: insight.locality,
     subtitle: insight.subtitle ?? null,
+    headline: insight.headline ?? null,
+    about: insight.about ?? null,
     snapshot: {
       localityScore: insight.localityScore ?? null,
       marketStage: insight.marketStage ?? null,
@@ -119,7 +121,9 @@ async function buildLocalityPage(city, locality) {
     infrastructureProjects: insight.infrastructureProjects ?? null,
     prosAndCons: insight.prosAndCons ?? null,
     investmentScore: insight.investmentScore ?? null,
+    livability: insight.livability ?? null,
     buyVsRent: insight.buyVsRent ?? null,
+    localTruth: insight.localTruth ?? null,
     faqs: insight.faqs ?? null,
     topVerifiedPicks: topPicks.map((p) => ({
       badge: pickBadge(p),
@@ -134,6 +138,8 @@ async function buildLocalityPage(city, locality) {
       totalFloors: p.totalFloors ?? null,
       slug: p.slug,
     })),
+    mapCenter: insight.mapCenter ?? null,
+    lastReviewedBy: insight.lastReviewedBy ?? null,
     dataAsOfDate: insight.dataAsOfDate,
     updatedAt: insight.updatedAt,
   };

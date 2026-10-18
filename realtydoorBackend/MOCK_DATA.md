@@ -5,8 +5,8 @@ database. It covers every status, edge case and derived state introduced by
 this session's commits — the ones listed in `API.md` under: listing change
 requests, exclusive mandates & conflicts, location check, mortgage/NOC,
 listing visibility & requested changes, the persona checklist & owner
-confirmation, KYC document requests, escrow freeze, data acknowledgments, and
-auto-assign.
+confirmation, KYC document requests, escrow freeze, data acknowledgments,
+auto-assign, and the locality page.
 
 **Nothing here is real data.** Every user is `*@mockqa.test`, every property
 title starts with `MOCK QA —`, every mock lead's `refCode` starts with
@@ -201,3 +201,41 @@ documents are modelled at the Project level (docs 4.10/4.11), which doesn't
 exist yet. Use this partner to confirm the frontend renders that "not
 available yet" state gracefully rather than showing an empty checklist as if
 it were complete.
+
+---
+
+## 13. Locality page, every block filled (locality-page-backend-spec.md)
+
+| Field | Value |
+| --- | --- |
+| `LocalityInsight` id | `6ad49bd5856feb8ec252837e` |
+| URL | `GET /api/locality-insights/page?city=Pune&locality=MockQA%20Layout` → frontend `/locality/Pune/MockQA-Layout` |
+
+Every field on the model is filled, including the 6 **[NEW]** ones from
+locality-page-backend-spec.md — `headline`, `about`, `livability`,
+`localTruth`, `mapCenter`, `lastReviewedBy` — so every block the redesigned
+page can draw is visible at once, without waiting on a real locality to be
+curated. All the numbers are made up for this fixture (clearly labelled as
+such in `about`/`prosAndCons`) — never treat them as a real market figure.
+
+`stats.inventoryLive` on this page is **not** mocked — it's the server's
+live count over the 29 real `MOCK QA —` properties already seeded into
+`city: Pune, locality: "MockQA Layout"` by section 1 onward of this same
+script, so `inventoryLive.total` will shift if you add/remove mock
+properties in that locality.
+
+**Current state of real (non-mock) locality data on this server**, checked
+2026-10-18: `Bengaluru/Kanakapura Road` is the only real locality with the
+market-intelligence section filled in (score, stage, rental demand,
+price trend, pros/cons, 1 FAQ) — and even it doesn't yet have the 6 new
+fields set. Every other real `LocalityInsight` row has only the core price
+fields (`avgPricePerSqftPaise` etc.), and six property localities with live
+listings (`Hoskote`, `Jigani`, `Chintamani Road`, `Hoskote-Bagalur Road`,
+`Bommasandra`, `Marathahalli`) have no `LocalityInsight` row at all and
+return `404` from both `/insight` and `/page`. (One of these, `marthahalli`,
+is a different spelling of the `Marathahalli` row that already exists —
+locality matching is case-insensitive but not fuzzy, so a dropped letter
+still 404s; worth fixing the `Property` rows' spelling or adding an alias,
+not a backend bug.) Use the **MockQA Layout**
+fixture above to see the full page design, not a real locality, until
+someone curates one.
