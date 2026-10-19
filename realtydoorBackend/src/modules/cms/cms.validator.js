@@ -1,6 +1,8 @@
 const { z } = require('zod');
 
-const CONTENT_TYPES = ['BLOG_POST', 'FAQ', 'BANNER', 'ANNOUNCEMENT', 'PAGE'];
+// TESTIMONIAL and NRI_GUIDE are in the Prisma ContentBlock type list and in the admin CMS tabs, but were missing here, so
+// creating them in admin and the public testimonials fetch (/blog?type=TESTIMONIAL) were both rejected with a 400.
+const CONTENT_TYPES = ['BLOG_POST', 'FAQ', 'BANNER', 'ANNOUNCEMENT', 'PAGE', 'TESTIMONIAL', 'NRI_GUIDE'];
 
 const createContentSchema = z.object({
   slug:        z.string().min(2).max(100).regex(/^[a-z0-9-]+$/, 'Slug must be lowercase letters, numbers and hyphens only'),
