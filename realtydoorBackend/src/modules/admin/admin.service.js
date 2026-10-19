@@ -1,6 +1,6 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
-const { createNotification } = require('../../lib/notifications');
+const { createNotification, markNotificationsRead } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const {
   sendPropertyApproved, sendPropertyRejected,
@@ -290,6 +290,9 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
     });
   }
 
+  // B16 — "Partner-added lead needs review" stayed unread after the review.
+  await markNotificationsRead({ linkUrl: `/admin/leads/${leadId}`, types: ['LEAD_NEW'] });
+
   await createAuditLog({
     adminId, action: 'LEAD_CONFIRMED', targetType: 'Lead', targetId: leadId,
     before: { status: lead.status }, after: { status: updated.status, assignedPartnerId: updated.assignedPartnerId },
@@ -444,6 +447,9 @@ async function assignLead(leadId, partnerId, adminId, ip) {
     type: 'LEAD_ASSIGNED',
     linkUrl: `/partners/leads/${leadId}`,
   });
+
+  // B16 — "New Unassigned Lead" entries persisted for leads that were assigned.
+  await markNotificationsRead({ linkUrl: `/admin/leads/${leadId}`, types: ['LEAD_NEW'] });
 
   await createAuditLog({
     adminId, action: isReassign ? 'LEAD_REASSIGNED' : 'LEAD_ASSIGNED', targetType: 'Lead', targetId: leadId,
@@ -1387,6 +1393,29 @@ function deriveUserStatus(user) {
   return 'ACTIVE';
 }
 
+// B90 — user list/detail showed no inquiry or spend figures at all. One
+// grouped query per source for the whole page, not one per row. Spend counts
+// money actually taken: escrow tokens that were captured (HELD/RELEASED) and
+// successful service subscriptions.
+async function buyerActivityFor(userIds) {
+  const empty = () => ({ inquiryCount: 0, totalSpend: 0 });
+  const byId = new Map(userIds.map((id) => [id, empty()]));
+  if (!userIds.length) return byId;
+  const [leads, escrows, subs] = await Promise.all([
+    prisma.lead.groupBy({ by: ['buyerId'], where: { buyerId: { in: userIds } }, _count: { _all: true } }),
+    prisma.escrowTransaction.groupBy({
+      by: ['buyerId'], where: { buyerId: { in: userIds }, status: { in: ['HELD', 'RELEASED'] } }, _sum: { amount: true },
+    }),
+    prisma.userSubscription.groupBy({
+      by: ['userId'], where: { userId: { in: userIds }, paymentStatus: 'SUCCESS' }, _sum: { amountPaid: true },
+    }),
+  ]);
+  leads.forEach((r) => { byId.get(r.buyerId).inquiryCount = r._count._all; });
+  escrows.forEach((r) => { byId.get(r.buyerId).totalSpend += r._sum.amount || 0; });
+  subs.forEach((r) => { byId.get(r.userId).totalSpend += r._sum.amountPaid || 0; });
+  return byId;
+}
+
 async function getAllUsers(filters, skip, limit) {
   // Soft-deleted rows (clerk.handler.js's user.deleted) are kept only to
   // preserve foreign keys on records they used to own — they should never
@@ -1452,8 +1481,10 @@ async function getAllUsers(filters, skip, limit) {
     prisma.user.count({ where: { ...baseWhere, isSuspended: false, phoneVerified: true } }),
   ]);
 
+  const activity = await buyerActivityFor(data.map((u) => u.id));
+
   return {
-    data: data.map((u) => ({ ...u, status: deriveUserStatus(u) })),
+    data: data.map((u) => ({ ...u, ...activity.get(u.id), status: deriveUserStatus(u) })),
     total,
     summary: { active: activeCount, suspended: suspendedCount, phoneUnverified: phoneUnverifiedCount },
   };
@@ -2370,7 +2401,8 @@ async function getUserByIdAdmin(userId) {
     },
   });
   if (!user) throw new ApiError(404, 'User not found');
-  return user;
+  const activity = await buyerActivityFor([userId]);
+  return { ...user, ...activity.get(userId) };
 }
 
 // ─── CONTACT INBOX ────────────────────────────────────────────────────────────

@@ -432,3 +432,7 @@ Manual / UI results:
 | B39 | `lib/ticketStats.js`: rows with resolvedAt < createdAt are skipped in the average | unit tests |
 | B10 | `partnerAddLead` only accepts the partner's APPROVED listings | not run |
 | B77/B78 | video-tour list returns `assignedToName`; `assignedTo` must be an ADMIN-role user | not run |
+| B90 | admin user list/detail return additive `inquiryCount` and `totalSpend` (captured escrow tokens + successful subscriptions); frontend must read them | not run |
+| B33 | partner finance summary returns additive `partnerShareTotal` / `partnerShareThisMonth`; existing fields unchanged | not run |
+| B16 | admin "needs review"/"unassigned lead" notifications are marked read on confirm/assign; admins notified when a visit is logged; escalation notification links to `/admin/escrow` | not run |
+| B21/B34 (partial) | buyer gets in-app notifications when a visit is scheduled (no OTP in the text) and confirmed. Partner-added leads (no `buyerId`) are still not covered: owner decision | not run |

@@ -118,7 +118,21 @@ async function notifyAdmins({ title, message, type, linkUrl }) {
   }
 }
 
+// B16 — an action notification ("needs review") should stop nagging once the
+// action is taken. Marks matching unread rows read; best-effort, never throws.
+async function markNotificationsRead({ linkUrl, types }) {
+  try {
+    return await prisma.notification.updateMany({
+      where: { linkUrl, isRead: false, ...(types?.length && { type: { in: types } }) },
+      data: { isRead: true, readAt: new Date() },
+    });
+  } catch (err) {
+    logger.warn('[Notifications] markNotificationsRead failed', { linkUrl, error: err.message });
+    return { count: 0 };
+  }
+}
+
 module.exports = {
-  createNotification, broadcastNotification, notifyAdmins,
+  createNotification, broadcastNotification, notifyAdmins, markNotificationsRead,
   categoryFor, NOTIFICATION_CATEGORIES, CATEGORY_BY_TYPE,
 };

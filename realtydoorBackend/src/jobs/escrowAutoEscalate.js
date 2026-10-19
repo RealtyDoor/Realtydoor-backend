@@ -36,6 +36,7 @@ async function runOnce() {
         title: 'Escrow release overdue',
         message: `An escrow of ₹${escrow.amount.toLocaleString('en-IN')} has been held ${days}+ days without release or refund.`,
         type: 'ESCROW_AUTO_ESCALATED',
+        linkUrl: '/admin/escrow',
       });
     }
     await prisma.escrowTransaction.update({

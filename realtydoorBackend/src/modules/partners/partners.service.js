@@ -192,7 +192,7 @@ async function getFinanceSummary(partnerId) {
     prisma.lead.count({ where: { assignedPartnerId: partnerId } }),
     prisma.escrowTransaction.findMany({
       where: { lead: { assignedPartnerId: partnerId } },
-      select: { status: true, amount: true, releasedAt: true, heldAt: true },
+      select: { status: true, amount: true, releasedAt: true, heldAt: true, partnerShareAmount: true },
     }),
     prisma.escrowTransaction.findMany({
       where: {
@@ -200,7 +200,7 @@ async function getFinanceSummary(partnerId) {
         status: 'RELEASED',
         releasedAt: { gte: startOfMonth },
       },
-      select: { amount: true },
+      select: { amount: true, partnerShareAmount: true },
     }),
   ]);
 
@@ -215,6 +215,12 @@ async function getFinanceSummary(partnerId) {
     releasedTotal:       releasedEscrows.reduce((s, e) => s + e.amount, 0),
     releasedThisMonth:   thisMonthEscrows.reduce((s, e) => s + e.amount, 0),
     payoutCountThisMonth: thisMonthEscrows.length,
+    // B33 — releasedTotal/releasedThisMonth above are whole escrow amounts
+    // (deal volume), not what this partner earned. Additive: the partner's own
+    // recorded share, so the UI can show earnings without redefining the
+    // existing fields.
+    partnerShareTotal:     releasedEscrows.reduce((s, e) => s + (e.partnerShareAmount || 0), 0),
+    partnerShareThisMonth: thisMonthEscrows.reduce((s, e) => s + (e.partnerShareAmount || 0), 0),
   };
 }
 

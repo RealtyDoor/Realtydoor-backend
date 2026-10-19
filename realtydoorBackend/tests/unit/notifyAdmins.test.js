@@ -1,10 +1,10 @@
 jest.mock('../../src/lib/prisma', () => ({
   user: { findMany: jest.fn() },
-  notification: { createMany: jest.fn() },
+  notification: { createMany: jest.fn(), updateMany: jest.fn() },
 }));
 
 const prisma = require('../../src/lib/prisma');
-const { notifyAdmins, categoryFor } = require('../../src/lib/notifications');
+const { notifyAdmins, markNotificationsRead, categoryFor } = require('../../src/lib/notifications');
 
 describe('notifyAdmins', () => {
   test('creates one notification per admin who has push enabled', async () => {
@@ -34,5 +34,20 @@ describe('notifyAdmins', () => {
   test('ticket event types land under the Services chip', () => {
     expect(categoryFor('TICKET_NEW')).toBe('SERVICES');
     expect(categoryFor('TICKET_USER_NOTE')).toBe('SERVICES');
+  });
+});
+
+describe('markNotificationsRead', () => {
+  test('marks only unread rows for the link, limited to the given types', async () => {
+    prisma.notification.updateMany.mockResolvedValue({ count: 2 });
+    await markNotificationsRead({ linkUrl: '/admin/leads/1', types: ['LEAD_NEW'] });
+    const arg = prisma.notification.updateMany.mock.calls[0][0];
+    expect(arg.where).toEqual({ linkUrl: '/admin/leads/1', isRead: false, type: { in: ['LEAD_NEW'] } });
+    expect(arg.data.isRead).toBe(true);
+  });
+
+  test('never throws', async () => {
+    prisma.notification.updateMany.mockRejectedValue(new Error('db down'));
+    await expect(markNotificationsRead({ linkUrl: '/x' })).resolves.toEqual({ count: 0 });
   });
 });

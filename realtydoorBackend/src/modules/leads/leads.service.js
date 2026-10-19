@@ -3,7 +3,7 @@ const ApiError = require('../../utils/ApiError');
 const { formatContact, maskPhone, maskEmail } = require('../../lib/phoneUtils');
 const { generate, expiresAt, isExpired, isLocked, lockUntil, maxAttemptsReached } = require('../../lib/otp');
 const { sendSiteVisitOtp } = require('../../lib/wati');
-const { createNotification, broadcastNotification } = require('../../lib/notifications');
+const { createNotification, broadcastNotification, notifyAdmins } = require('../../lib/notifications');
 const logger = require('../../lib/logger');
 const { sendLeadAssigned } = require('../../lib/email');
 const { createAuditLog } = require('../../lib/auditLog');
@@ -360,6 +360,19 @@ async function scheduleVisit(leadId, partnerId, scheduledAt) {
     const logger = require('../../lib/logger');
     logger.error('[scheduleVisit] WATI OTP send failed', { leadId, error: err.message });
   }
+
+  // B21/B34 — the buyer's app showed nothing when a visit was booked. The OTP
+  // itself stays WhatsApp-only; this just points at it. Partner-added leads
+  // have no buyerId by design, so they are skipped here.
+  if (lead.buyerId) {
+    await createNotification({
+      userId: lead.buyerId,
+      title: 'Site visit scheduled',
+      message: `Your site visit for ${lead.refCode || 'your inquiry'} is set for ${new Date(scheduledAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })} IST. Your visit code was sent on WhatsApp.`,
+      type: 'VISIT_SCHEDULED',
+      linkUrl: `/user/inquiries/${leadId}`,
+    }).catch(() => null);
+  }
   return { message: 'Visit scheduled. OTP sent to buyer via WhatsApp.' };
 }
 
@@ -455,6 +468,23 @@ async function verifyOtp(leadId, partnerId, inputOtp, ip) {
       contactRevealedIp: ip ?? null,
     },
   });
+
+  // B16 — admins had no signal that the visit happened.
+  await notifyAdmins({
+    title: 'Site visit logged',
+    message: `${lead.refCode || 'A lead'} · ${lead.buyerName}: the partner verified the visit OTP.`,
+    type: 'VISIT_LOGGED',
+    linkUrl: `/admin/leads/${leadId}`,
+  });
+  if (lead.buyerId) {
+    await createNotification({
+      userId: lead.buyerId,
+      title: 'Site visit confirmed',
+      message: `Your site visit for ${lead.refCode || 'your inquiry'} has been confirmed.`,
+      type: 'VISIT_LOGGED',
+      linkUrl: `/user/inquiries/${leadId}`,
+    }).catch(() => null);
+  }
 
   return {
     message: 'OTP verified. Buyer contact revealed.',
