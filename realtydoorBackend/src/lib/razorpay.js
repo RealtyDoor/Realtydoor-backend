@@ -84,7 +84,8 @@ async function createPayoutFundAccount(contactId, name, ifsc, accountNumber) {
 // blow past referenceId's 40-char cap. Callers that don't pass one get the
 // old behavior (hash of referenceId itself) for backward compatibility.
 async function createPayout(fundAccountId, amountInPaise, referenceId, idempotencyKeyInput) {
-  const idempotencyKey = crypto.createHash('sha256').update(idempotencyKeyInput || referenceId).digest('hex');
+  // RazorpayX caps X-Payout-Idempotency at 36 characters; a full sha256 hex digest is 64.
+  const idempotencyKey = crypto.createHash('sha256').update(idempotencyKeyInput || referenceId).digest('hex').slice(0, 36);
   return rawPost('/v1/payouts', {
     account_number: process.env.RAZORPAYX_ACCOUNT_NUMBER,
     fund_account_id: fundAccountId,
