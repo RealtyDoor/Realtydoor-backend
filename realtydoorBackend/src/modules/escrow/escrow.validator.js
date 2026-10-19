@@ -24,6 +24,10 @@ const releaseEscrowSchema = z.object({
   // given. Omit it to keep recording partnerShare as a manual/off-platform
   // split, same as before.
   partnerDetails: bankDetailsSchema.optional(),
+  // B32 — pay partnerShare to the assigned partner's stored payout account. Without this (and without partnerDetails) the
+  // partner share is only RECORDED on the escrow; before, merely having a stored account paid it out even when the admin
+  // had left "Also pay the partner share" unticked.
+  payPartner: z.boolean().optional(),
   // If there's no bank account to pay out to (a manual/offline payout), this
   // must be explicitly set — previously omitting sellerAccountId silently
   // skipped the Razorpay transfer entirely while still marking the escrow

@@ -449,7 +449,7 @@ async function getReleasePlan(escrowId) {
 }
 
 async function release(escrowId, adminId, releaseData, ip) {
-  const { sellerDetails, partnerDetails, manualTransferConfirmed, partnerShare: partnerShareOverride, note } = releaseData ?? {};
+  const { sellerDetails, partnerDetails, payPartner, manualTransferConfirmed, partnerShare: partnerShareOverride, note } = releaseData ?? {};
 
   const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
   if (!escrow) throw new ApiError(404, 'Escrow not found');
@@ -518,7 +518,7 @@ async function release(escrowId, adminId, releaseData, ip) {
   // Explicit partnerDetails still wins — an admin paying someone other than
   // the assigned partner needs that escape hatch.
   let storedPartnerFundAccountId = null;
-  if (partnerShare > 0 && !partnerDetails) {
+  if (partnerShare > 0 && !partnerDetails && payPartner === true) {
     const lead = await prisma.lead.findUnique({
       where: { id: escrow.leadId },
       select: { assignedPartnerId: true },

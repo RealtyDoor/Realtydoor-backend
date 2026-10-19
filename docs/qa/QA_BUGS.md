@@ -447,3 +447,11 @@ Manual / UI results:
 | B50 | property approval refused when the listing has no photos | not run |
 | B28 (secret part) | secret-looking PlatformConfig keys are masked in the admin list and refused on write; seed no longer inserts `razorpay_webhook_secret` (code reads the env var) | unit tests |
 | B73 (partial) | new partner support ticket notifies admins; ticket number retries on collision | not run |
+
+### Backend fixes — batch 4 (on top of batch 3/3c)
+| Bug | Fix | Verified |
+|---|---|---|
+| B32 | Root cause: the release request carries `partnerShare` even with "Also pay the partner share" unticked, and the partner's stored payout account then paid it automatically. `payPartner: true` (or `partnerDetails`) is now required to pay; otherwise the share is only recorded | schema unit test; release flow not run |
+| B61 | `PATCH /admin/loan/:id/status` accepts `sanctionedAmountPaise` (the frontend Sanction dialog sends it with rate, tenure, EMI, letter URL) | unit test |
+| B71 | dispute-update notification to the buyer links to `/user/disputes` | not run |
+| B38 | partner lead escrow select exposes `netAmount` and `partnerShareAmount` (the Commission column falls back to it) | not run |
