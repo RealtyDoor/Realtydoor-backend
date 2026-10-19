@@ -7,13 +7,20 @@ const { createNotification, broadcastNotification, notifyAdmins } = require('../
 const logger = require('../../lib/logger');
 const { sendLeadAssigned } = require('../../lib/email');
 const { createAuditLog } = require('../../lib/auditLog');
+const { isVisitTooEarly, DEFAULT_EARLY_WINDOW_HOURS } = require('../../lib/visitWindow');
 const { getConfigNumber } = require('../config/config.service');
 const { nextRefCode } = require('../../lib/refCode');
 const { assertLeadNotPaused } = require('../../lib/accountDeletion');
 
 const DEFAULT_MAX_ACTIVE_INQUIRIES = 5;
 const DEFAULT_MAX_INQUIRIES_PER_DAY = 3;
-const DEFAULT_PLATFORM_COMMISSION_PCT = 2;
+// B36 — release() deducts escrow_platform_fee_pct (default 1) of the held
+// amount. The partner-facing "you receive" figure must use that same rate;
+// it used a per-lead snapshot of platform_commission_pct (a share of the
+// brokerage fee, a different base), so identical tokens showed ₹49,000 on one
+// deal and ₹50,000 on another.
+const ESCROW_PLATFORM_FEE_PCT_KEY = 'escrow_platform_fee_pct';
+const DEFAULT_ESCROW_PLATFORM_FEE_PCT = 1;
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 // The actual UTC instant corresponding to 00:00:00 IST "today" — regardless
@@ -276,22 +283,14 @@ const PARTNER_LEAD_ESCROW_SELECT = {
   orderBy: { createdAt: 'desc' },
 };
 
-// What the partner actually receives: the escrow amount less the platform fee.
-// The rate comes from the lead's own platformCommissionPct when set, so a deal
-// closed under an older rate keeps that rate, falling back to the current
-// platform_commission_pct config. null when there's no escrow yet — the
-// partner UI has nothing to show a net for until money is held.
-//
-// backend-gaps-frontend-integration.md #1 (2026-10-05) — platformCommissionPct
-// now means R/B, the platform's gateway-cost-recovery share of the
-// BROKERAGE FEE, not of the escrow amount applied here. This projection was
-// already mixing the two before that change (applying a deal-price-relative
-// rate to the escrow's token-advance amount); unchanged here deliberately —
-// flagged, not fixed, since reconciling it is outside this fix's scope.
-function netAmountFor(lead, fallbackPct) {
+// What the partner actually receives: the escrow amount less the platform fee,
+// at the same escrow_platform_fee_pct rate release() deducts (B36). null when
+// there's no escrow yet — the partner UI has nothing to show a net for until
+// money is held.
+function netAmountFor(lead, feePct) {
   const escrow = lead.escrowTransactions?.[0];
   if (!escrow || typeof escrow.amount !== 'number') return null;
-  const pct = lead.platformCommissionPct ?? fallbackPct;
+  const pct = feePct;
   return Math.round((escrow.amount - (escrow.amount * pct) / 100) * 100) / 100;
 }
 
@@ -307,7 +306,7 @@ async function getPartnerLeads(partnerId) {
       },
       orderBy: { createdAt: 'desc' },
     }),
-    getConfigNumber('platform_commission_pct', DEFAULT_PLATFORM_COMMISSION_PCT),
+    getConfigNumber(ESCROW_PLATFORM_FEE_PCT_KEY, DEFAULT_ESCROW_PLATFORM_FEE_PCT),
   ]);
   return leads.map((lead) => ({
     ...sanitizeLeadForPartner(lead),
@@ -326,7 +325,7 @@ async function getPartnerLeadById(leadId, partnerId) {
         escrowTransactions: PARTNER_LEAD_ESCROW_SELECT,
       },
     }),
-    getConfigNumber('platform_commission_pct', DEFAULT_PLATFORM_COMMISSION_PCT),
+    getConfigNumber(ESCROW_PLATFORM_FEE_PCT_KEY, DEFAULT_ESCROW_PLATFORM_FEE_PCT),
   ]);
   if (!lead) throw new ApiError(404, 'Lead not found');
   return { ...sanitizeLeadForPartner(lead), netAmount: netAmountFor(lead, feePct), ...stalledInfoFor(lead) };
@@ -439,6 +438,13 @@ async function verifyOtp(leadId, partnerId, inputOtp, ip) {
   if (!lead.siteVisitOTP) throw new ApiError(400, 'No OTP generated for this lead');
   if (isLocked(lead.otpLockedUntil)) throw new ApiError(429, 'OTP locked. Contact Admin to override.', { code: 'LEAD_OTP_LOCKED' }); // BE-21
   if (isExpired(lead.otpExpiresAt)) throw new ApiError(400, 'OTP has expired');
+
+  // B15 — checked before the OTP comparison so an early attempt never burns
+  // one of the three tries.
+  const earlyWindowHours = await getConfigNumber('visit_otp_early_window_hours', DEFAULT_EARLY_WINDOW_HOURS);
+  if (isVisitTooEarly(lead.siteVisitScheduledAt, Date.now(), earlyWindowHours)) {
+    throw new ApiError(400, `The visit is scheduled for ${new Date(lead.siteVisitScheduledAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })} IST. You can verify the OTP from ${earlyWindowHours} hour(s) before that.`, { code: 'VISIT_NOT_STARTED' });
+  }
 
   if (lead.siteVisitOTP !== inputOtp) {
     const newAttempts = lead.otpAttempts + 1;

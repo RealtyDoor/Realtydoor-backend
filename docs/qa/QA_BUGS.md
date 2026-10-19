@@ -436,3 +436,14 @@ Manual / UI results:
 | B33 | partner finance summary returns additive `partnerShareTotal` / `partnerShareThisMonth`; existing fields unchanged | not run |
 | B16 | admin "needs review"/"unassigned lead" notifications are marked read on confirm/assign; admins notified when a visit is logged; escalation notification links to `/admin/escrow` | not run |
 | B21/B34 (partial) | buyer gets in-app notifications when a visit is scheduled (no OTP in the text) and confirmed. Partner-added leads (no `buyerId`) are still not covered: owner decision | not run |
+
+### Backend fixes — batch 3c
+| Bug | Fix | Verified |
+|---|---|---|
+| B36 | partner-facing "you receive" now uses `escrow_platform_fee_pct` (the rate release() deducts) for every deal | not run |
+| B67 | revenue P&L "Escrow commission" sums `platformFeePaise` of RELEASED escrows (same source as the dashboard); pre-column rows are not counted | not run |
+| B15 | verify-otp refused earlier than `visit_otp_early_window_hours` (default 2) before the slot, without consuming an attempt; no upper bound | unit tests |
+| B53 | KYC APPROVE refused when the partner has no uploaded documents | not run |
+| B50 | property approval refused when the listing has no photos | not run |
+| B28 (secret part) | secret-looking PlatformConfig keys are masked in the admin list and refused on write; seed no longer inserts `razorpay_webhook_secret` (code reads the env var) | unit tests |
+| B73 (partial) | new partner support ticket notifies admins; ticket number retries on collision | not run |

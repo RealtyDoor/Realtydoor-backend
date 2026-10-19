@@ -178,14 +178,15 @@ async function getRevenueByStream(period = 'MTD') {
         where: { paymentStatus: 'SUCCESS', startDate: range },
         select: { amountPaid: true, service: { select: { name: true } } },
       }),
-      // backend-gaps-frontend-integration.md #1 (2026-10-05) — commissionAmountPaise
-      // is now R, the platform's gateway-cost-recovery retainage, NOT a margin
-      // figure (the pre-826a73c "leftover" model this used to reflect is gone).
-      // This dashboard number is the real size of this line now: cost
-      // recovered, not profit earned. Recorded per lead once terms are locked.
-      prisma.lead.findMany({
-        where: { status: 'CLOSED', commissionAmountPaise: { not: null }, updatedAt: range },
-        select: { commissionAmountPaise: true },
+      // B67 — this line used to sum Lead.commissionAmountPaise (the locked
+      // brokerage terms), which never matched what a release actually keeps.
+      // It now reads platformFeePaise, the fee stamped on the escrow at
+      // release() time — the same source as the dashboard's "platform fee
+      // MTD" (getRevenueSummary), so the two screens reconcile. Rows released
+      // before that column existed carry no figure and are not counted.
+      prisma.escrowTransaction.findMany({
+        where: { status: 'RELEASED', platformFeePaise: { not: null }, releasedAt: range },
+        select: { platformFeePaise: true },
       }),
     ]);
 
@@ -197,7 +198,7 @@ async function getRevenueByStream(period = 'MTD') {
       byName[name].revenue += s.amountPaid || 0;
     }
 
-    const commissionRevenue = released.reduce((sum, l) => sum + (l.commissionAmountPaise || 0), 0) / 100;
+    const commissionRevenue = released.reduce((sum, e) => sum + (e.platformFeePaise || 0), 0) / 100;
     if (released.length) {
       byName['Escrow commission'] = { volume: released.length, revenue: round2(commissionRevenue) };
     }

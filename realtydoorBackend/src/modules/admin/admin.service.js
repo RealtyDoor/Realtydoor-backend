@@ -832,6 +832,12 @@ async function fetchPropertyWithPartner(propertyId) {
 async function approveProperty(propertyId, adminId, ip, visibility = {}) {
   const property = await fetchPropertyWithPartner(propertyId);
   if (!property) throw new ApiError(404, 'Property not found');
+  // B50 — the approval gate was empty: ~35 live listings had no photos at all.
+  // Photos are the minimum bar; RERA stays advisory (plots/older stock may not
+  // have one, and the public page only claims "RERA Verified" when isVerified).
+  if (!property.images?.length) {
+    throw new ApiError(400, 'Cannot approve a listing with no photos', { code: 'LISTING_NO_PHOTOS' });
+  }
 
   const updated = await prisma.property.update({
     where: { id: propertyId },
@@ -1068,6 +1074,11 @@ function kycRequestEffectiveStatus(user) {
 async function verifyKyc(userId, action, note, adminId, ip) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new ApiError(404, 'User not found');
+
+  // B53 — partners were being marked VERIFIED with zero documents on file.
+  if (action === 'APPROVE' && !(user.kycDocumentUrls?.length)) {
+    throw new ApiError(400, 'Cannot verify KYC: this partner has not uploaded any documents', { code: 'KYC_NO_DOCUMENTS' });
+  }
 
   const kycStatus = action === 'APPROVE' ? 'VERIFIED' : 'REJECTED';
 

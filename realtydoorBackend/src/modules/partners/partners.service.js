@@ -1,6 +1,6 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
-const { createNotification } = require('../../lib/notifications');
+const { createNotification, notifyAdmins } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const logger = require('../../lib/logger');
 const { createPayoutContact, createPayoutFundAccount, validateFundAccountOrWarn } = require('../../lib/razorpay');
@@ -722,11 +722,28 @@ async function getSupportTicketById(partnerId, ticketId) {
 }
 
 async function createSupportTicket(partnerId, data) {
-  const count    = await prisma.partnerSupportTicket.count();
-  const ticketNo = `SUP-${String(count + 1).padStart(4, '0')}`;
-  return prisma.partnerSupportTicket.create({
-    data: { partnerId, ticketNo, ...data },
+  // ticketNo is count+1, which collides (unique index) if two tickets are
+  // raised at once or an older one was deleted — retry with the next number
+  // instead of surfacing a 500.
+  const count = await prisma.partnerSupportTicket.count();
+  let ticket;
+  for (let attempt = 0; attempt < 5 && !ticket; attempt += 1) {
+    const ticketNo = `SUP-${String(count + 1 + attempt).padStart(4, '0')}`;
+    try {
+      ticket = await prisma.partnerSupportTicket.create({ data: { partnerId, ticketNo, ...data } });
+    } catch (err) {
+      if (err.code !== 'P2002' || attempt === 4) throw err;
+    }
+  }
+
+  // B73 — admins had no bell entry for a new partner support ticket.
+  await notifyAdmins({
+    title: 'New partner support ticket',
+    message: `${ticket.ticketNo}: ${ticket.subject}`,
+    type: 'PARTNER_TICKET_NEW',
+    linkUrl: '/admin/partner-support',
   });
+  return ticket;
 }
 
 async function getPartnerAnalytics(partnerId) {

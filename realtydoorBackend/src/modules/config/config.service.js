@@ -40,8 +40,15 @@ async function getConfigNumber(key, fallback) {
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
 
+// B28 — a webhook secret was sitting in PlatformConfig as plain text and shown
+// in the admin list. Nothing reads it from here (RAZORPAY_WEBHOOK_SECRET comes
+// from the environment), so secrets are masked on read and refused on write.
+const SECRET_KEY = /(secret|password|api_key|private_key|access_token|auth_token)$/;
+const isSecretKey = (key) => SECRET_KEY.test(key);
+
 async function adminListConfig() {
-  return prisma.platformConfig.findMany({ orderBy: { key: 'asc' } });
+  const rows = await prisma.platformConfig.findMany({ orderBy: { key: 'asc' } });
+  return rows.map((r) => (isSecretKey(r.key) ? { ...r, value: '********' } : r));
 }
 
 // B102 — readers like getConfigNumber() silently fall back to their default
@@ -72,6 +79,9 @@ function validateConfigValue(key, value, existing) {
 }
 
 async function adminUpsertConfig(key, { value, description, isPublic }, adminId) {
+  if (isSecretKey(key)) {
+    throw new ApiError(400, `"${key}" looks like a secret. Store secrets in the server environment, not in platform config.`, { code: 'CONFIG_SECRET_REFUSED' });
+  }
   validateConfigValue(key, value, await prisma.platformConfig.findUnique({ where: { key } }));
   const updated = await prisma.platformConfig.upsert({
     where:  { key },
