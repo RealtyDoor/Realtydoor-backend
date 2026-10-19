@@ -29,6 +29,17 @@ const STATUS_DEFAULT_CODES = {
   500: 'INTERNAL_ERROR',
 };
 
+// B128 — a malformed ObjectId (e.g. GET /api/escrow/all) reaches Prisma and
+// comes back as a driver error, not an ApiError, so it surfaced as a 500 on
+// every route that doesn't carry validateObjectId. Prisma reports it as
+// P2023 ("Malformed ObjectID ...") or as a validation error with the same
+// text; either is a bad client id, i.e. a 400.
+function isMalformedObjectIdError(err) {
+  if (!err) return false;
+  if (err.code === 'P2023') return true;
+  return /Malformed ObjectID|Invalid `?ObjectId|Inconsistent column data: Malformed/i.test(String(err.message || ''));
+}
+
 function notFound(req, res, next) {
   next(new ApiError(404, `Route not found: ${req.method} ${req.originalUrl}`));
 }
@@ -42,6 +53,14 @@ function errorHandler(err, req, res, next) {
       message: err.errors[0]?.message || 'Validation error',
       data: { code: 'VALIDATION_ERROR' },
       errors: err.errors.map((e) => ({ field: e.path.join('.'), message: e.message })),
+    });
+  }
+
+  if (isMalformedObjectIdError(err)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid id',
+      data: { code: 'INVALID_ID' },
     });
   }
 
@@ -71,4 +90,4 @@ function errorHandler(err, req, res, next) {
   });
 }
 
-module.exports = { notFound, errorHandler };
+module.exports = { notFound, errorHandler, isMalformedObjectIdError };

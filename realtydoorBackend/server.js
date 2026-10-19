@@ -24,12 +24,33 @@ const server = app.listen(PORT, () => {
   require('./src/jobs/paymentReconcile').start();
 });
 
+// Under nodemon a restart sends SIGUSR2/SIGINT and waits for the process to
+// exit. server.close() alone waits for every open keep-alive connection to
+// end, which in dev (browser tabs, polling clients) can be forever, so the dev
+// server froze on restart. Drop idle connections right away and force the exit
+// after a short deadline whatever is still open.
+const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 5000;
+
+function shutdown(exitCode) {
+  const forceTimer = setTimeout(() => {
+    logger.warn('Shutdown timed out — forcing exit', { timeoutMs: SHUTDOWN_TIMEOUT_MS });
+    process.exit(exitCode);
+  }, SHUTDOWN_TIMEOUT_MS);
+  forceTimer.unref();
+
+  server.close(() => {
+    logger.info('Server closed');
+    process.exit(exitCode);
+  });
+  if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+}
+
 process.on('unhandledRejection', (err) => {
   logger.error('Unhandled promise rejection — shutting down', {
     error: err.message,
     stack: err.stack,
   });
-  server.close(() => process.exit(1));
+  shutdown(1);
 });
 
 process.on('uncaughtException', (err) => {
@@ -37,18 +58,15 @@ process.on('uncaughtException', (err) => {
     error: err.message,
     stack: err.stack,
   });
-  server.close(() => process.exit(1));
+  shutdown(1);
 });
 
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received — graceful shutdown');
-  server.close(() => {
-    logger.info('Server closed');
-    process.exit(0);
-  });
+  shutdown(0);
 });
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received — graceful shutdown');
-  server.close(() => process.exit(0));
+  shutdown(0);
 });

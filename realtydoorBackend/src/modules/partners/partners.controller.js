@@ -2,7 +2,7 @@ const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./partners.service');
 const {
-  updateProfileSchema,
+  updateProfileSchema, unsupportedProfileFields,
   updateSettingsSchema,
   updateBankAccountSchema, updateBillingSchema,
   createSupportTicketSchema,
@@ -46,6 +46,12 @@ async function getProfile(req, res, next) {
 
 async function updateProfile(req, res, next) {
   try {
+    const unsupported = unsupportedProfileFields(req.body);
+    if (unsupported.length) {
+      throw new ApiError(400, `These profile fields cannot be saved yet: ${unsupported.join(', ')}.`, {
+        code: 'UNSUPPORTED_PROFILE_FIELDS', fields: unsupported,
+      });
+    }
     const data = updateProfileSchema.parse(req.body);
     const profile = await service.updateProfile(req.user.id, data);
     success(res, profile, 'Profile updated');

@@ -20,6 +20,18 @@ const updateProfileSchema = z.object({
   { message: 'At least one field must be provided' }
 );
 
+// B126 — the edit-profile form sends fields the backend has no column for
+// (languages, agency / agent registration number, email). zod drops unknown
+// keys silently, so the form reported "saved" while nothing was. The
+// controller rejects them by name using this list.
+const UPDATE_PROFILE_FIELDS = [
+  'name', 'companyName', 'bio', 'websiteUrl', 'profileImageUrl', 'partnerSubType',
+  'reraNumber', 'gstin', 'coverageAreas', 'address',
+];
+function unsupportedProfileFields(body) {
+  return Object.keys(body || {}).filter((k) => !UPDATE_PROFILE_FIELDS.includes(k));
+}
+
 const VALID_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const TIME_RE    = /^([01]\d|2[0-3]):[0-5]\d$/; // HH:MM
 
@@ -104,7 +116,7 @@ module.exports = {
   setPayoutStatusSchema,
   PAYOUT_STATUSES,
   acceptTermsSchema,
-  updateProfileSchema,
+  updateProfileSchema, unsupportedProfileFields,
   updateSettingsSchema,
   updateBankAccountSchema, updateBillingSchema,
   createSupportTicketSchema,

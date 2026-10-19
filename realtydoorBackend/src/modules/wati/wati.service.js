@@ -194,7 +194,8 @@ async function deliveryStatsFor(templateNames) {
   for (const row of recent) if (out[row.templateName]) out[row.templateName].sends7d = row._count.templateName;
   for (const row of lastSends) if (out[row.templateName]) out[row.templateName].lastSentAt = row.sentAt;
   for (const t of Object.values(out)) {
-    t.deliveryPct = t.total ? Math.round((t.reached / t.total) * 1000) / 10 : null;
+    // B131 — null (unknown) rather than 0% until a delivery callback has been seen for it.
+    t.deliveryPct = t.reached > 0 ? Math.round((t.reached / t.total) * 1000) / 10 : null;
   }
   return out;
 }
@@ -220,6 +221,19 @@ async function listMessages(filters, skip, limit) {
   return { data: data.map((m) => ({ ...m, recipientPhone: maskPhone(m.recipientPhone) })), total };
 }
 
+// B131 — messages only leave SENT when WATI's delivery callback reaches us,
+// which needs a public webhook URL. Until at least one DELIVERED/READ event has
+// ever arrived, a "0% delivery" figure just means "not tracked", so report
+// null plus the reason instead of a number that reads as total failure.
+function deliveryTracking(counts) {
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  const reached = REACHED.reduce((sum, s) => sum + (counts[s] || 0), 0);
+  if (reached === 0) {
+    return { deliveryPct: null, deliveryTracking: 'NOT_CONFIGURED' };
+  }
+  return { deliveryPct: Math.round((reached / total) * 1000) / 10, deliveryTracking: 'ENABLED' };
+}
+
 // 12.6 — header stats: spend MTD, per-message average, overall delivery rate.
 async function getWatiStats() {
   const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -234,8 +248,6 @@ async function getWatiStats() {
   ]);
 
   const counts = Object.fromEntries(byStatus.map((r) => [r.status, r._count.status]));
-  const total = Object.values(counts).reduce((a, b) => a + b, 0);
-  const reached = REACHED.reduce((sum, s) => sum + (counts[s] || 0), 0);
   const spendMtdPaise = mtd._sum.costPaise || 0;
 
   return {
@@ -248,7 +260,7 @@ async function getWatiStats() {
     messagesAllTime: allTime._count._all,
     spendAllTimePaise: allTime._sum.costPaise || 0,
     byStatus: counts,
-    deliveryPct: total ? Math.round((reached / total) * 1000) / 10 : null,
+    ...deliveryTracking(counts),
     accountConnected: !!(process.env.WATI_API_ENDPOINT && process.env.WATI_ACCESS_TOKEN),
   };
 }
@@ -285,6 +297,7 @@ async function recordDeliveryEvent({ messageId, phone, status, failureReason }) 
 }
 
 module.exports = {
+  deliveryTracking,
   listTemplates, getTemplateById, createTemplate, updateTemplate, deleteTemplate,
   submitTemplate, syncTemplateStatus, testSend,
   listMessages, getWatiStats, recordDeliveryEvent, deliveryStatsFor,

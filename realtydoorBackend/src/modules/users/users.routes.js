@@ -58,6 +58,9 @@ router.post('/verify-phone/otp', otpLimiter, perUserPhoneOtpLimiter, ctrl.verify
 
 // Inquiries tracker
 router.get('/leads', ctrl.getMyLeads);
+// B21 — registered before '/leads/:id' so 'claimable' is not read as an id.
+router.get('/leads/claimable', ctrl.getClaimableLeads);
+router.post('/leads/:id/claim', validateObjectId('id'), ctrl.claimLead);
 router.get('/leads/:id', validateObjectId('id'), ctrl.getMyLead);
 router.post('/leads/:leadId/rating', ctrl.rateLead);
 router.post('/leads/:id/cancel', ctrl.cancelLead);

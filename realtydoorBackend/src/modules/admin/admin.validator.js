@@ -61,8 +61,10 @@ const assignLeadSchema = z.object({
 });
 
 const rejectPropertySchema = z.object({
-  note: z.string().min(5, 'Rejection note must be at least 5 characters').max(500),
-});
+  // B122 — either a canned reason, a free-text note, or both; the service joins them.
+  reason: z.string().min(3).max(200).optional(),
+  note: z.string().min(5, 'Rejection note must be at least 5 characters').max(500).optional(),
+}).refine((d) => d.reason || d.note, { message: 'Give a reason or a note for the rejection' });
 
 const verifyKycSchema = z.object({
   action: z.enum(['APPROVE', 'REJECT'], {
@@ -80,6 +82,9 @@ const updateLoanStatusSchema = z.object({
     'SENT_TO_BANK', 'AWAITING_SANCTION', 'SANCTIONED', 'DISBURSED', 'REJECTED',
   ], { errorMap: () => ({ message: 'Invalid loan status' }) }),
   adminNote: z.string().max(1000).optional(),
+  // B129 — optional reason shown to the buyer when status is REJECTED. Stored as
+  // the transition's note (statusHistory / adminNote) and put in the notification.
+  rejectionReason: z.string().max(1000).optional(),
   // B61 — what the bank actually sanctioned (paise). Omitted = the requested amount, as before.
   sanctionedAmountPaise: z.number().positive().optional(),
   interestRatePct:   z.number().positive().max(100).optional(),

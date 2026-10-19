@@ -49,7 +49,11 @@ const REDACTED_KEYS = new Set([
 ]);
 
 // Max characters of response/request body to log before truncating
-const BODY_LOG_LIMIT = isDev ? 4000 : 1500;
+// Dev used to log up to 4000 chars of every request AND response body, which
+// (with the sanitize + stringify pass on each) made the dev server sluggish and
+// the console unreadable. Dev now keeps previews short and logs response bodies
+// only for errors.
+const BODY_LOG_LIMIT = isDev ? 300 : 1500;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -130,7 +134,7 @@ function requestLogger(req, res, next) {
                 : res.statusCode >= 400 ? 'warn'
                 : 'info';
 
-    const body = res._logPayload
+    const body = res._logPayload && (!isDev || res.statusCode >= 400)
       ? truncateBody(sanitizeObject(res._logPayload))
       : undefined;
 

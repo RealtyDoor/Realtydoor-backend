@@ -10,6 +10,8 @@ const { getMoneyInFlightReasons, revokeAllSessions } = require('../../lib/accoun
 const { getLoanEligibility, resolveVerifiedDocIds, attachLoanDocuments } = require('../../lib/loanEligibility');
 const { getConfigValue } = require('../config/config.service');
 const { notifyAdmins, createNotification } = require('../../lib/notifications');
+const { canLinkLeadToUser, UNLINKED_LEAD_WHERE, UNLINKABLE_STATUSES } = require('../../lib/leadClaim');
+const { presentTicketForBuyer } = require('../../lib/ticketPresenter');
 
 const DELETION_GRACE_PERIOD_DAYS = 30;
 const DEFAULT_TERMS_VERSION = '1';
@@ -87,6 +89,54 @@ const BUYER_LEAD_INCLUDE = {
     select: { id: true, name: true, profileImageUrl: true, companyName: true },
   },
 };
+
+// B21 — partner-added leads carry no buyerId. A buyer whose OTP-verified phone
+// matches the number the partner entered can list and claim them here; claiming
+// is what makes the inquiry (and its escrow payment) appear under their account.
+async function getClaimableLeads(userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true, phone: true, phoneVerified: true, deletedAt: true, isSuspended: true },
+  });
+  if (!user?.phone || user.phoneVerified !== true) return [];
+  return prisma.lead.findMany({
+    where: { AND: [UNLINKED_LEAD_WHERE, { buyerPhone: user.phone }, { status: { notIn: UNLINKABLE_STATUSES } }] },
+    select: {
+      id: true, refCode: true, status: true, createdAt: true, propertyInterest: true,
+      property: { select: { title: true, slug: true, city: true, locality: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+async function claimLead(userId, leadId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true, phone: true, phoneVerified: true, deletedAt: true, isSuspended: true },
+  });
+  if (user?.phoneVerified !== true) {
+    throw new ApiError(403, 'Verify your phone number before claiming an inquiry', { code: 'PHONE_NOT_VERIFIED' });
+  }
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  // Same 404 whether it doesn't exist or isn't this buyer's to claim — a
+  // different phone number must not learn that the lead exists.
+  if (!lead || !canLinkLeadToUser(lead, user)) throw new ApiError(404, 'Inquiry not found');
+
+  // Atomic: only the first claim wins if two requests race.
+  const claim = await prisma.lead.updateMany({
+    where: { AND: [{ id: leadId }, UNLINKED_LEAD_WHERE] },
+    data: { buyerId: userId },
+  });
+  if (claim.count === 0) throw new ApiError(409, 'This inquiry has already been claimed', { code: 'LEAD_ALREADY_CLAIMED' });
+
+  await notifyAdmins({
+    title: 'Partner-added inquiry claimed by buyer',
+    message: `${lead.refCode} was claimed by its buyer.`,
+    type: 'LEAD_CLAIMED',
+    linkUrl: `/admin/leads/${leadId}`,
+  });
+  return getMyLead(userId, leadId);
+}
 
 async function getMyLeads(userId) {
   const leads = await prisma.lead.findMany({
@@ -545,7 +595,13 @@ async function cancelAccountDeletion(userId, ipAddress, userAgent) {
 }
 
 function serializeDoc(doc) {
-  return { ...doc, uploadedAt: doc.uploadedAt?.toISOString?.() ?? doc.uploadedAt };
+  return {
+    ...doc,
+    uploadedAt: doc.uploadedAt?.toISOString?.() ?? doc.uploadedAt,
+    // B123 — the admin's rejection reason under an explicit, always-present
+    // key (null unless the document was rejected) for the vault screen.
+    rejectionReason: doc.status === 'REJECTED' ? (doc.rejectionNote ?? null) : null,
+  };
 }
 
 async function getDocuments(userId) {
@@ -626,11 +682,12 @@ async function raiseTicket(userId, subscriptionId, data) {
 }
 
 async function getMyTickets(userId) {
-  return prisma.serviceTicket.findMany({
+  const tickets = await prisma.serviceTicket.findMany({
     where: { userId },
     include: { subscription: { include: { service: { select: { name: true } } } } },
     orderBy: { createdAt: 'desc' },
   });
+  return tickets.map(presentTicketForBuyer);
 }
 
 async function getMyTicketById(userId, ticketId) {
@@ -639,7 +696,7 @@ async function getMyTicketById(userId, ticketId) {
     include: { subscription: { include: { service: { select: { name: true } } } } },
   });
   if (!ticket) throw new ApiError(404, 'Ticket not found');
-  return ticket;
+  return presentTicketForBuyer(ticket);
 }
 
 async function verifyTicket(userId, ticketId, { vendorRating, vendorRatingComment } = {}) {
@@ -846,7 +903,7 @@ async function getMyVideoTours(userId) {
 const disputeService = require('../disputes/disputes.service');
 
 module.exports = {
-  requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyLead, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getClaimableLeads, claimLead, getMyLeads, getMyLead, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
   formatProfileSettings,
   updateConsent,
   getConsentState, getPrivacyState, withdrawConsent, requestAccountDeletion, cancelAccountDeletion,

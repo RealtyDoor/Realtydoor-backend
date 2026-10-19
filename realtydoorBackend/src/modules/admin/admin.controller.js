@@ -44,6 +44,7 @@ const configService  = require('../config/config.service');
 const { upsertConfigSchema } = require('../config/config.validator');
 const partnerService = require('../partners/partners.service');
 const { setPayoutStatusSchema } = require('../partners/partners.validator');
+const { joinRejection } = require('../../lib/rejectionNote');
 const ApiError = require('../../utils/ApiError');
 
 async function getLeadById(req, res, next) {
@@ -161,6 +162,14 @@ async function setPayoutAccountStatus(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// B125 — re-check the partner's RazorpayX fund account and reconcile the status.
+async function syncPayoutAccount(req, res, next) {
+  try {
+    const result = await partnerService.syncPayoutAccount(req.params.id, req.user.id, req.ip);
+    success(res, result, result.changed ? 'Payout account status updated from RazorpayX' : 'Payout account is already in sync');
+  } catch (err) { next(err); }
+}
+
 // R14 — every partner's payout account in one view, not a one-at-a-time
 // status-setter with nothing to list from.
 async function listPayoutAccounts(req, res, next) {
@@ -216,8 +225,8 @@ async function requestPropertyChanges(req, res, next) {
 
 async function rejectProperty(req, res, next) {
   try {
-    const { note } = rejectPropertySchema.parse(req.body);
-    const property = await service.rejectProperty(req.params.id, note, req.user.id, req.ip);
+    const { reason, note } = rejectPropertySchema.parse(req.body);
+    const property = await service.rejectProperty(req.params.id, joinRejection(reason, note), req.user.id, req.ip);
     success(res, property, 'Property rejected');
   } catch (err) { next(err); }
 }
@@ -325,8 +334,10 @@ async function getLoanById(req, res, next) {
 
 async function updateLoanStatus(req, res, next) {
   try {
-    const { status, adminNote, ...extraFields } = updateLoanStatusSchema.parse(req.body);
-    const loan = await service.updateLoanStatus(req.params.id, status, adminNote, req.user.id, extraFields);
+    const { status, adminNote, rejectionReason, ...extraFields } = updateLoanStatusSchema.parse(req.body);
+    const loan = await service.updateLoanStatus(
+      req.params.id, status, status === 'REJECTED' ? (rejectionReason || adminNote) : adminNote, req.user.id, extraFields,
+    );
     success(res, loan, 'Loan status updated');
   } catch (err) { next(err); }
 }
@@ -746,7 +757,7 @@ async function deleteConfig(req, res, next) {
 module.exports = {
   getLeadById, getLeads, assignLead, autoAssignLead, autoAssignUnassignedLeads, createLead, confirmLead, rejectLead, overrideLeadOtp,
   listRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule, dispatchTicketAutomatically,
-  setPayoutAccountStatus, listPayoutAccounts,
+  setPayoutAccountStatus, listPayoutAccounts, syncPayoutAccount,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   requestPropertyChanges,
   requestKycDocuments,

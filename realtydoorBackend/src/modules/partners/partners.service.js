@@ -3,7 +3,7 @@ const ApiError = require('../../utils/ApiError');
 const { createNotification, notifyAdmins } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const logger = require('../../lib/logger');
-const { createPayoutContact, createPayoutFundAccount, validateFundAccountOrWarn } = require('../../lib/razorpay');
+const { createPayoutContact, createPayoutFundAccount, validateFundAccountOrWarn, rawGet } = require('../../lib/razorpay');
 const kycVerification = require('../../lib/kycVerification');
 
 // Previously had no endpoint at all to record this — KYC documents could be
@@ -178,6 +178,8 @@ async function getMyListings(partnerId, status) {
     orderBy: { createdAt: 'desc' },
     select: {
       id: true, title: true, slug: true, publishStatus: true, rejectionNote: true,
+      // B125 — the partner list needs to show what admin asked to change.
+      requestedChanges: true, requestedChangesNote: true, changesRequestedAt: true,
       propertyType: true, listingType: true, city: true, locality: true,
       price: true, bhk: true, images: true, createdAt: true, facing: true, furnishing: true,
     },
@@ -401,6 +403,52 @@ async function getPayoutAccount(partnerId) {
 // partner's own read: this reaches an admin screen, not a raw export, and
 // there is no reason an admin needs the full account number or PAN on a list
 // view either.
+// B125 — admin "sync with Razorpay": re-reads the partner's RazorpayX fund
+// account and reconciles our payoutAccountStatus with it, instead of waiting
+// for a payout to fail. Only downgrades when RazorpayX says the account is
+// inactive; only promotes a PENDING_VALIDATION account whose KYC is already
+// verified. Everything else is reported, not changed.
+async function syncPayoutAccount(partnerId, adminId, ip) {
+  const partner = await prisma.user.findFirst({
+    where: { id: partnerId, role: 'PARTNER' },
+    select: { id: true, kycStatus: true, payoutAccountStatus: true, razorpayFundAccountId: true },
+  });
+  if (!partner) throw new ApiError(404, 'Partner not found');
+  if (!partner.razorpayFundAccountId) {
+    throw new ApiError(409, 'This partner has no RazorpayX fund account to sync', { code: 'NO_FUND_ACCOUNT' });
+  }
+
+  let fundAccount;
+  try {
+    fundAccount = await rawGet(`/v1/fund_accounts/${partner.razorpayFundAccountId}`);
+  } catch (err) {
+    throw new ApiError(502, `Could not read the fund account from RazorpayX: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAYX_ERROR' });
+  }
+
+  const remoteActive = fundAccount?.active !== false;
+  const before = partner.payoutAccountStatus || null;
+  let after = before;
+  let note;
+  if (!remoteActive && before === 'ACTIVE') {
+    after = 'NEEDS_CLARIFICATION';
+    note = 'RazorpayX reports this fund account as inactive.';
+  } else if (remoteActive && before === 'PENDING_VALIDATION' && partner.kycStatus === 'VERIFIED') {
+    after = 'ACTIVE';
+  }
+
+  if (after !== before) {
+    await prisma.user.update({
+      where: { id: partnerId },
+      data: { payoutAccountStatus: after, ...(note && { payoutAccountNote: note }) },
+    });
+  }
+  await createAuditLog({
+    adminId, action: 'PAYOUT_ACCOUNT_SYNCED', targetType: 'User', targetId: partnerId,
+    before: { payoutAccountStatus: before }, after: { payoutAccountStatus: after, remoteActive }, ipAddress: ip,
+  });
+  return { payoutAccountStatus: after, changed: after !== before, remoteActive, fundAccountId: partner.razorpayFundAccountId };
+}
+
 async function listPayoutAccounts(filters, skip, limit) {
   const where = { role: 'PARTNER' };
   // "Not yet set up at all" is MISSING, not null (no default was ever
@@ -838,4 +886,5 @@ module.exports = {
   promotePayoutAccountOnKycApproval,
   getSupportTickets, getSupportTicketById, createSupportTicket,
   getPartnerAnalytics,
+  syncPayoutAccount,
 };

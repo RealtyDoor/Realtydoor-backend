@@ -26,6 +26,20 @@ async function createServiceOrder(userId, serviceId) {
   const service = await prisma.service.findUnique({ where: { id: serviceId, isActive: true } });
   if (!service) throw new ApiError(404, 'Service not found');
 
+  // B118 — a buyer could pay again for a plan they already hold (the confirm
+  // page had no way to know). An already-paid, unexpired subscription to the
+  // same service blocks a new order; a PENDING one is handled by BE-7 below.
+  const active = await prisma.userSubscription.findFirst({
+    where: { userId, serviceId, paymentStatus: 'SUCCESS', endDate: { gt: new Date() } },
+    select: { endDate: true },
+  });
+  if (active) {
+    throw new ApiError(400, `You already have an active ${service.name} plan until ${active.endDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}.`, {
+      code: 'SUBSCRIPTION_ALREADY_ACTIVE',
+      activeUntil: active.endDate,
+    });
+  }
+
   // BE-7 — previously every call created a brand-new Razorpay order and
   // UserSubscription row, so a double-click (or a retried request after a
   // slow response) left an orphaned order/row per click. A recent,

@@ -130,6 +130,9 @@ model ServiceTicket {
   partsCharge    Float?
   totalCharge    Float?
   invoiceUrl     String?
+  // B119 — the note admin wrote when resolving, kept apart from adminNotes
+  // (the internal running log) so it can be shown to the buyer.
+  resolutionNote String?
   // 7.6 — "first-time verify rate" needs to know whether THIS ticket was
   // ever reopened before being verified, not just whatever reopenReason
   // happens to say — reopenTicket sets this once and it never resets.

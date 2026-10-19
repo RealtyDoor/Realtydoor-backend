@@ -147,6 +147,7 @@ router.get('/partners/:id', ctrl.getPartnerById);
 // BE-14 — FINANCE-gated: this also approves bank-account change requests,
 // which swaps the real payout destination (razorpayFundAccountId).
 router.patch('/partners/:id/payout-account/status', requirePermission('FINANCE'), ctrl.setPayoutAccountStatus);
+router.post('/partners/:id/payout-account/sync',    requirePermission('FINANCE'), validateObjectId('id'), ctrl.syncPayoutAccount);
 // R14 — every partner's payout account in one list.
 router.get('/payout-accounts', ctrl.listPayoutAccounts);
 

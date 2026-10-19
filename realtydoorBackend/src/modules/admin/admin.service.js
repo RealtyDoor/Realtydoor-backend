@@ -20,6 +20,8 @@ const logger = require('../../lib/logger');
 const { cacheDel, cacheDelPattern } = require('../../lib/cache');
 const dataAckService = require('../partners/dataAck.service');
 const { attachLoanDocuments } = require('../../lib/loanEligibility');
+const { canLinkLeadToUser } = require('../../lib/leadClaim');
+const { countInquiriesByUser } = require('../../lib/inquiryCounts');
 const { averageResolutionDays } = require('../../lib/ticketStats');
 const { isLoanTransitionAllowed } = require('../../lib/loanTransitions');
 const { assertLeadNotPaused } = require('../../lib/accountDeletion');
@@ -265,12 +267,37 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
     if (!partner && partnerId) throw new ApiError(400, 'Partner not found or not KYC verified');
   }
 
+  // B21 — if a verified buyer account owns this phone number, link the lead to
+  // it now (the admin has just reviewed it), so it shows up in their inquiries
+  // and the escrow token can be paid. Otherwise it stays unlinked and the buyer
+  // can claim it from the app (GET /user/leads/claimable).
+  const buyerAccount = !lead.buyerId && lead.buyerPhone
+    ? await prisma.user.findFirst({
+        where: { phone: lead.buyerPhone, role: 'USER', phoneVerified: true, deletedAt: { isSet: false }, isSuspended: false },
+        select: { id: true, role: true, phone: true, phoneVerified: true, deletedAt: true, isSuspended: true },
+      })
+    : null;
+  const linkBuyer = buyerAccount && canLinkLeadToUser({ ...lead, status: 'ASSIGNED' }, buyerAccount) ? buyerAccount : null;
+
   const updated = await prisma.lead.update({
     where: { id: leadId },
-    data: partner
-      ? { assignedPartnerId: partner.id, status: 'ASSIGNED', assignedAt: new Date() }
-      : { status: 'UNASSIGNED' },
+    data: {
+      ...(partner
+        ? { assignedPartnerId: partner.id, status: 'ASSIGNED', assignedAt: new Date() }
+        : { status: 'UNASSIGNED' }),
+      ...(linkBuyer && { buyerId: linkBuyer.id }),
+    },
   });
+
+  if (linkBuyer) {
+    await createNotification({
+      userId: linkBuyer.id,
+      title: 'An inquiry was added for you',
+      message: `${lead.refCode} for "${lead.property?.title || lead.propertyInterest || 'a property'}" was added by a RealtyDoor partner using your phone number. You can follow it, and pay the token if you wish to proceed, from your inquiries.`,
+      type: 'LEAD_ASSIGNED',
+      linkUrl: `/user/inquiries/${leadId}`,
+    }).catch(() => null);
+  }
 
   if (partner) {
     await createNotification({
@@ -1376,7 +1403,9 @@ async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields 
   await createNotification({
     userId:  loan.userId,
     title:   'Loan Application Update',
-    message: `Your loan application status has been updated to ${status.replace(/_/g, ' ')}.`,
+    message: status === 'REJECTED' && adminNote
+      ? `Your loan application was not approved. Reason: ${adminNote}`
+      : `Your loan application status has been updated to ${status.replace(/_/g, ' ')}.`,
     type:    'LOAN_STATUS_UPDATE',
     // Dev feedback, 2026-10-08 (L5) — /dashboard/loan/:id doesn't exist
     // in the frontend. SANCTIONED has its own detail screen
@@ -1408,12 +1437,17 @@ function deriveUserStatus(user) {
 // grouped query per source for the whole page, not one per row. Spend counts
 // money actually taken: escrow tokens that were captured (HELD/RELEASED) and
 // successful service subscriptions.
-async function buyerActivityFor(userIds) {
+async function buyerActivityFor(users) {
+  const userIds = users.map((u) => u.id);
   const empty = () => ({ inquiryCount: 0, totalSpend: 0 });
   const byId = new Map(userIds.map((id) => [id, empty()]));
   if (!userIds.length) return byId;
+  const phones = users.map((u) => u.phone).filter(Boolean);
   const [leads, escrows, subs] = await Promise.all([
-    prisma.lead.groupBy({ by: ['buyerId'], where: { buyerId: { in: userIds } }, _count: { _all: true } }),
+    prisma.lead.findMany({
+      where: { OR: [{ buyerId: { in: userIds } }, ...(phones.length ? [{ buyerPhone: { in: phones } }] : [])] },
+      select: { buyerId: true, buyerPhone: true },
+    }),
     prisma.escrowTransaction.groupBy({
       by: ['buyerId'], where: { buyerId: { in: userIds }, status: { in: ['HELD', 'RELEASED'] } }, _sum: { amount: true },
     }),
@@ -1421,7 +1455,7 @@ async function buyerActivityFor(userIds) {
       by: ['userId'], where: { userId: { in: userIds }, paymentStatus: 'SUCCESS' }, _sum: { amountPaid: true },
     }),
   ]);
-  leads.forEach((r) => { byId.get(r.buyerId).inquiryCount = r._count._all; });
+  countInquiriesByUser(users, leads).forEach((n, id) => { byId.get(id).inquiryCount = n; });
   escrows.forEach((r) => { byId.get(r.buyerId).totalSpend += r._sum.amount || 0; });
   subs.forEach((r) => { byId.get(r.userId).totalSpend += r._sum.amountPaid || 0; });
   return byId;
@@ -1480,6 +1514,7 @@ async function getAllUsers(filters, skip, limit) {
       select: {
         id: true, refCode: true, name: true, email: true, phone: true, phoneVerified: true,
         role: true, kycStatus: true, partnerSubType: true, isNRI: true, isSuspended: true, createdAt: true,
+        address: true,
       },
       orderBy: { createdAt: 'desc' },
     }),
@@ -1492,7 +1527,7 @@ async function getAllUsers(filters, skip, limit) {
     prisma.user.count({ where: { ...baseWhere, isSuspended: false, phoneVerified: true } }),
   ]);
 
-  const activity = await buyerActivityFor(data.map((u) => u.id));
+  const activity = await buyerActivityFor(data);
 
   return {
     data: data.map((u) => ({ ...u, ...activity.get(u.id), status: deriveUserStatus(u) })),
@@ -1711,6 +1746,9 @@ async function presentTicket(ticket) {
   const ageMs = Date.now() - ticket.createdAt.getTime();
   return {
     ...ticket,
+    // B119 — the buyer's own attachments, under an explicit name so the admin
+    // screen can render them (comment photos stay on each comment).
+    userPhotos: ticket.photos || [],
     slaDeadline: deadline,
     slaBreached: !terminal && Date.now() > deadline,
     over12h: !terminal && ageMs > 12 * 3_600_000,
@@ -2017,6 +2055,7 @@ async function resolveTicket(ticketId, data, adminId, ip) {
       ...(invoiceUrl && { invoiceUrl }),
       ...(data.note !== undefined && {
         adminNotes: `${ticket.adminNotes ? `${ticket.adminNotes} | ` : ''}${data.note}`,
+        resolutionNote: data.note,
       }),
     },
   });
@@ -2402,6 +2441,7 @@ async function getUserByIdAdmin(userId) {
     select: {
       id: true, name: true, email: true, phone: true, phoneVerified: true, role: true,
       isNRI: true, partnerSubType: true, companyName: true, bio: true,
+      address: true,
       profileImageUrl: true, websiteUrl: true,
       isPremiumPartner: true, premiumValidUntil: true,
       kycStatus: true, kycRejectionNote: true, kycVerifiedAt: true,
@@ -2412,7 +2452,7 @@ async function getUserByIdAdmin(userId) {
     },
   });
   if (!user) throw new ApiError(404, 'User not found');
-  const activity = await buyerActivityFor([userId]);
+  const activity = await buyerActivityFor([user]);
   return { ...user, ...activity.get(userId) };
 }
 

@@ -144,6 +144,14 @@ async function toggleFavorite(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getClaimableLeads(req, res, next) {
+  try { success(res, await service.getClaimableLeads(req.user.id)); } catch (err) { next(err); }
+}
+
+async function claimLead(req, res, next) {
+  try { success(res, await service.claimLead(req.user.id, req.params.id), 'Inquiry added to your account'); } catch (err) { next(err); }
+}
+
 async function getDocuments(req, res, next) {
   try {
     const docs = await service.getDocuments(req.user.id);
@@ -315,6 +323,7 @@ module.exports = {
   withdrawConsent, withdrawConsentLegacy,
   requestAccountDeletion, requestAccountDeletionLegacy,
   cancelAccountDeletion,
+  getClaimableLeads, claimLead,
   getDocuments, uploadDocument, deleteDocument, getSubscriptions,
   raiseTicket, getMyTickets, getMyTicketById, verifyTicket,
   reopenTicket, withdrawTicket, getTicketComments, addTicketComment,
