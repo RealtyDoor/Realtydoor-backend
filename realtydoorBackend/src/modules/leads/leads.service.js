@@ -279,6 +279,8 @@ const PARTNER_LEAD_ESCROW_SELECT = {
   select: {
     id: true, amount: true, currency: true, status: true,
     heldAt: true, releasedAt: true, refundedAt: true, failedAt: true, createdAt: true,
+    // B38 — what was recorded at release; the partner finance table falls back to partnerShareAmount for its Commission column.
+    netAmount: true, partnerShareAmount: true,
   },
   orderBy: { createdAt: 'desc' },
 };

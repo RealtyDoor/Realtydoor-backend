@@ -94,6 +94,7 @@ async function adminResolveDispute(disputeId, { status, adminNote }, adminId) {
     title: `Your dispute is ${label}`,
     message: adminNote ? `Note from our team: ${adminNote.slice(0, 200)}` : `Status changed to ${label}.`,
     type: 'DISPUTE_UPDATED',
+    linkUrl: '/user/disputes', // the buyer screen exists now (frontend: /user/disputes)
   }).catch(() => null);
   notifyUser(dispute.userId, 'dispute_update', {
     name: '$userName', status: label, note: adminNote || 'No note added',
