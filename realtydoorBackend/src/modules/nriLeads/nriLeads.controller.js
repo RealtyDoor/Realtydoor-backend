@@ -1,6 +1,7 @@
 const prisma = require('../../lib/prisma');
 const { created } = require('../../utils/ApiResponse');
 const { z } = require('zod');
+const { notifyAdmins } = require('../../lib/notifications');
 
 const nriLeadSchema = z.object({
   name: z.string().min(2).max(100),
@@ -16,6 +17,12 @@ async function submit(req, res, next) {
   try {
     const data = nriLeadSchema.parse(req.body);
     const lead = await prisma.nriLead.create({ data });
+    // B79 — admins only had the sidebar count.
+    await notifyAdmins({
+      title: 'New NRI lead',
+      message: `${data.name} is looking in ${data.area} (${data.homeType}, budget ${data.budget}).`,
+      type: 'NRI_LEAD_NEW',
+    });
     created(res, { id: lead.id }, 'We will get back to you shortly.');
   } catch (err) { next(err); }
 }

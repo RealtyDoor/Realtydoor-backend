@@ -1,6 +1,7 @@
 const prisma = require('../../lib/prisma');
 const { created } = require('../../utils/ApiResponse');
 const { z } = require('zod');
+const { notifyAdmins } = require('../../lib/notifications');
 
 const contactSchema = z.object({
   name: z.string().min(2).max(100),
@@ -15,6 +16,12 @@ async function submit(req, res, next) {
     const data = contactSchema.parse(req.body);
     const msg = await prisma.contactMessage.create({
       data: { ...data, userId: req.user?.id || null, role: req.user?.role || null },
+    });
+    // B79 — admins only had the sidebar count.
+    await notifyAdmins({
+      title: 'New contact message',
+      message: `${data.name}: ${data.subject}`,
+      type: 'CONTACT_MESSAGE_NEW',
     });
     created(res, { id: msg.id }, 'Message received. We will get back to you shortly.');
   } catch (err) { next(err); }

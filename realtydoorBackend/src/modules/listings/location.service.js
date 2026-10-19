@@ -204,7 +204,7 @@ async function updateLocation(propertyId, data, { adminId, adminName }, ip) {
       title: 'Listing location updated by Admin',
       message: `Admin corrected the location on "${property.title}". Reason: ${reason}`,
       type: 'PROPERTY_LOCATION_EDITED',
-      linkUrl: `/partner/listings/${propertyId}`,
+      linkUrl: `/partners/listings/${propertyId}`,
     });
   }
 

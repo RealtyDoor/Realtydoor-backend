@@ -9,6 +9,7 @@ const { createPrivacyAuditLog } = require('../../lib/privacyAuditLog');
 const { getMoneyInFlightReasons, revokeAllSessions } = require('../../lib/accountDeletion');
 const { getLoanEligibility, resolveVerifiedDocIds, attachLoanDocuments } = require('../../lib/loanEligibility');
 const { getConfigValue } = require('../config/config.service');
+const { notifyAdmins, createNotification } = require('../../lib/notifications');
 
 const DELETION_GRACE_PERIOD_DAYS = 30;
 const DEFAULT_TERMS_VERSION = '1';
@@ -607,9 +608,21 @@ async function raiseTicket(userId, subscriptionId, data) {
   // an explicit `subscriptionId: undefined` in the create data is fine for
   // Prisma, but this keeps the intent explicit rather than relying on that.
   const { subscriptionId: _sid, ...rest } = data;
-  return prisma.serviceTicket.create({
+  const ticket = await prisma.serviceTicket.create({
     data: { ...rest, userId, ...(subscriptionId && { subscriptionId }) },
   });
+
+  // B42 — admins only had the sidebar badge. Urgent tickets get a bell
+  // entry; NORMAL ones stay badge-only so a busy queue doesn't flood it.
+  if (ticket.priority === 'HIGH' || ticket.priority === 'URGENT') {
+    await notifyAdmins({
+      title: `${ticket.priority === 'URGENT' ? 'Urgent' : 'High-priority'} service ticket`,
+      message: ticket.subject,
+      type: 'TICKET_NEW',
+      linkUrl: `/admin/tickets/${ticket.id}`,
+    });
+  }
+  return ticket;
 }
 
 async function getMyTickets(userId) {
@@ -681,9 +694,18 @@ async function addTicketComment(userId, ticketId, { text, photos }) {
   const ticket = await prisma.serviceTicket.findFirst({ where: { id: ticketId, userId } });
   if (!ticket) throw new ApiError(404, 'Ticket not found');
 
-  return prisma.ticketComment.create({
+  const comment = await prisma.ticketComment.create({
     data: { ticketId, authorId: userId, authorRole: 'USER', text, photos: photos || [] },
   });
+
+  // B42 — the admin never learned the user had added a note.
+  await notifyAdmins({
+    title: 'New note on a service ticket',
+    message: `${ticket.subject}: ${text.length > 120 ? `${text.slice(0, 117)}...` : text}`,
+    type: 'TICKET_USER_NOTE',
+    linkUrl: `/admin/tickets/${ticketId}`,
+  });
+  return comment;
 }
 
 // Backend gaps handoff, 2026-10-10 (#5) — the frontend's document-upload
@@ -695,7 +717,7 @@ async function addTicketComment(userId, ticketId, { text, photos }) {
 // transaction as the insert so nothing changes between the check and the
 // write.
 async function createLoanApplication(userId, { documentSharingConsent: _documentSharingConsent, documentSharingConsentVersion, submittedDocIds: _submittedDocIds, tenureMonths, ...data }) {
-  return prisma.$transaction(async (tx) => {
+  const application = await prisma.$transaction(async (tx) => {
     const eligibility = await getLoanEligibility(userId, tx);
     if (!eligibility.eligible) {
       throw new ApiError(409, 'All required documents must be verified before you can apply', {
@@ -748,6 +770,24 @@ async function createLoanApplication(userId, { documentSharingConsent: _document
       },
     });
   });
+
+  // B62 — neither side got an in-app signal that the application exists.
+  // After the transaction commits; failures here must not undo the application.
+  const applicant = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } }).catch(() => null);
+  await notifyAdmins({
+    title: 'New loan application',
+    message: `${applicant?.name || 'A buyer'} applied for a home loan${application.loanAmountRequestedPaise ? ` of ₹${Math.round(application.loanAmountRequestedPaise / 100).toLocaleString('en-IN')}` : ''}.`,
+    type: 'LOAN_APPLICATION_NEW',
+    linkUrl: '/admin/loans',
+  });
+  await createNotification({
+    userId,
+    title: 'Loan application received',
+    message: 'We have received your loan application and will keep you posted here as it moves through the bank.',
+    type: 'LOAN_STATUS_UPDATE',
+    linkUrl: '/user/loans',
+  }).catch(() => null);
+  return application;
 }
 
 async function getLoanEligibilityForUser(userId) {
@@ -772,7 +812,7 @@ async function getLoanApplicationById(userId, loanId) {
 async function requestVideoTour(userId, propertyId, userNote) {
   const property = await prisma.property.findFirst({
     where: { id: propertyId, publishStatus: 'APPROVED' },
-    select: { id: true },
+    select: { id: true, title: true },
   });
   if (!property) throw new ApiError(404, 'Property not found');
 
@@ -781,9 +821,16 @@ async function requestVideoTour(userId, propertyId, userNote) {
   });
   if (existing) throw new ApiError(409, 'You already have a pending video tour request for this property');
 
-  return prisma.videoTourRequest.create({
+  const tour = await prisma.videoTourRequest.create({
     data: { userId, propertyId, userNote },
   });
+  // B79 — admins only had the sidebar count.
+  await notifyAdmins({
+    title: 'New video tour request',
+    message: `A buyer requested a video tour of "${property.title}".`,
+    type: 'VIDEO_TOUR_NEW',
+  });
+  return tour;
 }
 
 async function getMyVideoTours(userId) {

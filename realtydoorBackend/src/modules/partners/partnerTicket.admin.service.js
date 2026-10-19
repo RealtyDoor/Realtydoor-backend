@@ -106,7 +106,7 @@ async function updatePartnerTicket(id, { status, adminReply }, adminId, ip) {
     userId: existing.partnerId,
     title, message,
     type: 'PARTNER_TICKET_UPDATED',
-    linkUrl: `/partner/support-tickets/${id}`,
+    linkUrl: `/partners/support/${id}`,
   });
   if (adminReply !== undefined) notifyUser(existing.partnerId, 'partner_support_reply', { partner_name: '$userName', ticket_ref: existing.ticketNo });
 

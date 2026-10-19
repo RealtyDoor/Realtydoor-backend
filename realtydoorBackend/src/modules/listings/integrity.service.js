@@ -167,7 +167,7 @@ async function revokeMandate(id, reason, adminId, ip) {
     title: 'Listing mandate revoked',
     message: `Your mandate for "${m.property.title}" was revoked. Reason: ${reason}`,
     type: 'MANDATE_REVOKED',
-    linkUrl: `/partner/listings/${m.propertyId}`,
+    linkUrl: `/partners/listings/${m.propertyId}`,
   });
 
   await createAuditLog({

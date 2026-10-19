@@ -99,7 +99,7 @@ async function revokeReferral(id, reason, adminId, ip, requirePartnerId = null) 
       title: 'Referral revoked',
       message: `Your referral for ${referral.buyerName} was revoked. Reason: ${reason}`,
       type: 'ADVISOR_REFERRAL_REVOKED',
-      linkUrl: '/partner/referrals',
+      linkUrl: '/partners/referrals',
     });
     await createAuditLog({
       adminId, action: 'ADVISOR_REFERRAL_REVOKED', targetType: 'User', targetId: referral.advisorId,

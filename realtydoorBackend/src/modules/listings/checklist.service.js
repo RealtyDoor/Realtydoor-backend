@@ -299,7 +299,7 @@ async function rejectChecklistDocument(docId, note, adminId, ip) {
     title: 'Listing document needs resubmission',
     message: `${DOCUMENT_LABELS[doc.documentType] || doc.documentType} on "${doc.property.title}" was rejected: ${note}`,
     type: 'LISTING_DOCUMENT_REJECTED',
-    linkUrl: `/partner/listings/${doc.propertyId}`,
+    linkUrl: `/partners/listings/${doc.propertyId}`,
   });
 
   await createAuditLog({

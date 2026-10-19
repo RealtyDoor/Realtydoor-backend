@@ -726,6 +726,32 @@ async function release(escrowId, adminId, releaseData, ip) {
     ipAddress: ip,
   });
 
+  // B34 — neither the buyer nor the partner was told the deal's money had
+  // moved. Fire-and-forget: the release is already durable and audited.
+  (async () => {
+    const lead = await prisma.lead.findUnique({
+      where: { id: escrow.leadId },
+      select: { refCode: true, assignedPartnerId: true, property: { select: { title: true } } },
+    });
+    const dealLabel = lead?.property?.title || lead?.refCode || 'your deal';
+    await createNotification({
+      userId: escrow.buyerId,
+      title: 'Escrow Released',
+      message: `Your token advance for ${dealLabel} has been released to the seller. The deal is complete.`,
+      type: 'ESCROW_RELEASED',
+      linkUrl: `/user/inquiries/${escrow.leadId}`,
+    });
+    if (lead?.assignedPartnerId) {
+      await createNotification({
+        userId: lead.assignedPartnerId,
+        title: 'Escrow Released',
+        message: `The escrow for ${lead.refCode || dealLabel} has been released by admin.`,
+        type: 'ESCROW_RELEASED',
+        linkUrl: `/partners/leads/${escrow.leadId}`,
+      });
+    }
+  })().catch((err) => logger.warn('[Escrow] Post-release notification failed', { escrowId, error: err.message }));
+
   return { ...updated, platformFeePct: plan.platformFeePct, platformFeeAmount: platformFee, partnerShareAmount: partnerShare };
 }
 

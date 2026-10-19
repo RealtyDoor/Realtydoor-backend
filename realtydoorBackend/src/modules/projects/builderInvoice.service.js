@@ -90,7 +90,7 @@ async function collectInvoice(id, adminId, ip) {
     title: 'Brokerage payment confirmed',
     message: `Your brokerage payment of ₹${invoice.amount.toLocaleString('en-IN')} has been confirmed. Thank you.`,
     type: 'BUILDER_INVOICE_COLLECTED',
-    linkUrl: '/partner/projects',
+    linkUrl: '/partners/projects',
   });
 
   await createAuditLog({

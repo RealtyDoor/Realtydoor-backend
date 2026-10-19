@@ -212,7 +212,7 @@ async function approveChangeRequest(id, { adminId, adminName, note, force }, ip)
     title: 'Listing changes approved',
     message: `Your ${entries.length} change(s) to "${property.title}" are now live.`,
     type: 'PROPERTY_CHANGES_APPROVED',
-    linkUrl: `/partner/listings/${property.id}`,
+    linkUrl: `/partners/listings/${property.id}`,
   });
 
   await createAuditLog({
@@ -252,7 +252,7 @@ async function rejectChangeRequest(id, { adminId, note }, ip) {
     title: 'Listing changes not approved',
     message: `Your changes to "${cr.property.title}" were not applied. Reason: ${note}`,
     type: 'PROPERTY_CHANGES_REJECTED',
-    linkUrl: `/partner/listings/${cr.property.id}`,
+    linkUrl: `/partners/listings/${cr.property.id}`,
   });
 
   await createAuditLog({

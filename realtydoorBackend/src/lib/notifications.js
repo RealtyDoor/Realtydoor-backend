@@ -1,5 +1,6 @@
 const prisma = require('./prisma');
 const { canSend } = require('./notificationGate');
+const logger = require('./logger');
 
 // 10.1 / B6.1 — the notification pages group by category chips (Leads,
 // Escrow, KYC, Listings, System). Derived from `type` here rather than asked
@@ -48,6 +49,9 @@ const CATEGORY_BY_TYPE = {
   TICKET_VENDOR_REASSIGNED: 'SERVICES',
   TICKET_RESOLVED: 'SERVICES',
   TICKET_ADMIN_REPLY: 'SERVICES',
+  // B42 — the admin-facing side of the same lifecycle.
+  TICKET_NEW: 'SERVICES',
+  TICKET_USER_NOTE: 'SERVICES',
   // Partner support tickets (Help & Support, partner side) — distinct from
   // the buyer-facing post-purchase TICKET_* types above, so SYSTEM rather
   // than SERVICES.
@@ -100,7 +104,21 @@ async function broadcastNotification({ userIds, title, message, type, linkUrl })
   });
 }
 
+// Same notification to every admin. Failures are swallowed: this is called
+// from the tail of a user-facing write that has already succeeded, and an
+// admin bell hiccup must not turn it into an error response.
+async function notifyAdmins({ title, message, type, linkUrl }) {
+  try {
+    const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
+    if (!admins.length) return { count: 0 };
+    return await broadcastNotification({ userIds: admins.map((a) => a.id), title, message, type, linkUrl });
+  } catch (err) {
+    logger.warn('[Notifications] notifyAdmins failed', { type, error: err.message });
+    return { count: 0 };
+  }
+}
+
 module.exports = {
-  createNotification, broadcastNotification,
+  createNotification, broadcastNotification, notifyAdmins,
   categoryFor, NOTIFICATION_CATEGORIES, CATEGORY_BY_TYPE,
 };

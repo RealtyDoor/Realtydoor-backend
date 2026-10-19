@@ -24,7 +24,7 @@ async function approveProject(id, adminId, ip) {
     title: 'Project approved',
     message: `"${project.title}" is now live, with all ${project._count.units} unit(s).`,
     type: 'PROPERTY_APPROVED',
-    linkUrl: `/partner/projects/${id}`,
+    linkUrl: `/partners/projects/${id}`,
   });
 
   await createAuditLog({
@@ -49,7 +49,7 @@ async function rejectProject(id, note, adminId, ip) {
     title: 'Project rejected',
     message: `"${project.title}" was not approved. Reason: ${note}`,
     type: 'PROPERTY_REJECTED',
-    linkUrl: `/partner/projects/${id}`,
+    linkUrl: `/partners/projects/${id}`,
   });
 
   await createAuditLog({
@@ -86,7 +86,7 @@ async function requestProjectChanges(id, { items, note }, adminId, ip) {
     title: 'Changes requested on your project',
     message: `Admin asked for ${items.length} fix(es) on "${project.title}"${note ? `: ${note}` : ''}`,
     type: 'PROPERTY_CHANGES_REQUESTED',
-    linkUrl: `/partner/projects/${id}`,
+    linkUrl: `/partners/projects/${id}`,
   });
 
   await createAuditLog({

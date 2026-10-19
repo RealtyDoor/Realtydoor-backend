@@ -685,7 +685,7 @@ async function lockLeadTerms(leadId, adminId, ip) {
         ? `Your commission for this deal is locked at ₹${amt.amount.toLocaleString('en-IN')} (${line.pct}% of the fee).`
         : `Your commission for this deal is locked at ${line.pct}% of the fee.`,
       type: 'COMMISSION_LOCKED',
-      linkUrl: '/partner/finance',
+      linkUrl: '/partners/finance',
     });
   }
 
@@ -777,7 +777,7 @@ async function collectLeadCommission(leadId, adminId, ip) {
       title: 'Success fee payment confirmed',
       message: `Your success fee payment for "${lead.property.title}" has been confirmed. Thank you.`,
       type: 'COMMISSION_COLLECTED',
-      linkUrl: '/partner/listings',
+      linkUrl: '/partners/listings',
     });
   }
 
@@ -881,7 +881,7 @@ async function sendFeeReminder(leadId, adminId, ip) {
     title: 'Success fee payment reminder',
     message: `Your success fee for "${lead.property.title}" is still due.`,
     type: 'COMMISSION_FEE_REMINDER',
-    linkUrl: lead.invoiceUrl || '/partner/finance',
+    linkUrl: lead.invoiceUrl || '/partners/finance',
   });
 
   await createAuditLog({

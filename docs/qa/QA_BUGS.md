@@ -417,3 +417,18 @@ Manual / UI results:
 | B34 | partner+user | medium | Notifications on close/release | Partner marks closed; admin releases | Partner and buyer get "deal closed" / "escrow released" in-app notifications | Partner Recent activity has only "Commission locked"; Krishna's notifications have only "Token Advance Received" (no closed/released); Krishna's bell shows an unread dot while the list has nothing new. His inquiry card does update to "Deal closed — your token went through escrow to get here" (step 5/8) | open |
 | B17b | partner | HIGH | Allocation letter | Upload qa .png vs .pdf to /close | PDF accepted | CONFIRMED: PNG accepted (leads.routes uses image-only uploader), PDF → 500. UI text still says "PDF signed by buyer and seller" | open |
 | B9 | admin | info | Dashboard | Open /admin | "Escrow held ₹2,50,000 (1 txn)" matches partner "Escrow in flight" | Partner Developer One shows ₹0 in flight; admin top partners all 0; "Lead #E3FC60 dropped by Partner Unknown" | open (verify who owns escrow) |
+
+### Backend fixes — batch 3 (cloud session, branched from develop-extended)
+| Bug | Fix | Verified |
+|---|---|---|
+| B42 | `users.service.js`: HIGH/URGENT ticket and a user note notify all admins (`notifyAdmins`, new in `lib/notifications.js`) | unit test for `notifyAdmins`; not run against a DB |
+| B63/B63b/B72 | all `createNotification` `linkUrl`s now use `/partners/...` (was `/partner/...`), `/partners/support/<id>`, `/user/subscriptions` (was `/dashboard/services`) | grep only |
+| B34/B44 | partner closes deal → buyer notified, admin message shows ref code; escrow release → buyer + assigned partner notified | not run |
+| B5 | assignment notification names the lead (ref code + buyer); drop-request messages use the ref code | not run |
+| B62 | new loan application notifies admins and confirms to the buyer | not run |
+| B57 | document approve/reject notifies the buyer | not run |
+| B79/B68 | contact message, NRI lead, video-tour request, paid subscription notify admins; tour scheduled/completed notifies the buyer | not run |
+| B60 | `lib/loanTransitions.js` enforces the loan pipeline in `updateLoanStatus` | unit tests |
+| B39 | `lib/ticketStats.js`: rows with resolvedAt < createdAt are skipped in the average | unit tests |
+| B10 | `partnerAddLead` only accepts the partner's APPROVED listings | not run |
+| B77/B78 | video-tour list returns `assignedToName`; `assignedTo` must be an ADMIN-role user | not run |

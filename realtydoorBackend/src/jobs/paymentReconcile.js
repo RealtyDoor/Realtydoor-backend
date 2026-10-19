@@ -107,7 +107,7 @@ async function applyLivePayoutStatus(escrow, leg, payoutId, live) {
           title: 'Payout received',
           message: `Your commission payout has been processed${live.utr ? ` (UTR ${live.utr})` : ''}.`,
           type: 'PAYOUT_PROCESSED',
-          linkUrl: '/partner/finance',
+          linkUrl: '/partners/finance',
         });
         notifyUser(lead.assignedPartnerId, 'escrow_released', {
           name: '$userName', amount: Math.round((live.amount || 0) / 100).toLocaleString('en-IN'), lead_ref: lead.refCode || 'your lead',

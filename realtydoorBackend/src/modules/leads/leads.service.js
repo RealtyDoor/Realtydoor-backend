@@ -156,10 +156,12 @@ async function partnerAddLead(partnerId, data) {
   // Scoped to the partner's own listings — they shouldn't be able to attach a
   // self-sourced buyer to someone else's property.
   const property = await prisma.property.findFirst({
-    where: { id: data.propertyId, partnerId },
+    // B10 — and only a live (approved) one: a rejected/pending listing is not
+    // something a buyer can be sent to.
+    where: { id: data.propertyId, partnerId, publishStatus: 'APPROVED' },
     select: { id: true, title: true },
   });
-  if (!property) throw new ApiError(404, 'Property not found in your listings');
+  if (!property) throw new ApiError(404, 'Property not found among your approved listings');
 
   // B3.2 — same buyer, same property, still active.
   const duplicate = await prisma.lead.findFirst({
@@ -546,10 +548,22 @@ async function closeLead(leadId, partnerId, { closingPrice } = {}) {
   await Promise.all(admins.map((admin) => createNotification({
     userId: admin.id,
     title: 'Deal Closed — Escrow Review Needed',
-    message: `Lead #${leadId} has been marked as closed. Review escrow release.`,
+    // B44 — the readable ref code, not the Mongo id.
+    message: `Lead ${lead.refCode || `#${leadId}`} has been marked as closed. Review escrow release.`,
     type: 'DEAL_CLOSED',
     linkUrl: `/admin/leads/${leadId}`,
   })));
+
+  // B34 — the buyer saw the inquiry card change but got no bell entry.
+  if (lead.buyerId) {
+    await createNotification({
+      userId: lead.buyerId,
+      title: 'Deal Closed',
+      message: `${lead.refCode || 'Your inquiry'} has been marked as closed by your partner. Admin is reviewing the escrow release.`,
+      type: 'DEAL_CLOSED',
+      linkUrl: `/user/inquiries/${leadId}`,
+    }).catch(() => null);
+  }
 
   return { message: 'Lead marked as closed. Admin will review escrow release.' };
 }
@@ -573,7 +587,7 @@ async function requestDrop(leadId, partnerId, reason) {
   await Promise.all(admins.map((admin) => createNotification({
     userId: admin.id,
     title: 'Lead Drop Requested',
-    message: `Partner has requested to drop Lead #${leadId}. Reason: ${reason}`,
+    message: `Partner has requested to drop ${lead.refCode || `Lead #${leadId}`}. Reason: ${reason}`,
     type: 'LEAD_DROP_REQUESTED',
     linkUrl: `/admin/leads/${leadId}`,
   })));
@@ -602,9 +616,9 @@ async function adminApproveDrop(leadId, adminId, ip) {
     await createNotification({
       userId: lead.assignedPartnerId,
       title: 'Drop Request Approved',
-      message: `Your drop request for Lead #${leadId} has been approved.`,
+      message: `Your drop request for ${lead.refCode || `Lead #${leadId}`} has been approved.`,
       type: 'LEAD_DROPPED',
-      linkUrl: `/partner/leads/${leadId}`,
+      linkUrl: `/partners/leads/${leadId}`,
     });
   }
 
@@ -632,9 +646,9 @@ async function adminRejectDrop(leadId, adminId, ip) {
     await createNotification({
       userId: lead.assignedPartnerId,
       title: 'Drop Request Rejected',
-      message: `Your drop request for Lead #${leadId} has been rejected. Please continue working the lead.`,
+      message: `Your drop request for ${lead.refCode || `Lead #${leadId}`} has been rejected. Please continue working the lead.`,
       type: 'LEAD_DROP_REJECTED',
-      linkUrl: `/partner/leads/${leadId}`,
+      linkUrl: `/partners/leads/${leadId}`,
     });
   }
 

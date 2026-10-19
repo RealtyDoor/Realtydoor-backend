@@ -20,6 +20,8 @@ const logger = require('../../lib/logger');
 const { cacheDel, cacheDelPattern } = require('../../lib/cache');
 const dataAckService = require('../partners/dataAck.service');
 const { attachLoanDocuments } = require('../../lib/loanEligibility');
+const { averageResolutionDays } = require('../../lib/ticketStats');
+const { isLoanTransitionAllowed } = require('../../lib/loanTransitions');
 const { assertLeadNotPaused } = require('../../lib/accountDeletion');
 const partnerService = require('../partners/partners.service');
 const { buildTicketChargeReceiptPdf } = require('../../lib/pdfReceipt');
@@ -430,16 +432,17 @@ async function assignLead(leadId, partnerId, adminId, ip) {
       title: 'Lead reassigned',
       message: `${lead.refCode || 'A lead'} has been reassigned to another partner.`,
       type: 'LEAD_ASSIGNED',
-      linkUrl: `/partner/leads`,
+      linkUrl: `/partners/leads`,
     });
   }
 
   await createNotification({
     userId: partnerId,
     title: isReassign ? 'Lead Reassigned To You' : 'New Lead Assigned',
-    message: isReassign ? 'A lead has been reassigned to you.' : 'A new buyer lead has been assigned to you.',
+    // B5 — name the lead so the partner can tell which one without opening it.
+    message: `${isReassign ? 'Lead reassigned to you' : 'New buyer lead assigned to you'}: ${lead.refCode || 'a buyer lead'}${lead.buyerName ? ` (${lead.buyerName})` : ''}.`,
     type: 'LEAD_ASSIGNED',
-    linkUrl: `/partner/leads/${leadId}`,
+    linkUrl: `/partners/leads/${leadId}`,
   });
 
   await createAuditLog({
@@ -887,7 +890,7 @@ async function rejectProperty(propertyId, note, adminId, ip) {
     title: 'Listing Needs Changes',
     message: `Your listing "${property.title}" was not approved. Reason: ${note}`,
     type: 'PROPERTY_REJECTED',
-    linkUrl: `/partner/listings/${propertyId}`,
+    linkUrl: `/partners/listings/${propertyId}`,
   });
 
   await createAuditLog({
@@ -946,7 +949,7 @@ async function requestPropertyChanges(propertyId, { items, note }, adminId, admi
     title: 'Changes requested on your listing',
     message: `Admin asked for ${items.length} fix(es) on "${property.title}"${note ? `: ${note}` : ''}`,
     type: 'PROPERTY_CHANGES_REQUESTED',
-    linkUrl: `/partner/listings/${propertyId}`,
+    linkUrl: `/partners/listings/${propertyId}`,
   });
   notifyUser(property.partnerId, 'listing_changes_requested', {
     partner_name: '$userName', property_title: property.title,
@@ -1034,7 +1037,7 @@ async function requestKycDocuments(userId, { items, note, dueInDays }, adminId, 
     title: 'Additional KYC documents needed',
     message: `Admin asked for ${items.length} document(s)${note ? `: ${note}` : ''}`,
     type: 'KYC_UPDATE',
-    linkUrl: '/partner/profile',
+    linkUrl: '/partners/profile',
   });
 
   await createAuditLog({
@@ -1079,7 +1082,7 @@ async function verifyKyc(userId, action, note, adminId, ip) {
       ? 'Your KYC has been verified. You can now list properties and receive leads.'
       : `Your KYC was rejected. Reason: ${note}`,
     type: 'KYC_UPDATE',
-    linkUrl: '/partner/profile',
+    linkUrl: '/partners/profile',
   });
 
   await createAuditLog({
@@ -1178,7 +1181,7 @@ async function editProperty(propertyId, data, adminId, adminName, ip) {
       title:   'Your listing was edited by Admin',
       message: `Admin updated ${editLogRows.length} field(s) on "${property.title}". Changes are visible on your listing.`,
       type:    'PROPERTY_EDITED_BY_ADMIN',
-      linkUrl: `/partner/listings/${propertyId}`,
+      linkUrl: `/partners/listings/${propertyId}`,
     });
 
     await createAuditLog({
@@ -1327,6 +1330,9 @@ async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields 
     include: { user: { select: { email: true, notifEmail: true, marketingOptIn: true } } },
   });
   if (!loan) throw new ApiError(404, 'Loan application not found');
+  if (!isLoanTransitionAllowed(loan.status, status)) {
+    throw new ApiError(400, `Cannot move a loan from ${loan.status} to ${status}`, { code: 'INVALID_LOAN_TRANSITION' });
+  }
 
   const statusFields = {};
   if (status === 'SANCTIONED') statusFields.sanctionedAt = new Date();
@@ -1792,9 +1798,7 @@ async function getTicketStats() {
   const inProgress = tickets.filter((t) => t.status === 'IN_PROGRESS').length;
   const resolvedThisWeek = tickets.filter((t) => t.resolvedAt && t.resolvedAt >= startOfWeek).length;
   const resolved = tickets.filter((t) => t.resolvedAt);
-  const avgResolutionDays = resolved.length
-    ? resolved.reduce((sum, t) => sum + (t.resolvedAt - t.createdAt) / 86_400_000, 0) / resolved.length
-    : 0;
+  const avgResolutionDays = averageResolutionDays(resolved);
 
   // 7.3 — unassigned tickets whose SLA is already blown, the admin screen's
   // "needs attention right now" count.
@@ -2274,7 +2278,7 @@ async function adminVerifyDocument(docId, action, note, adminId) {
   const isApprove = action === 'APPROVE';
   if (!isApprove && !note) throw new ApiError(400, 'Rejection note is required');
 
-  return prisma.userDocument.update({
+  const updated = await prisma.userDocument.update({
     where: { id: docId },
     data: {
       status:            isApprove ? 'APPROVED' : 'REJECTED',
@@ -2284,6 +2288,20 @@ async function adminVerifyDocument(docId, action, note, adminId) {
       rejectionNote:     isApprove ? null : note,
     },
   });
+
+  // B57 — the buyer only found out by re-opening the vault.
+  const docLabel = String(doc.documentType || 'document').replace(/_/g, ' ').toLowerCase();
+  await createNotification({
+    userId: doc.userId,
+    title: isApprove ? 'Document verified' : 'Document needs attention',
+    message: isApprove
+      ? `Your ${docLabel} has been verified.`
+      : `Your ${docLabel} was not accepted: ${note}`,
+    type: 'DOCUMENT_REVIEWED',
+    linkUrl: '/user/documents',
+  }).catch(() => null);
+
+  return updated;
 }
 
 // ─── ADMIN DETAIL VIEWS ───────────────────────────────────────────────────────
@@ -2686,7 +2704,16 @@ async function listVideoTours(filters, skip, limit) {
     }),
     prisma.videoTourRequest.count({ where }),
   ]);
-  return { data, total };
+
+  // B77 — the list showed the assignee as a raw id. Looked up separately (no
+  // Prisma relation on assignedTo) and null-safe: a deleted staff user just
+  // leaves assignedToName empty instead of failing the page.
+  const staffIds = [...new Set(data.map((t) => t.assignedTo).filter(Boolean))];
+  const staff = staffIds.length
+    ? await prisma.user.findMany({ where: { id: { in: staffIds } }, select: { id: true, name: true } })
+    : [];
+  const nameById = new Map(staff.map((u) => [u.id, u.name]));
+  return { data: data.map((t) => ({ ...t, assignedToName: t.assignedTo ? nameById.get(t.assignedTo) || null : null })), total };
 }
 
 async function uploadVideoTourFile(id, fileUrl) {
@@ -2703,6 +2730,13 @@ async function updateVideoTour(id, { assignedTo, videoUrl, scheduledAt, adminNot
   const tour = await prisma.videoTourRequest.findUnique({ where: { id } });
   if (!tour) throw new ApiError(404, 'Video tour request not found');
 
+  // B78 — assignedTo is a free-text id on the form; it must be an internal
+  // staff (ADMIN-role) account, not a partner or buyer.
+  if (assignedTo !== undefined) {
+    const assignee = await prisma.user.findFirst({ where: { id: assignedTo, role: 'ADMIN' }, select: { id: true } });
+    if (!assignee) throw new ApiError(400, 'assignedTo must be an internal staff (admin) account');
+  }
+
   const data = {};
   if (assignedTo !== undefined) { data.assignedTo = assignedTo; data.status = 'ASSIGNED'; }
   if (videoUrl    !== undefined) { data.videoUrl   = videoUrl;   data.status = 'COMPLETED'; data.completedAt = new Date(); }
@@ -2710,5 +2744,21 @@ async function updateVideoTour(id, { assignedTo, videoUrl, scheduledAt, adminNot
   if (adminNote   !== undefined) data.adminNote   = adminNote;
   if (status      !== undefined) data.status      = status;
 
-  return prisma.videoTourRequest.update({ where: { id }, data });
+  const updated = await prisma.videoTourRequest.update({ where: { id }, data });
+
+  // B79 — the buyer was never told their tour was scheduled / is ready.
+  const justScheduled = scheduledAt !== undefined && !tour.scheduledAt;
+  const justCompleted = data.status === 'COMPLETED' && tour.status !== 'COMPLETED';
+  if (justScheduled || justCompleted) {
+    await createNotification({
+      userId: tour.userId,
+      title: justCompleted ? 'Your video tour is ready' : 'Video tour scheduled',
+      message: justCompleted
+        ? 'Your requested video tour has been completed. Open it from your video tours.'
+        : `Your video tour is scheduled for ${new Date(scheduledAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })} IST.`,
+      type: 'VIDEO_TOUR_UPDATE',
+      linkUrl: '/user/nri',
+    }).catch(() => null);
+  }
+  return updated;
 }

@@ -3,7 +3,7 @@ const ApiError = require('../../utils/ApiError');
 const { razorpay, createOrder } = require('../../lib/razorpay');
 const { withCache } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
-const { createNotification } = require('../../lib/notifications');
+const { createNotification, notifyAdmins } = require('../../lib/notifications');
 const { sendServiceActivated } = require('../../lib/email');
 const logger = require('../../lib/logger');
 
@@ -146,7 +146,14 @@ async function activateSubscription(orderId, paymentId, userId = null) {
       title: 'Service Activated',
       message: `Your ${service?.name} service is now active.`,
       type: 'SERVICE_ACTIVATED',
-      linkUrl: '/dashboard/services',
+      linkUrl: '/user/subscriptions',
+    });
+    // B68 — the auto-created setup ticket was only visible as a sidebar badge.
+    await notifyAdmins({
+      title: 'New service subscription',
+      message: `${service?.name || 'A service'} was purchased; a setup ticket is waiting to be assigned.`,
+      type: 'TICKET_NEW',
+      linkUrl: '/admin/tickets',
     });
     const user = await prisma.user.findUnique({ where: { id: updated.userId } });
     if (user && service) await sendServiceActivated(user.email, service.name, user);

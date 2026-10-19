@@ -134,7 +134,7 @@ async function razorpay(req, res) {
             title: 'Service Payment Failed',
             message: 'Your service subscription payment could not be processed. Please retry from your dashboard.',
             type: 'PAYMENT_FAILED',
-            linkUrl: '/dashboard/services',
+            linkUrl: '/user/subscriptions',
           });
         }
       }
@@ -214,7 +214,7 @@ async function razorpay(req, res) {
             ? `Your service subscription payment of ${amountRupees} has been refunded.`
             : `A partial refund of ${amountRupees} has been issued against your service subscription payment.`,
           type: 'PAYMENT_REFUNDED',
-          linkUrl: '/dashboard/services',
+          linkUrl: '/user/subscriptions',
         });
       }
     }
@@ -268,7 +268,7 @@ async function razorpay(req, res) {
               title: 'Payout received',
               message: `Your commission payout has been processed${utr ? ` (UTR ${utr})` : ''}.`,
               type: 'PAYOUT_PROCESSED',
-              linkUrl: '/partner/finance',
+              linkUrl: '/partners/finance',
             });
             notifyUser(lead.assignedPartnerId, 'escrow_released', {
               name: '$userName', amount: Math.round((payload.payout.entity.amount || 0) / 100).toLocaleString('en-IN'), lead_ref: lead.refCode || 'your lead',
