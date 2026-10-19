@@ -44,7 +44,35 @@ async function adminListConfig() {
   return prisma.platformConfig.findMany({ orderBy: { key: 'asc' } });
 }
 
+// B102 — readers like getConfigNumber() silently fall back to their default
+// when a stored value isn't a number, so saving "abc" for a numeric key would
+// look like it worked while the platform kept using the fallback. Reject it at
+// write time instead. A key counts as numeric by its name, or because the row
+// already holds a number; likewise boolean for rows already holding true/false.
+// Phone numbers and similar text happen to parse as numbers; never treat them as numeric by value.
+const TEXT_KEY = /phone|email|name|secret|disclaimer|url/;
+const NUMERIC_KEY = /(_pct|_days|_hours|_minutes|_rupees|_amount)$|^(max|min)_/;
+
+function validateConfigValue(key, value, existing) {
+  const current = existing?.value;
+  const looksNumeric = NUMERIC_KEY.test(key) || (!TEXT_KEY.test(key) && current != null && current.trim() !== '' && Number.isFinite(Number(current)));
+  const looksBoolean = current === 'true' || current === 'false';
+  if (looksBoolean && value !== 'true' && value !== 'false') {
+    throw new ApiError(400, `"${key}" must be "true" or "false"`);
+  }
+  if (looksNumeric && !looksBoolean) {
+    const num = Number(value);
+    if (value.trim() === '' || !Number.isFinite(num) || num < 0) {
+      throw new ApiError(400, `"${key}" must be a non-negative number`);
+    }
+    if (key.endsWith('_pct') && num > 100) {
+      throw new ApiError(400, `"${key}" is a percentage and cannot exceed 100`);
+    }
+  }
+}
+
 async function adminUpsertConfig(key, { value, description, isPublic }, adminId) {
+  validateConfigValue(key, value, await prisma.platformConfig.findUnique({ where: { key } }));
   const updated = await prisma.platformConfig.upsert({
     where:  { key },
     create: { key, value, description, isPublic: isPublic ?? false, updatedByAdminId: adminId },

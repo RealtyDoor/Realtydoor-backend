@@ -1,5 +1,8 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
+const { createNotification } = require('../../lib/notifications');
+const { createAuditLog } = require('../../lib/auditLog');
+const { notifyUser } = require('../../lib/wati');
 
 async function raiseDispute(userId, { type, referenceId, reason, description }) {
   let owned = false;
@@ -17,7 +20,22 @@ async function raiseDispute(userId, { type, referenceId, reason, description }) 
   });
   if (existing) throw new ApiError(409, 'An active dispute already exists for this record');
 
-  return prisma.dispute.create({ data: { userId, type, referenceId, reason, description } });
+  const dispute = await prisma.dispute.create({ data: { userId, type, referenceId, reason, description } });
+
+  // B71 — nobody was told a dispute had been raised.
+  const [admins, raiser] = await Promise.all([
+    prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
+  ]);
+  await Promise.all(admins.map((admin) => createNotification({
+    userId: admin.id,
+    title: 'New dispute raised',
+    message: `${raiser?.name || 'A user'} raised a ${type.toLowerCase()} dispute: ${reason}`,
+    type: 'DISPUTE_RAISED',
+    linkUrl: '/admin/disputes',
+  }).catch(() => null)));
+
+  return dispute;
 }
 
 async function getMyDisputes(userId) {
@@ -67,7 +85,26 @@ async function adminResolveDispute(disputeId, { status, adminNote }, adminId) {
     data.resolvedByAdminId = adminId;
   }
 
-  return prisma.dispute.update({ where: { id: disputeId }, data });
+  const updated = await prisma.dispute.update({ where: { id: disputeId }, data });
+
+  // B71 — tell the buyer when their dispute moves or the admin leaves a note; B92 — record it.
+  const label = (updated.status || '').replace(/_/g, ' ').toLowerCase();
+  await createNotification({
+    userId: dispute.userId,
+    title: `Your dispute is ${label}`,
+    message: adminNote ? `Note from our team: ${adminNote.slice(0, 200)}` : `Status changed to ${label}.`,
+    type: 'DISPUTE_UPDATED',
+  }).catch(() => null);
+  notifyUser(dispute.userId, 'dispute_update', {
+    name: '$userName', status: label, note: adminNote || 'No note added',
+  }, {});
+  await createAuditLog({
+    adminId, action: 'DISPUTE_UPDATED', targetType: 'Dispute', targetId: disputeId,
+    before: { status: dispute.status, adminNote: dispute.adminNote },
+    after: { status: updated.status, adminNote: updated.adminNote },
+  }).catch(() => null);
+
+  return updated;
 }
 
 module.exports = { raiseDispute, getMyDisputes, adminListDisputes, adminResolveDispute };

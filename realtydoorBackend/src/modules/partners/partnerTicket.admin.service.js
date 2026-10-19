@@ -3,6 +3,7 @@ const ApiError = require('../../utils/ApiError');
 const logger = require('../../lib/logger');
 const { createAuditLog } = require('../../lib/auditLog');
 const { createNotification } = require('../../lib/notifications');
+const { notifyUser } = require('../../lib/wati');
 const { send } = require('../../lib/email');
 const { TICKET_STATUSES } = require('./partnerTicket.admin.validator');
 
@@ -107,6 +108,7 @@ async function updatePartnerTicket(id, { status, adminReply }, adminId, ip) {
     type: 'PARTNER_TICKET_UPDATED',
     linkUrl: `/partner/support-tickets/${id}`,
   });
+  if (adminReply !== undefined) notifyUser(existing.partnerId, 'partner_support_reply', { partner_name: '$userName', ticket_ref: existing.ticketNo });
 
   // Hard-deleted partner → nothing to email; the notification above is
   // harmless to still write (same tolerance this codebase already has

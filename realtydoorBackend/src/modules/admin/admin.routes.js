@@ -24,6 +24,7 @@ const { requirePermission } = require('../../middleware/requirePermission');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 const { videoTourUploader, buildMulter, IMAGE_FORMATS } = require('../../lib/fileUpload');
+const { auditAction } = require('../../middleware/auditAction');
 const ApiError = require('../../utils/ApiError');
 
 // CMS image upload — a bare `multer()` instance (not the buildUploader()
@@ -178,9 +179,9 @@ router.post('/escrow/:id/payouts/refund-remaining', requirePermission('FINANCE')
 // CMS
 router.get('/content',        cmsCtrl.getAllForAdmin);
 router.get('/content/:id',    cmsCtrl.getByIdForAdmin);
-router.post('/content',       cmsCtrl.create);
-router.patch('/content/:id',  cmsCtrl.update);
-router.delete('/content/:id', cmsCtrl.remove);
+router.post('/content',       auditAction('CMS_CONTENT_CREATED', 'Content'), cmsCtrl.create);
+router.patch('/content/:id',  auditAction('CMS_CONTENT_UPDATED', 'Content'), cmsCtrl.update);
+router.delete('/content/:id', auditAction('CMS_CONTENT_DELETED', 'Content'), cmsCtrl.remove);
 // Not tied to a post id — works for an unsaved post; the editor PATCHes
 // imageUrl onto the post separately once it has one.
 router.post('/content/upload-image', uploadContentImageMiddleware, cmsCtrl.uploadImage);
@@ -200,6 +201,7 @@ router.post('/notifications/broadcast', notifCtrl.broadcast);
 // Ticket management
 router.get('/tickets',            ctrl.getTickets);
 router.get('/tickets/stats',      ctrl.getTicketStats);
+router.get('/ratings/summary',    ctrl.getRatingsSummary);
 router.get('/tickets/:id',        ctrl.getTicket);
 router.patch('/tickets/:id',      ctrl.updateTicket);
 // 7.2 / 7.9 — real vendor dispatch; calling again with a different vendorId reassigns.
@@ -220,7 +222,7 @@ router.post('/tickets/:id/auto-dispatch', ctrl.dispatchTicketAutomatically);
 router.get('/loan',               ctrl.getLoans);
 router.get('/loan/bank-stats',    ctrl.getLoanBankStats);
 router.get('/loan/:id',           ctrl.getLoanById);
-router.patch('/loan/:id/status',  ctrl.updateLoanStatus);
+router.patch('/loan/:id/status',  auditAction('LOAN_STATUS_UPDATED', 'LoanApplication'), ctrl.updateLoanStatus);
 
 // User management & role assignment
 router.get('/users',                   ctrl.getUsers);
@@ -245,13 +247,13 @@ router.delete('/staff/:id',        requirePermission('STAFF'), ctrl.removeStaffM
 
 // Service catalog management
 router.get('/services',         ctrl.listServices);
-router.post('/services',        ctrl.createService);
-router.patch('/services/:id',   ctrl.updateService);
-router.delete('/services/:id',  ctrl.deleteService);
+router.post('/services',        auditAction('SERVICE_CREATED', 'Service', { idParam: 'id' }), ctrl.createService);
+router.patch('/services/:id',   auditAction('SERVICE_UPDATED', 'Service'), ctrl.updateService);
+router.delete('/services/:id',  auditAction('SERVICE_DELETED', 'Service'), ctrl.deleteService);
 
 // User document vault review (Pattern 12)
 router.get('/documents',               ctrl.listDocuments);
-router.patch('/documents/:id/verify',  ctrl.verifyDocument);
+router.patch('/documents/:id/verify',  auditAction('DOCUMENT_REVIEWED', 'UserDocument'), ctrl.verifyDocument);
 
 // Contact inbox (docs 11.1-11.5)
 router.get('/contact',                  ctrl.listContactMessages);
@@ -277,25 +279,25 @@ router.patch('/partner-support-tickets/:id', requirePermission('TICKETS'), valid
 
 // NRI leads inbox
 router.get('/nri-leads',             ctrl.listNriLeads);
-router.patch('/nri-leads/:id/read',  ctrl.markNriLeadRead);
+router.patch('/nri-leads/:id/read',  auditAction('NRI_LEAD_MARKED_READ', 'NriLead'), ctrl.markNriLeadRead);
 
 // Team roster
 router.get('/team',          ctrl.listTeam);
-router.post('/team',         ctrl.createTeamMember);
-router.patch('/team/:id',    ctrl.updateTeamMember);
-router.delete('/team/:id',   ctrl.deleteTeamMember);
+router.post('/team',         auditAction('TEAM_MEMBER_CREATED', 'TeamMember', { idParam: 'id' }), ctrl.createTeamMember);
+router.patch('/team/:id',    auditAction('TEAM_MEMBER_UPDATED', 'TeamMember'), ctrl.updateTeamMember);
+router.delete('/team/:id',   auditAction('TEAM_MEMBER_DELETED', 'TeamMember'), ctrl.deleteTeamMember);
 
 // Video tour requests
 router.get('/video-tours',                                                   ctrl.listVideoTours);
-router.patch('/video-tours/:id',                                             ctrl.updateVideoTour);
+router.patch('/video-tours/:id',                                             auditAction('VIDEO_TOUR_UPDATED', 'VideoTour'), ctrl.updateVideoTour);
 router.post('/video-tours/:id/upload', videoTourUploader.single('video'),   ctrl.uploadVideoTourFile);
 
 // Vendor catalog
 router.get('/vendors',         ctrl.listVendors);
-router.post('/vendors',        ctrl.createVendor);
+router.post('/vendors',        auditAction('VENDOR_CREATED', 'Vendor', { idParam: 'id' }), ctrl.createVendor);
 router.get('/vendors/:id',     ctrl.getVendor);
-router.patch('/vendors/:id',   ctrl.updateVendor);
-router.delete('/vendors/:id',  ctrl.deleteVendor);
+router.patch('/vendors/:id',   auditAction('VENDOR_UPDATED', 'Vendor'), ctrl.updateVendor);
+router.delete('/vendors/:id',  auditAction('VENDOR_DELETED', 'Vendor'), ctrl.deleteVendor);
 // 7.1 — recurring weekly availability.
 router.get('/vendors/:id/availability',             ctrl.listVendorAvailability);
 router.post('/vendors/:id/availability',            ctrl.addVendorAvailability);
@@ -367,7 +369,7 @@ router.patch('/advisor-referrals/:id/revoke', referralCtrl.revokeAdmin);
 
 // Platform config
 router.get('/config',         ctrl.listConfig);
-router.put('/config/:key',    ctrl.upsertConfig);
-router.delete('/config/:key', ctrl.deleteConfig);
+router.put('/config/:key',    auditAction('PLATFORM_CONFIG_SET', 'PlatformConfig', { idParam: 'key' }), ctrl.upsertConfig);
+router.delete('/config/:key', auditAction('PLATFORM_CONFIG_DELETED', 'PlatformConfig', { idParam: 'key' }), ctrl.deleteConfig);
 
 module.exports = router;

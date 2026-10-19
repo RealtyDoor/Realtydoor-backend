@@ -5,6 +5,7 @@ const { razorpay, rawGet } = require('../lib/razorpay');
 const { confirmPayment } = require('../modules/escrow/escrow.service');
 const { activateSubscription } = require('../modules/services/services.service');
 const { createNotification, broadcastNotification } = require('../lib/notifications');
+const { notifyUser } = require('../lib/wati');
 
 // BE-5 — a self-healing safety net for whatever the webhook alone might miss
 // (dropped delivery, Razorpay outage, a bug that threw and — before this —
@@ -99,7 +100,7 @@ async function applyLivePayoutStatus(escrow, leg, payoutId, live) {
         : { partnerPayoutStatus: 'processed', partnerPayoutUtr: live.utr || null },
     });
     if (leg === 'partner' && !alreadyProcessed) {
-      const lead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { assignedPartnerId: true } });
+      const lead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { assignedPartnerId: true, refCode: true } });
       if (lead?.assignedPartnerId) {
         await createNotification({
           userId: lead.assignedPartnerId,
@@ -107,6 +108,9 @@ async function applyLivePayoutStatus(escrow, leg, payoutId, live) {
           message: `Your commission payout has been processed${live.utr ? ` (UTR ${live.utr})` : ''}.`,
           type: 'PAYOUT_PROCESSED',
           linkUrl: '/partner/finance',
+        });
+        notifyUser(lead.assignedPartnerId, 'escrow_released', {
+          name: '$userName', amount: Math.round((live.amount || 0) / 100).toLocaleString('en-IN'), lead_ref: lead.refCode || 'your lead',
         });
       }
     }

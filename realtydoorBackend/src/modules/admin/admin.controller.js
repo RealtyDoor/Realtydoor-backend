@@ -403,6 +403,12 @@ async function updateTicket(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getRatingsSummary(req, res, next) {
+  try {
+    success(res, await service.getRatingsSummary());
+  } catch (err) { next(err); }
+}
+
 async function getTicketStats(req, res, next) {
   try {
     const stats = await service.getTicketStats();
@@ -746,7 +752,7 @@ module.exports = {
   requestKycDocuments,
   getPendingKyc, verifyKyc, autoVerifyKyc,
   getRevenue, getAuditLogs, getUserPrivacyEvents, getPartnerMetrics,
-  getTickets, getTicket, updateTicket, getTicketStats,
+  getTickets, getTicket, updateTicket, getTicketStats, getRatingsSummary,
   dispatchTicket, resolveTicket, linkTicketToDeal, getTicketComments, addTicketComment,
   getLoans, getLoanById, updateLoanStatus, getLoanBankStats,
   getUsers, changeUserRole, getUserById, suspendUser,

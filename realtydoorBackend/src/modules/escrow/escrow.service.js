@@ -3,6 +3,7 @@ const ApiError = require('../../utils/ApiError');
 const { razorpay, createEscrowOrder, createPayoutContact, createPayoutFundAccount, createPayout, validateFundAccountOrWarn, refundPayment } = require('../../lib/razorpay');
 const { createAuditLog } = require('../../lib/auditLog');
 const { createNotification } = require('../../lib/notifications');
+const { notifyUser } = require('../../lib/wati');
 const { sendEscrowRefunded, sendEscrowHeld } = require('../../lib/email');
 const { getConfigNumber } = require('../config/config.service');
 const { isEscrowLeadUniqueViolation } = require('../../lib/escrowUtils');
@@ -269,6 +270,12 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
       message: `Your token advance of ₹${updated.amount.toLocaleString('en-IN')} has been received and is held securely.`,
       type: 'ESCROW_HELD',
       linkUrl: `/user/inquiries/${updated.leadId}`,
+    });
+    const heldLead = await prisma.lead.findUnique({ where: { id: updated.leadId }, select: { property: { select: { title: true } }, propertyInterest: true } });
+    notifyUser(updated.buyerId, 'escrow_token_received', {
+      name: '$userName', amount: updated.amount.toLocaleString('en-IN'),
+      property_title: heldLead?.property?.title || heldLead?.propertyInterest || 'your property',
+      payment_id: updated.razorpayPaymentId || updated.razorpayOrderId,
     });
     const buyer = await prisma.user.findUnique({ where: { id: updated.buyerId }, select: { email: true } });
     if (buyer) await sendEscrowHeld(buyer.email, updated.amount);

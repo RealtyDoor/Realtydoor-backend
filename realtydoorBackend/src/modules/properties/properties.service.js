@@ -371,10 +371,11 @@ function shapePropertyDetail(property, ratingData) {
 
     verification: {
       realtyDoorVerified: property.isVerified,
-      // We only store the RERA registration number itself, not a separate
-      // "this number was checked" flag — presence of a number is the best
-      // available signal today, not a true independent verification state.
-      reraVerified: !!property.reraNumber,
+      // B52 — we only store the RERA registration number, not a separate
+      // "this number was checked" flag. A number that merely passes a format
+      // check is not verified, so require the admin's own verification flag
+      // (isVerified) as well before claiming "RERA Verified" publicly.
+      reraVerified: !!property.reraNumber && property.isVerified === true,
       reraNumber: property.reraNumber || null,
       legalVerified: null, // not modeled
       loanApproved: (property.bankApprovals?.length || 0) > 0,

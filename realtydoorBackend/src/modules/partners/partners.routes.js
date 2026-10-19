@@ -11,7 +11,7 @@ const builderInvoiceCtrl = require('../projects/builderInvoice.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
-const { kycDocUploader, visitPhotoUploader, partnerProfilePhotoUploader } = require('../../lib/fileUpload');
+const { kycDocUploader, dealDocUploader, partnerProfilePhotoUploader } = require('../../lib/fileUpload');
 const { uploadLimiter, otpLimiter, perUserLimiter } = require('../../middleware/rateLimiter');
 
 router.use(authenticate, requirePartner, perUserLimiter);
@@ -36,7 +36,7 @@ router.post('/leads/:id/resend-otp',        requireKyc, otpLimiter, leadsCtrl.re
 router.post('/leads/:id/request-otp-override', requireKyc, leadsCtrl.requestOtpOverride);
 router.post('/leads/:id/verify-otp',        requireKyc, otpLimiter, leadsCtrl.verifyOtp);
 router.patch('/leads/:id/document',         requireKyc,
-  visitPhotoUploader.fields([
+  dealDocUploader.fields([
     { name: 'visitPhotos', maxCount: 10 }, { name: 'closureDocs', maxCount: 5 },
     // B5.3/B5.4 — one each per deal; closeLead gates on allocationLetter.
     { name: 'allocationLetter', maxCount: 1 }, { name: 'tokenReceipt', maxCount: 1 },

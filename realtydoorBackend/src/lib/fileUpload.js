@@ -19,6 +19,7 @@ const DOC_FORMATS   = ['jpg', 'jpeg', 'png', 'pdf'];
 const VIDEO_FORMATS = ['mp4', 'mov', 'webm', 'avi'];
 const MEDIA_FORMATS = [...new Set([...IMAGE_FORMATS, ...VIDEO_FORMATS])];
 const ALL_FORMATS   = [...new Set([...IMAGE_FORMATS, ...DOC_FORMATS])];
+const ApiError = require('../utils/ApiError');
 
 // ─── Core helpers ─────────────────────────────────────────────────────────────
 
@@ -31,11 +32,19 @@ function buildMulter(allowedFormats, maxSizeMb = 10) {
       if (allowedFormats.includes(ext)) {
         cb(null, true);
       } else {
-        cb(new Error(`File type .${ext} not allowed. Accepted: ${allowedFormats.join(', ')}`));
+        cb(new ApiError(400, `File type .${ext} not allowed. Accepted: ${allowedFormats.join(', ')}`));
       }
     },
   });
 }
+
+// The upload filter only checks the file extension, and the client chooses the mimetype. Storing that mimetype as the
+// object's ContentType would let "x.png" sent as text/html be served from the bucket as a web page. Serve each file
+// as the type its (allow-listed) extension says it is, whatever the client claimed.
+const CONTENT_TYPE_BY_EXT = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.pdf': 'application/pdf',
+  '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.avi': 'video/x-msvideo',
+};
 
 async function s3Upload(buffer, folder, originalname, mimetype) {
   const ext = path.extname(originalname).toLowerCase();
@@ -45,7 +54,7 @@ async function s3Upload(buffer, folder, originalname, mimetype) {
     Bucket:      BUCKET,
     Key:         key,
     Body:        buffer,
-    ContentType: mimetype,
+    ContentType: CONTENT_TYPE_BY_EXT[ext] || 'application/octet-stream',
   }));
 
   return {
@@ -91,7 +100,8 @@ function buildUploader(folder, allowedFormats, maxSizeMb = 10) {
 
   const withS3 = (multerMiddleware) => (req, res, next) => {
     multerMiddleware(req, res, async (err) => {
-      if (err) return next(err);
+      // B17 — multer/filter errors are the client's mistake, not a server fault.
+      if (err) return next(err.name === 'MulterError' ? new ApiError(400, err.message) : err);
       try {
         await uploadAllFiles(req, folder);
         next();
@@ -116,6 +126,8 @@ const propertyMediaUploader  = buildUploader('properties', MEDIA_FORMATS, 200); 
 const propertyDocUploader    = buildUploader('properties/documents', DOC_FORMATS);
 const kycDocUploader         = buildUploader('kyc',        DOC_FORMATS);
 const visitPhotoUploader     = buildUploader('visits',     IMAGE_FORMATS);
+// B17 — allocation letter / token receipt / closure docs are signed PDFs as often as photos.
+const dealDocUploader        = buildUploader('visits',     DOC_FORMATS);
 const userDocUploader        = buildUploader('documents',  DOC_FORMATS);
 const ticketEvidenceUploader = buildUploader('tickets',    ALL_FORMATS);
 const cmsMediaUploader       = buildUploader('admin-cms',  MEDIA_FORMATS);
@@ -133,6 +145,7 @@ module.exports = {
   propertyDocUploader,
   kycDocUploader,
   visitPhotoUploader,
+  dealDocUploader,
   userDocUploader,
   ticketEvidenceUploader,
   cmsMediaUploader,

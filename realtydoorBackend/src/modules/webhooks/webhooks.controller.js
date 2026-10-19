@@ -4,6 +4,7 @@ const { activateSubscription } = require('../services/services.service');
 const prisma = require('../../lib/prisma');
 const { sendEscrowPaymentFailed } = require('../../lib/email');
 const { createNotification, broadcastNotification } = require('../../lib/notifications');
+const { notifyUser } = require('../../lib/wati');
 const logger = require('../../lib/logger');
 
 // The entire handler body is one try/catch, including signature verification
@@ -260,7 +261,7 @@ async function razorpay(req, res) {
         // that leg. Guarded by alreadyProcessed so a redelivered webhook
         // doesn't re-notify the partner for the same payout.
         if (leg === 'partner' && !alreadyProcessed) {
-          const lead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { assignedPartnerId: true } });
+          const lead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { assignedPartnerId: true, refCode: true } });
           if (lead?.assignedPartnerId) {
             await createNotification({
               userId: lead.assignedPartnerId,
@@ -268,6 +269,9 @@ async function razorpay(req, res) {
               message: `Your commission payout has been processed${utr ? ` (UTR ${utr})` : ''}.`,
               type: 'PAYOUT_PROCESSED',
               linkUrl: '/partner/finance',
+            });
+            notifyUser(lead.assignedPartnerId, 'escrow_released', {
+              name: '$userName', amount: Math.round((payload.payout.entity.amount || 0) / 100).toLocaleString('en-IN'), lead_ref: lead.refCode || 'your lead',
             });
           }
         }

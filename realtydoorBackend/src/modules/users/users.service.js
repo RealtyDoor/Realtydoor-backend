@@ -735,7 +735,16 @@ async function createLoanApplication(userId, { documentSharingConsent: _document
         // the tracker's dated step list should show DOCUMENTS_PENDING from
         // the very start, not only once the first admin-driven status
         // change happens.
-        statusHistory: [{ status: 'DOCUMENTS_PENDING', at: new Date().toISOString(), note: null }],
+        // B59 — an application can only be created once every required
+        // document is already admin-verified (checked above), so it starts at
+        // DOCUMENTS_VERIFIED. Starting at DOCUMENTS_PENDING left it stuck: the
+        // admin loans screen offers Sanction/Reject only from DOCUMENTS_
+        // SUBMITTED onwards and has no way to move a PENDING one forward.
+        status: 'DOCUMENTS_VERIFIED',
+        statusHistory: [
+          { status: 'DOCUMENTS_PENDING', at: new Date().toISOString(), note: null },
+          { status: 'DOCUMENTS_VERIFIED', at: new Date().toISOString(), note: 'All required documents were already verified' },
+        ],
       },
     });
   });

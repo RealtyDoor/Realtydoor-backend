@@ -100,10 +100,52 @@ async function sendPhoneVerificationOtp(phone, otp, context = {}) {
   ], context, null, CATEGORIES.TRANSACTIONAL);
 }
 
+// Templates that are APPROVED in the WATI account and safe to send. A template
+// that is still a draft would just log a FAILED row, so notifyUser() skips
+// anything not listed here. Once Meta approves a new template, add its name to
+// WATI_LIVE_TEMPLATES (comma-separated) in the env — no code change needed.
+const LIVE_TEMPLATES = new Set([
+  'site_visit_otp', 'phone_verification_otp', 'lead_assigned_notice',
+  'buyer_feedback_request', 'contact_reply', 'ticket_vendor_dispatched',
+  ...(process.env.WATI_LIVE_TEMPLATES || '').split(',').map((t) => t.trim()).filter(Boolean),
+]);
+
+// Fire-and-forget WhatsApp copy of an in-app notification. Looks up the user's
+// phone and notifWhatsapp preference itself (OPERATIONAL category), never
+// throws; pass '$userName' as a value to insert the recipient's own name — a failed WhatsApp must not break the action that triggered it.
+async function notifyUser(userId, templateName, parameters, context = {}) {
+  try {
+    if (!LIVE_TEMPLATES.has(templateName)) return null;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, phone: true, notifWhatsapp: true, marketingOptIn: true },
+    });
+    if (!user?.phone) return null;
+    return await sendTemplateMessage(
+      user.phone, templateName,
+      Object.entries(parameters).map(([name, value]) => ({
+        name, value: String(value === '$userName' ? (user.name || 'there') : value).replace(/\s+/g, ' ').trim(),
+      })),
+      { userId, ...context }, user,
+    );
+  } catch (err) {
+    logger.warn('[WATI] notifyUser failed', { templateName, userId, error: err.message });
+    return null;
+  }
+}
+
+async function sendTicketVendorDispatched(userId, ticketSubject, vendorName, ticketId) {
+  return notifyUser(userId, 'ticket_vendor_dispatched', {
+    ticket_subject: ticketSubject, vendor_name: vendorName,
+  }, { ticketId });
+}
+
 module.exports = {
   sendTemplateMessage,
   sendSiteVisitOtp,
   sendLeadAssignedNotice,
   sendBuyerFeedbackRequest,
   sendPhoneVerificationOtp,
+  notifyUser,
+  sendTicketVendorDispatched,
 };

@@ -231,10 +231,17 @@ async function previewTermsForLead(leadId) {
     where: { id: leadId },
     select: {
       id: true, assignedPartnerId: true, propertyId: true, buyerPhone: true, city: true,
-      property: { select: { id: true, city: true, price: true, partnerId: true, partner: { select: { partnerSubType: true } } } },
+      property: { select: { id: true, city: true, price: true, partnerId: true } },
     },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  // B27/B35 — read the listing partner separately instead of through the
+  // required `partner` relation: a property whose partnerId points at a
+  // deleted user made the nested select throw "Field partner is required … got
+  // null" and blocked every release on that lead.
+  const listingPartner = lead.property?.partnerId
+    ? await prisma.user.findUnique({ where: { id: lead.property.partnerId }, select: { partnerSubType: true } })
+    : null;
 
   // Who is selling drives which template applies. Falls back to AGENT, the
   // most common case, when the listing partner has no subtype set.
@@ -247,7 +254,7 @@ async function previewTermsForLead(leadId) {
   // the fold below is what keeps prefill from hitting that error in the
   // first place, by not offering the line at all when it would only ever be
   // rejected.
-  const listingSubType = lead.property?.partner?.partnerSubType || 'AGENT';
+  const listingSubType = listingPartner?.partnerSubType || 'AGENT';
   const selfListed = listingSubType === 'AGENT' && !!lead.propertyId && await isSelfListedByAgent(lead.propertyId);
   const sellerType = selfListed ? 'OWNER' : listingSubType;
   // backend-work-still-open.md #3 — a free-text (propertyInterest-only)
@@ -452,10 +459,13 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
     select: {
       id: true, assignedPartnerId: true, commissionLockedAt: true, commissionVersion: true,
       feePct: true, dealPriceAtLock: true, city: true, propertyId: true,
-      property: { select: { price: true, city: true, partner: { select: { partnerSubType: true } } } },
+      property: { select: { price: true, city: true, partnerId: true } },
     },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  const termsListingPartner = lead.property?.partnerId
+    ? await prisma.user.findUnique({ where: { id: lead.property.partnerId }, select: { partnerSubType: true } })
+    : null;
 
   // BE-13 — city/sellerType on the error data so the FE can deep-link
   // straight to the missing rate card/default, instead of admin having to
@@ -463,7 +473,7 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
   // subtype, no self-listed fold) — good enough for "here's what's
   // missing," not a substitute for previewTermsForLead's real resolution.
   const diagnosticCity = lead.property?.city || lead.city || null;
-  const diagnosticSellerType = lead.property?.partner?.partnerSubType || 'AGENT';
+  const diagnosticSellerType = termsListingPartner?.partnerSubType || 'AGENT';
 
   const effectiveFeePct = feePct ?? lead.feePct;
   if (!(effectiveFeePct > 0)) {
@@ -703,15 +713,18 @@ async function invoiceLeadCommission(leadId, adminId, ip) {
     where: { id: leadId },
     select: {
       refCode: true,
-      property: { select: { title: true, partnerId: true, partner: { select: { name: true, companyName: true } } } },
+      property: { select: { title: true, partnerId: true } },
     },
   });
+  const invoicePayer = lead.property?.partnerId
+    ? await prisma.user.findUnique({ where: { id: lead.property.partnerId }, select: { name: true, companyName: true } })
+    : null;
 
   const invoicedAt = new Date();
   const pdfBuffer = await buildCommissionReceiptPdf({
     refCode: lead.refCode,
     propertyTitle: lead.property?.title,
-    payerName: lead.property?.partner?.companyName || lead.property?.partner?.name,
+    payerName: invoicePayer?.companyName || invoicePayer?.name,
     feePct: terms.feePct,
     dealPrice: terms.dealPriceAtLock,
     feeAmount: terms.amounts?.feeAmount,

@@ -8,7 +8,7 @@ const {
   sendLeadAssigned, sendLeadInquiryConfirmed,
   sendLoanStatusUpdate,
 } = require('../../lib/email');
-const { sendLeadAssignedNotice, sendSiteVisitOtp } = require('../../lib/wati');
+const { sendLeadAssignedNotice, sendSiteVisitOtp, sendTicketVendorDispatched, notifyUser } = require('../../lib/wati');
 const { setUserRole } = require('../../lib/clerkAdmin');
 const { ROLES } = require('../../utils/validators');
 const { normalizePhone } = require('../../lib/phoneUtils');
@@ -249,13 +249,18 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
     throw new ApiError(400, `Only a lead awaiting admin review can be confirmed (this one is ${lead.status})`);
   }
 
+  // B12 — a partner-added lead stays with the partner who brought the buyer
+  // (the Confirm dialog and the partner's own form both say so). With no
+  // explicit partner chosen, assign it to the adding partner instead of
+  // dropping it into UNASSIGNED, where it vanished from their list.
+  const targetPartnerId = partnerId || lead.addedByPartnerId || null;
   let partner = null;
-  if (partnerId) {
+  if (targetPartnerId) {
     partner = await prisma.user.findFirst({
-      where: { id: partnerId, role: 'PARTNER', kycStatus: 'VERIFIED' },
+      where: { id: targetPartnerId, role: 'PARTNER', kycStatus: 'VERIFIED' },
       select: { id: true },
     });
-    if (!partner) throw new ApiError(400, 'Partner not found or not KYC verified');
+    if (!partner && partnerId) throw new ApiError(400, 'Partner not found or not KYC verified');
   }
 
   const updated = await prisma.lead.update({
@@ -844,6 +849,7 @@ async function approveProperty(propertyId, adminId, ip, visibility = {}) {
     type: 'PROPERTY_APPROVED',
     linkUrl: `/properties/${property.slug}`,
   });
+  notifyUser(property.partnerId, 'listing_approved', { partner_name: '$userName', property_title: property.title });
 
   await createAuditLog({
     adminId, action: 'PROPERTY_APPROVED', targetType: 'Property', targetId: propertyId,
@@ -941,6 +947,10 @@ async function requestPropertyChanges(propertyId, { items, note }, adminId, admi
     message: `Admin asked for ${items.length} fix(es) on "${property.title}"${note ? `: ${note}` : ''}`,
     type: 'PROPERTY_CHANGES_REQUESTED',
     linkUrl: `/partner/listings/${propertyId}`,
+  });
+  notifyUser(property.partnerId, 'listing_changes_requested', {
+    partner_name: '$userName', property_title: property.title,
+    reason: (note || `${items.length} fix(es) requested`).slice(0, 200),
   });
 
   await createAuditLog({
@@ -1351,6 +1361,9 @@ async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields 
     // the list, since there's no per-status detail route for those.
     linkUrl: status === 'SANCTIONED' ? `/user/loans/sanctioned?id=${loanId}` : '/user/loans',
   });
+  notifyUser(loan.userId, 'loan_status_update', {
+    name: '$userName', bank: loan.preferredBank || 'your lender', status: status.replace(/_/g, ' ').toLowerCase(),
+  });
 
   sendLoanStatusUpdate(loan.user.email, status, adminNote, loanId, loan.user).catch(() => {});
 
@@ -1705,6 +1718,61 @@ async function getAllTickets(filters, skip, limit) {
 // where the field was explicitly set to null, not ones where it was never
 // written at all (confirmed empirically — see escrowAutoEscalate.js), which
 // would silently undercount "unassigned" for most existing tickets.
+// B89 — real partner and vendor rating aggregates for /admin/ratings (the page used to show hard-coded
+// sample rows). Partner rating = buyers' Lead.buyerRating per assigned partner; vendor rating = users'
+// ServiceTicket.vendorRating per vendor. Anything averaging below 3 is flagged for review.
+async function getRatingsSummary() {
+  const LOW = 3;
+  const [rated, closedCounts, tickets] = await Promise.all([
+    prisma.lead.findMany({
+      where: { buyerRating: { not: null }, assignedPartnerId: { not: null } },
+      select: { assignedPartnerId: true, buyerRating: true },
+    }),
+    prisma.lead.groupBy({ by: ['assignedPartnerId'], where: { status: 'CLOSED', assignedPartnerId: { not: null } }, _count: { _all: true } }),
+    prisma.serviceTicket.findMany({
+      where: { vendorRating: { not: null } },
+      select: { vendorId: true, vendorName: true, vendorRating: true },
+    }),
+  ]);
+
+  const byPartner = new Map();
+  for (const l of rated) {
+    const e = byPartner.get(l.assignedPartnerId) || { sum: 0, count: 0 };
+    e.sum += l.buyerRating; e.count += 1;
+    byPartner.set(l.assignedPartnerId, e);
+  }
+  const closedBy = new Map(closedCounts.map((c) => [c.assignedPartnerId, c._count._all]));
+  const partnerUsers = byPartner.size
+    ? await prisma.user.findMany({ where: { id: { in: [...byPartner.keys()] } }, select: { id: true, name: true, companyName: true } })
+    : [];
+  const partnerById = new Map(partnerUsers.map((u) => [u.id, u]));
+  const partners = [...byPartner.entries()].map(([id, e]) => {
+    const u = partnerById.get(id);
+    const avg = Math.round((e.sum / e.count) * 10) / 10;
+    return { id, name: u?.companyName || u?.name || 'Removed partner', deals: closedBy.get(id) || 0, reviews: e.count, rating: avg, flag: avg < LOW };
+  }).sort((a, b) => a.rating - b.rating);
+
+  const byVendor = new Map();
+  for (const t of tickets) {
+    const key = t.vendorId || `name:${t.vendorName || 'Unknown'}`;
+    const e = byVendor.get(key) || { sum: 0, count: 0, name: t.vendorName || 'Unknown vendor', vendorId: t.vendorId };
+    e.sum += t.vendorRating; e.count += 1;
+    byVendor.set(key, e);
+  }
+  const vendorIds = [...byVendor.values()].map((v) => v.vendorId).filter(Boolean);
+  const vendorRows = vendorIds.length
+    ? await prisma.vendor.findMany({ where: { id: { in: vendorIds } }, select: { id: true, name: true, category: true } })
+    : [];
+  const vendorById = new Map(vendorRows.map((v) => [v.id, v]));
+  const vendors = [...byVendor.values()].map((e) => {
+    const v = e.vendorId ? vendorById.get(e.vendorId) : null;
+    const avg = Math.round((e.sum / e.count) * 10) / 10;
+    return { id: e.vendorId, name: v?.name || e.name, category: v?.category || null, jobs: e.count, rating: avg, flag: avg < LOW };
+  }).sort((a, b) => a.rating - b.rating);
+
+  return { partners, vendors };
+}
+
 async function getTicketStats() {
   const startOfWeek = new Date();
   startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
@@ -1782,7 +1850,22 @@ async function updateTicketStatus(ticketId, status, vendorName, vendorPhone) {
   if (vendorName  !== undefined) data.vendorName  = vendorName;
   if (vendorPhone !== undefined) data.vendorPhone = vendorPhone;
 
-  return prisma.serviceTicket.update({ where: { id: ticketId }, data });
+  const updated = await prisma.serviceTicket.update({ where: { id: ticketId }, data });
+
+  // The admin "Dispatch vendor" dialog goes through this free-text path (not
+  // dispatchTicket below), so the buyer has to be told from here too.
+  if (vendorName !== undefined && vendorName !== ticket.vendorName) {
+    createNotification({
+      userId: ticket.userId,
+      title: 'Vendor dispatched',
+      message: `${vendorName} has been assigned to your ticket "${ticket.subject}".`,
+      type: 'TICKET_VENDOR_DISPATCHED',
+      linkUrl: `/user/tickets/${ticketId}`,
+    }).catch(() => {});
+    sendTicketVendorDispatched(ticket.userId, ticket.subject, vendorName, ticketId);
+  }
+
+  return updated;
 }
 
 function round2(n) {
@@ -1835,6 +1918,7 @@ async function dispatchTicket(ticketId, data, adminId, ip) {
     type: isReassign ? 'TICKET_VENDOR_REASSIGNED' : 'TICKET_VENDOR_DISPATCHED',
     linkUrl: `/user/tickets/${ticketId}`,
   });
+  sendTicketVendorDispatched(ticket.userId, ticket.subject, vendor.name, ticketId);
 
   await createAuditLog({
     adminId, action: isReassign ? 'TICKET_VENDOR_REASSIGNED' : 'TICKET_VENDOR_DISPATCHED',
@@ -2373,7 +2457,7 @@ module.exports = {
   listRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule, dispatchTicketAutomatically,
   getRevenueSummary,
   getAuditLogs, getUserPrivacyEvents,
-  getAllTickets, getTicketById, updateTicketStatus, getTicketStats,
+  getAllTickets, getTicketById, updateTicketStatus, getTicketStats, getRatingsSummary,
   dispatchTicket, resolveTicket, linkTicketToDeal, getAdminTicketComments, addAdminTicketComment,
   getAllLoans, getLoanById, updateLoanStatus, getLoanBankStats,
   getAllUsers, changeUserRole, suspendUser,

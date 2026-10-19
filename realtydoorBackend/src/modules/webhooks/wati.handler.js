@@ -49,7 +49,17 @@ function parseStatus(text) {
 
 async function watiWebhook(req, res) {
   const token = process.env.WATI_WEBHOOK_TOKEN;
-  if (token && !tokenMatches(req.headers['x-wati-token'], token)) {
+  // With no token configured the endpoint is open to anyone, and a forged
+  // "yes"/"no" reply flips a lead's buyerFeedbackStatus (which feeds the
+  // escrow-release "buyer confirmed" condition). Fail closed in production;
+  // dev keeps working without a token but says so.
+  if (!token) {
+    if (process.env.NODE_ENV === 'production') {
+      logger.error('[watiWebhook] WATI_WEBHOOK_TOKEN is not set — rejecting webhook');
+      return res.status(503).json({ error: 'Webhook not configured' });
+    }
+    logger.warn('[watiWebhook] WATI_WEBHOOK_TOKEN is not set — accepting unauthenticated webhook (non-production only)');
+  } else if (!tokenMatches(req.headers['x-wati-token'], token)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
