@@ -1583,6 +1583,18 @@ async function changeUserRole(targetUserId, newRole, adminId, ip) {
     }
   }
 
+  // A buyer who is made a partner (from here or by hand in the database) otherwise learns nothing: tell them
+  // what to do next. Failures here must not undo the role change.
+  if (newRole === 'PARTNER' && user.role !== 'PARTNER') {
+    await createNotification({
+      userId: targetUserId,
+      title: 'You can now use the partner app',
+      message: 'Your account has been set up as a partner. Open the partner app and complete your KYC to start receiving inquiries.',
+      type: 'ROLE_CHANGED',
+      linkUrl: '/partners/register',
+    }).catch((err) => logger.warn('[changeUserRole] partner notification failed', { error: err.message }));
+  }
+
   await createAuditLog({
     adminId, action: 'ROLE_CHANGED', targetType: 'User', targetId: targetUserId,
     before: { role: user.role }, after: { role: newRole, clerkSyncFailed },
