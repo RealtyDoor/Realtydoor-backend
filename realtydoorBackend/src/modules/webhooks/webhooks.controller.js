@@ -282,12 +282,13 @@ async function razorpay(req, res) {
 
     // A RazorpayX payout created during release() returned success
     // synchronously (so the escrow was already marked RELEASED) but then
-    // failed or was reversed afterward — the money didn't actually reach the
+    // failed, was rejected or was reversed afterward — the money didn't actually reach the
     // seller/partner. There's no safe automatic recovery here (the seller's
     // payout may or may not have already landed elsewhere), so this flags the
     // escrow for manual review instead of silently leaving it RELEASED with
     // no money moved, or guessing at a revert that could race a legitimate retry.
-    if (event === 'payout.failed' || event === 'payout.reversed') {
+    // RazorpayX has no payout.failed event in its webhook list; a payout it refuses arrives as payout.rejected.
+    if (event === 'payout.failed' || event === 'payout.rejected' || event === 'payout.reversed') {
       const { id: payoutId, status, status_details: statusDetails } = payload.payout.entity;
       const escrow = await prisma.escrowTransaction.findFirst({
         where: { OR: [{ razorpayPayoutId: payoutId }, { razorpayPartnerPayoutId: payoutId }] },
