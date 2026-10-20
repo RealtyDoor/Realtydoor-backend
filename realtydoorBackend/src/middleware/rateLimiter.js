@@ -32,7 +32,8 @@ const defaultLimiter = rateLimit({
   ...BASE,
   skip: skipUnreadCount,
   windowMs: 15 * 60 * 1000,
-  max: 1000,
+  // RATE_LIMIT_IP_MAX raises it for a test deployment, where every visitor's request reaches us from the website's server.
+  max: Number(process.env.RATE_LIMIT_IP_MAX) || 1000,
   message: rateLimitMessage('Too many requests, please try again later.'),
 });
 
@@ -45,7 +46,7 @@ const perUserLimiter = rateLimit({
   ...BASE,
   skip: skipUnreadCount,
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: Number(process.env.RATE_LIMIT_USER_MAX) || 300, // an admin dashboard alone can make a few hundred calls in 15 minutes
   keyGenerator: (req) => req.user?.id || req.ip,
   message: rateLimitMessage('Too many requests, please try again later.'),
 });
