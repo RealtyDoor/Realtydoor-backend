@@ -894,7 +894,7 @@ async function getMyVideoTours(userId) {
   return prisma.videoTourRequest.findMany({
     where: { userId },
     include: {
-      property: { select: { title: true, slug: true, city: true, images: true } },
+      property: { select: { id: true, title: true, slug: true, city: true, images: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
