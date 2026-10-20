@@ -59,7 +59,9 @@ async function watiWebhook(req, res) {
       return res.status(503).json({ error: 'Webhook not configured' });
     }
     logger.warn('[watiWebhook] WATI_WEBHOOK_TOKEN is not set — accepting unauthenticated webhook (non-production only)');
-  } else if (!tokenMatches(req.headers['x-wati-token'], token)) {
+  // WATI's webhook form has no custom-header field, so the token may also arrive as ?token=... on the webhook URL.
+  // The header stays supported for any other sender.
+  } else if (!tokenMatches(req.headers['x-wati-token'] ?? req.query?.token, token)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
