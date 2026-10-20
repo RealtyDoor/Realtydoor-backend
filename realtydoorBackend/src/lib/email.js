@@ -2,7 +2,12 @@ const nodemailer = require('nodemailer');
 const { canSend, CATEGORIES } = require('./notificationGate');
 const logger = require('./logger');
 
-const FROM = process.env.EMAIL_FROM;
+const FROM_ADDRESS = process.env.EMAIL_FROM;
+// Shown to recipients as: RealtyDoor <support@realtydoor.com>
+const FROM = FROM_ADDRESS ? `"RealtyDoor" <${FROM_ADDRESS}>` : FROM_ADDRESS;
+// The mailbox that logs in to Gmail SMTP. It is the same as EMAIL_FROM unless EMAIL_SMTP_USER says otherwise
+// (Gmail only lets an account send as itself or as an alias set up inside that account).
+const SMTP_USER = process.env.EMAIL_SMTP_USER || FROM_ADDRESS;
 
 // Gmail SMTP via an app password (not OAuth) — GMAIL_APP_PASSWORD is a
 // 16-character app password generated from the sending Gmail account's
@@ -13,7 +18,7 @@ const FROM = process.env.EMAIL_FROM;
 // send()/sendMail() calls are fire-and-forget throughout this codebase.
 const transporter = nodemailer.createTransport({
   service: 'gmail',
-  auth: { user: FROM, pass: process.env.GMAIL_APP_PASSWORD },
+  auth: { user: SMTP_USER, pass: process.env.GMAIL_APP_PASSWORD },
 });
 
 // Every caller fires this and forgets (`.catch(() => {})`), so a failing mailbox used to be invisible. Log the
