@@ -2407,7 +2407,7 @@ async function getKycByUserId(userId) {
   const user = await prisma.user.findFirst({
     where: { id: userId, role: 'PARTNER' },
     select: {
-      id: true, name: true, email: true, companyName: true, partnerSubType: true,
+      id: true, name: true, email: true, phone: true, companyName: true, partnerSubType: true,
       kycStatus: true, kycDocumentUrls: true, kycRejectionNote: true, kycVerifiedAt: true,
       createdAt: true,
       // backend-work-still-open.md #12 — the admin screen shows what was

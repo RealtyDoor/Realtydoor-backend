@@ -86,7 +86,7 @@ const BUYER_LEAD_INCLUDE = {
     orderBy: { createdAt: 'desc' },
   },
   assignedPartner: {
-    select: { id: true, name: true, profileImageUrl: true, companyName: true },
+    select: { id: true, name: true, profileImageUrl: true, companyName: true, partnerSubType: true },
   },
 };
 
