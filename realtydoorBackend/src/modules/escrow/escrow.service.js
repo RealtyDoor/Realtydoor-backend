@@ -13,6 +13,15 @@ const logger = require('../../lib/logger');
 const DEFAULT_MIN_ESCROW_AMOUNT = 50000;
 const DEFAULT_MAX_ESCROW_PCT = 10;
 
+// Razorpay's SDK rejects with a plain {statusCode, error} object, so `err.message` is usually undefined and the
+// reason sits in err.error.description (or err.error as a string). Never fall back to a bare "Unknown error".
+function razorpayErrorText(err, fallback = 'Unknown error') {
+  const e = err?.error;
+  return (e && (e.description || e.reason || (typeof e === 'string' ? e : null)))
+    || err?.message
+    || (err?.statusCode ? `HTTP ${err.statusCode} from Razorpay` : fallback);
+}
+
 // Buyer-scoped lookup — for polling status right after a Checkout attempt,
 // or refreshing later. Buyers previously had no way to check escrow status
 // at all: not through this, and getMyLeads didn't include it either.
@@ -155,7 +164,7 @@ async function createOrder(leadId, buyerId, amountInRupees) {
   try {
     order = await createEscrowOrder(amountInPaise, `escrow_${leadId}`);
   } catch (err) {
-    throw new ApiError(502, `Could not create the Razorpay order: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAY_ERROR' });
+    throw new ApiError(502, `Could not create the Razorpay order: ${razorpayErrorText(err)}`, { code: 'RAZORPAY_ERROR' });
   }
 
   // The findFirst check above has the same TOCTOU race as every other
@@ -661,7 +670,7 @@ async function release(escrowId, adminId, releaseData, ip) {
     // former, and re-throwing it as-is would hit errorHandler.js's generic
     // 500 INTERNAL_ERROR path instead of a proper 502 RAZORPAYX_ERROR.
     const err = sellerError || partnerError;
-    const providerMessage = err?.error?.description || err.message || 'Unknown RazorpayX error';
+    const providerMessage = razorpayErrorText(err, 'Unknown RazorpayX error');
     // At least one RazorpayX payout failed. Reverting to HELD is only safe
     // when NEITHER leg actually paid out — if one did (sellerPayoutId/
     // partnerPayoutId set, and already persisted above), reverting would
@@ -788,7 +797,7 @@ async function refund(escrowId, adminId, ip) {
     });
     // BE-16 — same reasoning as release()'s catch above: Razorpay throws a
     // plain {statusCode, error} object, not an ApiError.
-    throw new ApiError(502, `Razorpay refund failed: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAY_ERROR' });
+    throw new ApiError(502, `Razorpay refund failed: ${razorpayErrorText(err)}`, { code: 'RAZORPAY_ERROR' });
   }
 
   // M1 fix — refundedAmountPaise/refundIds must be set here, not left for
