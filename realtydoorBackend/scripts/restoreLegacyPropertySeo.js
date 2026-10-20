@@ -3,7 +3,10 @@
  * placeholder SEO text ("Capitalize on Hoskote's Future"). This puts back the title and description Google had indexed
  * and attaches each project's brochure.
  *
- *   node scripts/restoreLegacyPropertySeo.js            (needs the old site's folder, see OLD below)
+ *   node scripts/restoreLegacyPropertySeo.js
+ *
+ * The text is in scripts/data/legacy-property-seo.json. The old site's folder (OLD below) is only needed to upload a brochure
+ * for a property that has none.
  *
  * Safe to run again: the brochure is only added when the property has none.
  */
@@ -23,22 +26,17 @@ const MAP = {
   'dtcp-approved-lakeview-township-plots-in-punganur-newtownj': ['dtcp-approved-lakeview-township-plots-in-punganur-newtownj', 'newtownj', 'brochure.pdf'],
 };
 
-const grab = (src, key) => {
-  const m = src.match(new RegExp(`${key}:\\s*'((?:[^'\\\\]|\\\\.)*)'`));
-  return m ? m[1].replace(/\\'/g, "'") : null;
-};
+const SEO = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'legacy-property-seo.json'), 'utf8'));
 
 (async () => {
   for (const [slug, [pageDir, pubDir, brochure]] of Object.entries(MAP)) {
-    const layout = fs.readFileSync(path.join(OLD, 'app', 'properties', pageDir, 'layout.tsx'), 'utf8');
-    const meta = layout.slice(layout.indexOf('export const metadata'));
-    const title = grab(meta, 'title');
-    const description = grab(meta, 'description');
+    const { metaTitle: title, metaDescription: description } = SEO[slug];
     const prop = await prisma.property.findUnique({ where: { slug } });
     if (!prop) { console.log('MISSING', slug); continue; }
     const data = { metaTitle: title, metaDescription: description };
     const hasBrochure = (prop.documents || []).some((d) => /brochure/i.test(d.name || ''));
     const file = path.join(OLD, 'public', pubDir, brochure);
+    if (!hasBrochure && !fs.existsSync(file)) console.log('no brochure on', slug, 'and the old site folder is not available:', file);
     if (!hasBrochure && fs.existsSync(file)) {
       const { url } = await s3Upload(fs.readFileSync(file), `properties/import/${slug}`, 'brochure.pdf', 'application/pdf');
       data.documents = [...(prop.documents || []), { name: 'Brochure', url, uploadedAt: new Date().toISOString() }];

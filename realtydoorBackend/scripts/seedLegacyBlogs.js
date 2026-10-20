@@ -21,6 +21,8 @@ const prisma = require('../src/lib/prisma');
       publishedAt: p.date ? new Date(`${p.date} 09:00:00 GMT+0530`) : new Date(), seoTitle: p.seoTitle, seoDesc: p.seoDesc,
     };
     const existing = await prisma.contentBlock.findUnique({ where: { slug: p.slug } });
+    // keep an image that is already hosted (uploadLegacyBlogImages.js); only a first import uses the local file name
+    if (existing && /^https?:/i.test(existing.imageUrl || '')) data.imageUrl = existing.imageUrl;
     if (existing) await prisma.contentBlock.update({ where: { slug: p.slug }, data });
     else await prisma.contentBlock.create({ data });
     console.log(existing ? 'updated' : 'created', p.slug);

@@ -9,7 +9,7 @@ const path = require('path');
 const prisma = require('../src/lib/prisma');
 const { s3Upload } = require('../src/lib/fileUpload');
 
-const IMAGES = process.env.BLOG_IMAGES_DIR || path.join(__dirname, '..', '..', '..', 'admin-nextjs', 'public', 'images', 'blog');
+const IMAGES = process.env.BLOG_IMAGES_DIR || path.join(__dirname, 'data', 'legacy-blog-images');
 const posts = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'legacy-blogs.json'), 'utf8'));
 
 (async () => {
