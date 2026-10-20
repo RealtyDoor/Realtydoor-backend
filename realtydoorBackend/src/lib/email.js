@@ -1,5 +1,6 @@
 const nodemailer = require('nodemailer');
 const { canSend, CATEGORIES } = require('./notificationGate');
+const logger = require('./logger');
 
 const FROM = process.env.EMAIL_FROM;
 
@@ -15,9 +16,25 @@ const transporter = nodemailer.createTransport({
   auth: { user: FROM, pass: process.env.GMAIL_APP_PASSWORD },
 });
 
+// Every caller fires this and forgets (`.catch(() => {})`), so a failing mailbox used to be invisible. Log the
+// outcome here, once, for every email the app sends. The error is still thrown so callers behave as before.
 async function send({ to, subject, html, user, category }) {
-  if (!canSend({ user, channel: 'EMAIL', category })) return null;
-  return transporter.sendMail({ from: FROM, to, subject, html });
+  if (!to) {
+    logger.warn('[Email] skipped: no recipient address', { subject });
+    return null;
+  }
+  if (!canSend({ user, channel: 'EMAIL', category })) {
+    logger.info('[Email] skipped: recipient turned email notifications off', { to, subject });
+    return null;
+  }
+  try {
+    const info = await transporter.sendMail({ from: FROM, to, subject, html });
+    logger.info('[Email] sent', { to, subject, messageId: info?.messageId, accepted: info?.accepted });
+    return info;
+  } catch (err) {
+    logger.error('[Email] FAILED to send', { to, subject, code: err.code, responseCode: err.responseCode, error: err.message });
+    throw err;
+  }
 }
 
 async function sendLeadAssigned(email, { buyerName, propertyTitle }, user) {
