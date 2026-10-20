@@ -64,6 +64,7 @@ router.post('/leads/:id/auto-assign',    ctrl.autoAssignLead);
 // in one step; passing a different partnerId is the reassign case.
 router.patch('/leads/:id/confirm',       ctrl.confirmLead);
 router.patch('/leads/:id/reject',        ctrl.rejectLead);
+router.patch('/leads/:id/note',          validateObjectId('id'), ctrl.setLeadNote);
 // 6.6 — clear a locked site-visit OTP and issue a fresh code to the buyer.
 router.patch('/leads/:id/otp-override',  ctrl.overrideLeadOtp);
 router.patch('/leads/:id/approve-drop',  leadsCtrl.approveDrop);

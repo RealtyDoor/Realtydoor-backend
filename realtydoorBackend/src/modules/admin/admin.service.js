@@ -1368,6 +1368,18 @@ async function getLoanBankStats() {
   }));
 }
 
+// Free-text internal note on a lead (Lead.adminNotes); never shown to the buyer or partner.
+async function setLeadAdminNote(leadId, note, adminId, ip) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { id: true, adminNotes: true } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  const updated = await prisma.lead.update({ where: { id: leadId }, data: { adminNotes: note || null }, select: { id: true, adminNotes: true } });
+  await createAuditLog({
+    adminId, action: 'LEAD_ADMIN_NOTE_UPDATED', targetType: 'Lead', targetId: leadId,
+    before: { adminNotes: lead.adminNotes }, after: { adminNotes: updated.adminNotes }, ipAddress: ip,
+  });
+  return updated;
+}
+
 async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields = {}) {
   const loan = await prisma.loanApplication.findUnique({
     where: { id: loanId },
@@ -1381,6 +1393,8 @@ async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields 
   const statusFields = {};
   if (status === 'SANCTIONED') statusFields.sanctionedAt = new Date();
   if (status === 'DISBURSED')  statusFields.disbursedAt  = new Date();
+  // The buyer's loan screen reads rejectionReason, so a reject note must land there too.
+  if (status === 'REJECTED' && adminNote) statusFields.rejectionReason = adminNote;
 
   // Dev feedback, 2026-10-08 (L4) — statusHistory existed on the model
   // but nothing ever wrote to it, so the tracker's step list could only
@@ -2560,7 +2574,8 @@ module.exports = {
   getAuditLogs, getUserPrivacyEvents,
   getAllTickets, getTicketById, updateTicketStatus, getTicketStats, getRatingsSummary,
   dispatchTicket, resolveTicket, linkTicketToDeal, getAdminTicketComments, addAdminTicketComment,
-  getAllLoans, getLoanById, updateLoanStatus, getLoanBankStats,
+  getAllLoans, getLoanById, setLeadAdminNote,
+  updateLoanStatus, getLoanBankStats,
   getAllUsers, changeUserRole, suspendUser,
   listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,
   getPartnerMetrics, getPartnerById,

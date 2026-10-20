@@ -231,6 +231,11 @@ function deliveryTracking(counts) {
   if (reached === 0) {
     return { deliveryPct: null, deliveryTracking: 'NOT_CONFIGURED' };
   }
+  // Callbacks only arrive for some messages: while far more are still SENT (unconfirmed) than confirmed, a
+  // percentage like 1.1% reads as a failing channel when it just means callbacks are not flowing yet.
+  if ((counts.SENT || 0) > reached) {
+    return { deliveryPct: null, deliveryTracking: 'PARTIAL' };
+  }
   return { deliveryPct: Math.round((reached / total) * 1000) / 10, deliveryTracking: 'ENABLED' };
 }
 

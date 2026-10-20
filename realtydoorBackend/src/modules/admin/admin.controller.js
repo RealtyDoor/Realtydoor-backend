@@ -1,3 +1,4 @@
+const { z } = require('zod');
 const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./admin.service');
@@ -142,6 +143,14 @@ async function rejectLead(req, res, next) {
     const { reason } = rejectLeadSchema.parse(req.body);
     const lead = await service.rejectLead(req.params.id, reason, req.user.id, req.ip);
     success(res, lead, 'Lead rejected');
+  } catch (err) { next(err); }
+}
+
+async function setLeadNote(req, res, next) {
+  try {
+    const { note } = z.object({ note: z.string().trim().max(2000) }).parse(req.body);
+    const lead = await service.setLeadAdminNote(req.params.id, note, req.user.id, req.ip);
+    success(res, lead, 'Note saved');
   } catch (err) { next(err); }
 }
 
@@ -770,6 +779,7 @@ module.exports = {
   listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,
   getPartnerById,
   getPropertyById,
+  setLeadNote,
   getKycById,
   listDocuments, verifyDocument,
   listContactMessages, markContactRead,
