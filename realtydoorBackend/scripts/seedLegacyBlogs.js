@@ -1,5 +1,5 @@
 /*
- * Imports the 12 blog posts that were ranking on the previous realtydoor.com site (Search Console coverage, 17 Oct 2026)
+ * Imports the 13 blog posts that were ranking on the previous realtydoor.com site (Search Console coverage, 17 Oct 2026)
  * into the CMS as published BLOG_POST rows, keeping their slugs, titles, SEO title and description, keywords and images.
  * Safe to run again: a post with the same slug is updated, not duplicated.
  *
