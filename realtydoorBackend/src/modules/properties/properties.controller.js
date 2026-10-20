@@ -20,6 +20,24 @@ async function getBySlug(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// GET /api/properties/:slug/brochure. The property's own brochure (uploaded or imported) if it has one,
+// otherwise a PDF generated from the listing, so every listed property has a brochure.
+async function getBrochure(req, res, next) {
+  try {
+    const property = await service.getPropertyByIdOrSlug(req.params.slug);
+    const stored = (property.documents || []).find((d) => d && d.url && /brochure/i.test(d.name || ''));
+    if (stored) return res.redirect(302, stored.url);
+    const { buildPropertyBrochurePdf } = require('../../lib/propertyBrochure');
+    const pdf = await buildPropertyBrochurePdf(property, (process.env.FRONTEND_URL || '').replace(/\/$/, '') || undefined);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${property.slug || 'property'}-brochure.pdf"`,
+      'Cache-Control': 'public, max-age=3600',
+    });
+    res.send(pdf);
+  } catch (err) { next(err); }
+}
+
 async function getFeatured(req, res, next) {
   try {
     const properties = await service.getFeaturedProperties();
@@ -107,6 +125,6 @@ async function reportUnauthorizedListing(req, res, next) {
 }
 
 module.exports = {
-  search, getBySlug, getFeatured, create, update, uploadImages, uploadVideos, uploadDocuments, getEditLogs,
+  search, getBySlug, getBrochure, getFeatured, create, update, uploadImages, uploadVideos, uploadDocuments, getEditLogs,
   getConstructionUpdates, addConstructionUpdate, reportUnauthorizedListing,
 };

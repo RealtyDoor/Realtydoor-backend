@@ -12,6 +12,7 @@ const { searchLimiter, defaultLimiter } = require('../../middleware/rateLimiter'
 router.get('/', searchLimiter, ctrl.search);
 router.get('/featured', ctrl.getFeatured);
 router.get('/:slug', ctrl.getBySlug);
+router.get('/:slug/brochure', defaultLimiter, ctrl.getBrochure);
 
 // R27 — public (the real owner may have no RealtyDoor account at all).
 // Above the slug-only GET for the same reason as construction-updates below:
