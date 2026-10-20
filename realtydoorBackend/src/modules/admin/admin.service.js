@@ -1136,6 +1136,8 @@ async function verifyKyc(userId, action, note, adminId, ip) {
 
   if (action === 'APPROVE') {
     sendKycVerified(user.email, user).catch(() => {});
+    // WhatsApp copy of the same news; stays silent until `kyc_approved` is live in WATI (see wati-templates/16).
+    notifyUser(userId, 'kyc_approved', { partner_name: '$userName' });
     // M5/BE-23 followup — promote a payout account that was only ever
     // held back by KYC (see partners.service.js's createPayoutAccount),
     // instead of leaving it PENDING_VALIDATION until an admin separately
@@ -1145,6 +1147,8 @@ async function verifyKyc(userId, action, note, adminId, ip) {
     );
   } else {
     sendKycRejected(user.email, note, user).catch(() => {});
+    // Stays silent until `kyc_rejected` is live in WATI (see wati-templates/17).
+    notifyUser(userId, 'kyc_rejected', { partner_name: '$userName', reason: note || 'Please check the app for details' });
   }
 
   return updated;
