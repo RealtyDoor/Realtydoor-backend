@@ -6,6 +6,8 @@ const logger = require('../../lib/logger');
 const authService = require('./auth.service');
 const { formatProfileSettings } = require('../users/users.service');
 const { sendWelcomeEmail } = require('../../lib/email');
+const { notifyAdmins } = require('../../lib/notifications');
+const { createAuditLog } = require('../../lib/auditLog');
 const {
   signupOtpSchema,
   signupVerifySchema,
@@ -120,6 +122,23 @@ async function setRole(req, res, next) {
     if (role !== 'PARTNER') throw new ApiError(400, 'Only PARTNER role can be self-assigned');
     if (req.user.role !== 'USER') return success(res, { role: req.user.role }); // idempotent
 
+    // Partners are reached by WhatsApp and paid out, so the number must be verified first.
+    if (!req.user.phoneVerified) {
+      throw new ApiError(400, 'Verify your phone number before applying as a partner.', { code: 'PHONE_NOT_VERIFIED' });
+    }
+    // Switching role takes the buyer app away. Someone with a deal in progress would lose sight of it,
+    // so they finish (or close) it first, or ask support to move them over.
+    const [openLeads, heldEscrow, openLoans] = await Promise.all([
+      prisma.lead.count({ where: { buyerId: req.user.id, status: { notIn: ['CLOSED', 'DROPPED'] } } }),
+      prisma.escrowTransaction.count({ where: { buyerId: req.user.id, status: { in: ['HELD', 'FROZEN'] } } }),
+      prisma.loanApplication.count({ where: { userId: req.user.id, status: { notIn: ['REJECTED', 'DISBURSED'] } } }),
+    ]);
+    if (openLeads || heldEscrow || openLoans) {
+      throw new ApiError(409,
+        'You have an inquiry, payment or loan in progress. Finish or close it before applying as a partner, or contact support.',
+        { code: 'PARTNER_UPGRADE_BLOCKED' });
+    }
+
     try {
       await setUserRole(req.user.clerkId, 'PARTNER');
     } catch (err) {
@@ -128,6 +147,14 @@ async function setRole(req, res, next) {
     }
     const user = await prisma.user.update({ where: { id: req.user.id }, data: { role: 'PARTNER' } });
     logger.info('[setRole] upgraded to PARTNER', { userId: req.user.id });
+    // The team should know someone has applied: it is the only record of the application until KYC arrives.
+    notifyAdmins({
+      title: 'New partner application',
+      message: `${user.name || user.email} started a partner application. KYC documents will follow.`,
+      type: 'PARTNER_APPLICATION',
+      linkUrl: `/admin/users/${user.id}`,
+    }).catch(() => {});
+    createAuditLog({ adminId: user.id, action: 'PARTNER_SELF_UPGRADE', targetType: 'User', targetId: user.id, before: { role: 'USER' }, after: { role: 'PARTNER' }, ipAddress: req.ip }).catch(() => {});
     // Same partner-welcome content as a direct partner signup — this is the
     // other real "became a partner" moment (an existing buyer upgrading),
     // not just a brand-new account.
