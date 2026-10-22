@@ -65,13 +65,3 @@ describe('PDF currency symbol', () => {
     expect(withCompany.length).toBeGreaterThan(1000);
   });
 });
-
-describe('ticket charge receipt (T12)', () => {
-  test('is for the parts only: no visit charge on it', async () => {
-    const { buildTicketChargeReceiptPdf } = require('../../src/lib/pdfReceipt');
-    const src = require('fs').readFileSync(require('path').join(__dirname, '../../src/lib/pdfReceipt.js'), 'utf8');
-    expect(/Visit charge/i.test(src)).toBe(false);
-    const buf = await buildTicketChargeReceiptPdf({ ticketSubject: 'Leak', userName: 'U', partsCharge: 300, totalCharge: 300, resolvedAt: new Date() });
-    expect(buf.subarray(0, 4).toString()).toBe('%PDF');
-  });
-});

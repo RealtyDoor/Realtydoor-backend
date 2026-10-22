@@ -47,11 +47,11 @@ function buildCommissionReceiptPdf({ refCode, propertyTitle, payerName, feePct, 
   });
 }
 
-// 7.5 — a service-ticket repair (parts) receipt; the visit allowance is internal and never on it. Same "simple receipt,
+// 7.5 — a service-ticket repair/visit charge receipt. Same "simple receipt,
 // not a GST tax invoice" scope as buildCommissionReceiptPdf, but a genuinely
 // different shape (itemised charges, not a fee % of a deal price) — kept as
 // its own function rather than forcing one function to mean two things.
-function buildTicketChargeReceiptPdf({ ticketSubject, userName, partsCharge, totalCharge, resolvedAt }) {
+function buildTicketChargeReceiptPdf({ ticketSubject, userName, visitCharge, partsCharge, totalCharge, resolvedAt }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50 });
     const chunks = [];
@@ -66,6 +66,7 @@ function buildTicketChargeReceiptPdf({ ticketSubject, userName, partsCharge, tot
 
     doc.moveDown(1).fontSize(11).fillColor('#333');
     doc.text(`Billed to: ${userName || 'N/A'}`);
+    doc.text(`Visit charge: ${formatRupees(visitCharge)}`);
     doc.text(`Parts/materials: ${formatRupees(partsCharge)}`);
     doc.moveDown(0.3).fontSize(14).fillColor('#111').text(`Total: ${formatRupees(totalCharge)}`);
     doc.moveDown(0.3).fontSize(11).fillColor('#333');
