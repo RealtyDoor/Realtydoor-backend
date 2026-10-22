@@ -2076,15 +2076,18 @@ async function resolveTicket(ticketId, data, adminId, ip) {
   const visitCharge = data.visitCharge ?? 0;
   const partsCharge = data.partsCharge ?? 0;
   const totalCharge = round2(visitCharge + partsCharge);
+  // The visit charge is petty cash the company pays the vendor or partner itself (T12). The buyer owes, is shown, and gets
+  // a receipt for the parts only.
+  const buyerCharge = round2(partsCharge);
 
   // A zero-charge resolution (most tickets, covered by the subscription) has
   // nothing to issue a receipt for.
   let invoiceUrl = null;
-  if (totalCharge > 0) {
+  if (buyerCharge > 0) {
     const resolvedAt = new Date();
     const pdfBuffer = await buildTicketChargeReceiptPdf({
       ticketSubject: ticket.subject, userName: ticket.user?.name,
-      visitCharge, partsCharge, totalCharge, resolvedAt,
+      partsCharge, totalCharge: buyerCharge, resolvedAt,
     });
     const { url } = await s3Upload(pdfBuffer, 'receipts', `ticket-charge-${ticketId}.pdf`, 'application/pdf');
     invoiceUrl = url;
@@ -2108,7 +2111,7 @@ async function resolveTicket(ticketId, data, adminId, ip) {
     userId: ticket.userId,
     title: 'Service ticket resolved',
     message: `Your ticket "${ticket.subject}" has been resolved`
-      + `${totalCharge > 0 ? ` — total charge ₹${totalCharge.toLocaleString('en-IN')}` : ''}. Please verify.`,
+      + `${buyerCharge > 0 ? ` — charge for parts ₹${buyerCharge.toLocaleString('en-IN')}` : ''}. Please verify.`,
     type: 'TICKET_RESOLVED',
     linkUrl: `/user/tickets/${ticketId}`,
   });
