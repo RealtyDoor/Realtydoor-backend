@@ -1,6 +1,17 @@
 const { z } = require('zod');
 const { paginationSchema } = require('../../utils/validators');
 
+// T25 — a listing without a price cannot be approved or shown. SALE needs
+// `price`, RENT/LEASE need `monthlyRent`. Checked on create only (the update
+// schema is a partial of the object, so it cannot carry this rule).
+function missingPriceMessage(data) {
+  if (data.listingType === 'SALE' && !data.price) return 'Price is required for a sale listing';
+  if ((data.listingType === 'RENT' || data.listingType === 'LEASE') && !data.monthlyRent && !data.price) {
+    return 'Monthly rent is required for a rent or lease listing';
+  }
+  return null;
+}
+
 const createPropertySchema = z.object({
   title: z.string().min(5).max(200),
   description: z.string().min(20),
@@ -106,4 +117,4 @@ const reportUnauthorizedListingSchema = z.object({
   path: ['reporterEmail'],
 });
 
-module.exports = { createPropertySchema, searchSchema, constructionUpdateSchema, reportUnauthorizedListingSchema };
+module.exports = { createPropertySchema, missingPriceMessage, searchSchema, constructionUpdateSchema, reportUnauthorizedListingSchema };

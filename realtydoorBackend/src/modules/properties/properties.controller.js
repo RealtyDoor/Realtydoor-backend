@@ -1,6 +1,6 @@
 const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination } = require('../../utils/pagination');
-const { searchSchema, createPropertySchema, reportUnauthorizedListingSchema } = require('./properties.validator');
+const { searchSchema, createPropertySchema, missingPriceMessage, reportUnauthorizedListingSchema } = require('./properties.validator');
 const service = require('./properties.service');
 const ApiError = require('../../utils/ApiError');
 
@@ -48,6 +48,8 @@ async function getFeatured(req, res, next) {
 async function create(req, res, next) {
   try {
     const data = createPropertySchema.parse(req.body);
+    const priceProblem = missingPriceMessage(data);
+    if (priceProblem) throw new ApiError(400, priceProblem);
     const property = await service.createProperty(data, req.user.id);
     res.status(201).json({ success: true, message: 'Listing submitted for review', data: property });
   } catch (err) { next(err); }

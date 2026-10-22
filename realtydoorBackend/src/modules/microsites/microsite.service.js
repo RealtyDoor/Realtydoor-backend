@@ -16,10 +16,34 @@ const { throwForDuplicateKey } = require('./microsite.errors');
 // property page) for every reason the spec lists: slug doesn't exist,
 // enabled:false, property not APPROVED, property isB2BOnly — the last two
 // are already enforced inside getPropertyByIdOrSlug itself.
+// Newest MICROSITE_UPDATED audit row whose "before" slug is the one asked for
+// and whose microsite still exists and is enabled; null otherwise. The
+// microsite is looked up by id, so a chain (a -> b -> c) lands on c.
+async function findCurrentSlugForOldSlug(slug) {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return null;
+  const row = await prisma.auditLog.findFirst({
+    where: { action: 'MICROSITE_UPDATED', targetType: 'Microsite', before: { contains: `"slug":"${slug}"` } },
+    orderBy: { createdAt: 'desc' },
+    select: { targetId: true },
+  });
+  if (!row) return null;
+  const current = await prisma.microsite.findUnique({ where: { id: row.targetId }, select: { slug: true, enabled: true } });
+  if (!current || !current.enabled || current.slug === slug) return null;
+  return current.slug;
+}
+
 async function getBySlug(slug) {
   return withCache(CACHE_KEYS.micrositeSlug(slug), 60, async () => {
     const microsite = await prisma.microsite.findUnique({ where: { slug } });
-    if (!microsite || !microsite.enabled) throw new ApiError(404, 'Property not found');
+    if (!microsite) {
+      // T38 — a shared link must survive a slug change: if this slug was a
+      // microsite's previous slug, answer with the current one so the website
+      // can redirect. Renames are recorded in the audit log (no schema change).
+      const redirectTo = await findCurrentSlugForOldSlug(slug);
+      if (redirectTo) return { redirectTo };
+      throw new ApiError(404, 'Property not found');
+    }
+    if (!microsite.enabled) throw new ApiError(404, 'Property not found');
 
     const result = await getPropertyByIdOrSlug(microsite.propertyId, { countView: false });
     return { ...result, micrositeSlug: microsite.slug };
@@ -116,4 +140,4 @@ async function invalidateCacheForPropertyStatusChange(propertyId) {
   if (microsite) cacheDel(CACHE_KEYS.micrositeSlug(microsite.slug));
 }
 
-module.exports = { getBySlug, listForAdmin, create, update, remove, invalidateCacheForPropertyStatusChange };
+module.exports = { findCurrentSlugForOldSlug, getBySlug, listForAdmin, create, update, remove, invalidateCacheForPropertyStatusChange };
