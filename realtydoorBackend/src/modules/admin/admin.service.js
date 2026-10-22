@@ -2073,10 +2073,12 @@ async function resolveTicket(ticketId, data, adminId, ip) {
     throw new ApiError(400, `Cannot resolve a ticket from status ${ticket.status}`);
   }
 
-  // Only the parts the vendor billed are recorded (T12). Any visit money is petty cash settled offline, never entered here.
+  const visitCharge = data.visitCharge ?? 0;
   const partsCharge = data.partsCharge ?? 0;
+  const totalCharge = round2(visitCharge + partsCharge);
+  // The visit charge is petty cash the company pays the vendor or partner itself (T12). The buyer owes, is shown, and gets
+  // a receipt for the parts only.
   const buyerCharge = round2(partsCharge);
-  const totalCharge = buyerCharge;
 
   // A zero-charge resolution (most tickets, covered by the subscription) has
   // nothing to issue a receipt for.
@@ -2096,7 +2098,7 @@ async function resolveTicket(ticketId, data, adminId, ip) {
     data: {
       status: 'RESOLVED', resolvedAt: new Date(),
       ...(data.resolutionUrls !== undefined && { resolutionUrls: data.resolutionUrls }),
-      partsCharge, totalCharge,
+      visitCharge, partsCharge, totalCharge,
       ...(invoiceUrl && { invoiceUrl }),
       ...(data.note !== undefined && {
         adminNotes: `${ticket.adminNotes ? `${ticket.adminNotes} | ` : ''}${data.note}`,
@@ -2116,7 +2118,7 @@ async function resolveTicket(ticketId, data, adminId, ip) {
 
   await createAuditLog({
     adminId, action: 'TICKET_RESOLVED', targetType: 'ServiceTicket', targetId: ticketId,
-    after: { partsCharge, totalCharge, invoiceUrl }, ipAddress: ip,
+    after: { visitCharge, partsCharge, totalCharge, invoiceUrl }, ipAddress: ip,
   });
 
   return updated;
