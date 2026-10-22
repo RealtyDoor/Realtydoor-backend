@@ -691,33 +691,9 @@ async function main() {
 
   // ── 10. Team Members ──────────────────────────────────────────────────────
 
-  const teamDefs = [
-    {
-      name: 'Vikram Nair', title: 'Founder & CEO', email: 'vikram@realtydoor.com',
-      avatarUrl: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?w=400',
-      sortOrder: 1, isActive: true,
-    },
-    {
-      name: 'Shreya Gupta', title: 'Head of Partnerships', email: 'shreya@realtydoor.com',
-      avatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400',
-      sortOrder: 2, isActive: true,
-    },
-    {
-      name: 'Arun Menon', title: 'Lead Engineer', email: 'arun@realtydoor.com',
-      avatarUrl: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=400',
-      sortOrder: 3, isActive: true,
-    },
-  ];
-
-  for (const tData of teamDefs) {
-    const existing = await prisma.teamMember.findFirst({ where: { email: tData.email } });
-    if (!existing) {
-      await prisma.teamMember.create({ data: tData });
-      console.log(`✅  Team     : ${tData.name} — ${tData.title}`);
-    } else {
-      console.log(`⏭   Team     : ${tData.name}`);
-    }
-  }
+  // T50 — no sample team here: the public About page reads these rows, and invented people must not appear on it.
+  // Add real team members from the admin CMS (Team) instead.
+  console.log('⏭   Team     : none seeded (add real members in the admin CMS)');
 
   // ── 11. Locality Insights ─────────────────────────────────────────────────
 
