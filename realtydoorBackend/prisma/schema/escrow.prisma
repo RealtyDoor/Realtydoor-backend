@@ -123,6 +123,7 @@ model EscrowTransaction {
   frozenReason    String?
   frozenByAdminId String?   @db.ObjectId
   unfrozenAt      DateTime?
+  holdLimitAlertedAt DateTime? // set once the 30-day hold-limit alert has fired, so the daily job alerts once per escrow
   autoEscalatedAt   DateTime? // set once an overdue-HELD notification has fired, so the daily job doesn't re-notify
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

@@ -586,7 +586,7 @@ async function closeLead(leadId, partnerId, { closingPrice } = {}) {
 
   await prisma.lead.update({
     where: { id: leadId },
-    data: { status: 'CLOSED', ...(closingPrice !== undefined && { closingPrice }) },
+    data: { status: 'CLOSED', closedAt: new Date(), ...(closingPrice !== undefined && { closingPrice }) },
   });
 
   const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
@@ -638,6 +638,35 @@ async function requestDrop(leadId, partnerId, reason) {
   })));
 
   return { message: 'Drop request submitted. Admin will review.' };
+}
+
+// Admin marks the partner's uploaded allocation letter as verified. This, not the upload, is the point after which
+// the buyer can no longer cancel for a refund (money model Rev 3, 2.2). Idempotent: a second call changes nothing.
+async function adminVerifyAllocationLetter(leadId, adminId, ip) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!lead.allocationLetterUrl) throw new ApiError(400, 'No allocation letter has been uploaded for this lead', { code: 'NO_ALLOCATION_LETTER' });
+  if (lead.allocationLetterVerifiedAt) return lead;
+
+  const updated = await prisma.lead.update({
+    where: { id: leadId },
+    data: { allocationLetterVerifiedAt: new Date(), allocationLetterVerifiedBy: adminId },
+  });
+  if (lead.buyerId) {
+    await createNotification({
+      userId: lead.buyerId,
+      title: 'Allocation letter verified',
+      message: `The allocation letter for ${lead.refCode || 'your deal'} has been verified. Your token now stays in escrow until the deal is released; a refund is no longer available here. If something is wrong, raise a dispute.`,
+      type: 'ALLOCATION_LETTER_VERIFIED',
+      linkUrl: `/user/inquiries/${leadId}`,
+    }).catch((err) => logger.warn('[Lead] letter-verified notification failed', { leadId, error: err.message }));
+  }
+  await createAuditLog({
+    adminId, action: 'ALLOCATION_LETTER_VERIFIED', targetType: 'Lead', targetId: leadId,
+    before: { allocationLetterVerifiedAt: null }, after: { allocationLetterVerifiedAt: updated.allocationLetterVerifiedAt },
+    ipAddress: ip,
+  });
+  return updated;
 }
 
 async function adminApproveDrop(leadId, adminId, ip) {
@@ -705,4 +734,4 @@ async function adminRejectDrop(leadId, adminId, ip) {
   return { message: 'Drop request rejected. Partner notified.' };
 }
 
-module.exports = { submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop };
+module.exports = { submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };

@@ -5,7 +5,7 @@ const {
   updateProfileSchema, unsupportedProfileFields,
   updateSettingsSchema,
   updateBankAccountSchema, updateBillingSchema,
-  createSupportTicketSchema,
+  createSupportTicketSchema, supportTicketReplySchema,
   acceptTermsSchema,
   createPayoutAccountSchema,
   requestPayoutAccountChangeSchema,
@@ -205,11 +205,19 @@ async function createSupportTicket(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function replyToSupportTicket(req, res, next) {
+  try {
+    const { message } = supportTicketReplySchema.parse(req.body);
+    const saved = await service.replyToSupportTicket(req.user.id, req.params.id, message);
+    created(res, saved, 'Reply sent');
+  } catch (err) { next(err); }
+}
+
 module.exports = {
   acceptTerms, recordKycConsent, submitKyc, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,
   getFinanceSummary, getAnalytics, getRatings, listMyPayouts,
   getSettings, updateSettings,
   getBankAccount, updateBankAccount, getBilling, updateBilling,
   getPayoutAccount, createPayoutAccount, requestPayoutAccountChange,
-  getSupportTickets, getSupportTicketById, createSupportTicket,
+  getSupportTickets, getSupportTicketById, createSupportTicket, replyToSupportTicket,
 };

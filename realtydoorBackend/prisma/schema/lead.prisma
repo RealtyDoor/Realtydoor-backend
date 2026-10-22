@@ -92,7 +92,14 @@ model Lead {
   closingPrice               Float?
   allocationLetterUrl        String?
   allocationLetterUploadedAt DateTime?
+  // The partner uploading a file is not verification. Only an admin marking the
+  // letter verified ends the buyer's right to cancel and get the token back
+  // (money model Rev 3, 2.2); see escrow.service refund().
+  allocationLetterVerifiedAt DateTime?
+  allocationLetterVerifiedBy String?   @db.ObjectId
   tokenReceiptUrl            String?
+  // T16 — when the partner marked the deal closed. updatedAt moves on every later edit, so it cannot stand in for this.
+  closedAt                   DateTime?
 
   // 6.7 — who revealed the buyer's real phone, when, from where. The OTP
   // verification is the reveal event; this is the audit trail for it.

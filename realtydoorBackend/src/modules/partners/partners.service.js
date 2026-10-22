@@ -781,9 +781,32 @@ async function getSupportTickets(partnerId, filters, skip, limit) {
 async function getSupportTicketById(partnerId, ticketId) {
   const ticket = await prisma.partnerSupportTicket.findFirst({
     where: { id: ticketId, partnerId },
+    include: { messages: { orderBy: { createdAt: 'asc' } } },
   });
   if (!ticket) throw new ApiError(404, 'Support ticket not found');
   return ticket;
+}
+
+// B73 — a partner follows up on their own ticket. An answered or resolved ticket goes back to OPEN so the admin sees it;
+// a CLOSED ticket stays closed (raise a new one).
+async function replyToSupportTicket(partnerId, ticketId, message) {
+  const ticket = await prisma.partnerSupportTicket.findFirst({ where: { id: ticketId, partnerId } });
+  if (!ticket) throw new ApiError(404, 'Support ticket not found');
+  if (ticket.status === 'CLOSED') throw new ApiError(409, 'This ticket is closed. Raise a new ticket instead.', { code: 'TICKET_CLOSED' });
+
+  const saved = await prisma.partnerSupportTicketMessage.create({
+    data: { ticketId, authorType: 'PARTNER', authorId: partnerId, body: message },
+  });
+  if (ticket.status !== 'OPEN') {
+    await prisma.partnerSupportTicket.update({ where: { id: ticketId }, data: { status: 'OPEN', resolvedAt: null } });
+  }
+  await notifyAdmins({
+    title: 'Partner replied on a support ticket',
+    message: `${ticket.ticketNo}: ${message.slice(0, 160)}`,
+    type: 'PARTNER_TICKET_REPLY',
+    linkUrl: '/admin/partner-support',
+  });
+  return saved;
 }
 
 async function createSupportTicket(partnerId, data) {
@@ -951,7 +974,7 @@ module.exports = {
   getBankAccount, updateBankAccount, getBilling, updateBilling,
   getPayoutAccount, createPayoutAccount, requestPayoutAccountChange, setPayoutAccountStatus, listPayoutAccounts, maskPayout,
   promotePayoutAccountOnKycApproval,
-  getSupportTickets, getSupportTicketById, createSupportTicket,
+  getSupportTickets, getSupportTicketById, createSupportTicket, replyToSupportTicket,
   getPartnerAnalytics,
   syncPayoutAccount,
 };

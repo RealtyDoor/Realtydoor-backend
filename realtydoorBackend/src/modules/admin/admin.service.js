@@ -1185,7 +1185,8 @@ async function getRevenueSummary() {
       where: { paymentStatus: 'SUCCESS', startDate: { gte: startOfMonth } },
       _sum: { amountPaid: true }, _count: true,
     }),
-    prisma.lead.count({ where: { status: 'CLOSED', updatedAt: { gte: startOfMonth } } }),
+    // closedAt, with updatedAt for deals closed before closedAt existed (T16).
+    prisma.lead.count({ where: { status: 'CLOSED', OR: [{ closedAt: { gte: startOfMonth } }, { closedAt: { isSet: false }, updatedAt: { gte: startOfMonth } }] } }),
     prisma.lead.count(),
   ]);
 

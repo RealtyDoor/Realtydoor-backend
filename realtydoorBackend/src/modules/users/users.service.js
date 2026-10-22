@@ -207,7 +207,13 @@ async function cancelLead(userId, leadId, { reason, reasonLabel, acceptCancellat
     // the cancellation charge (shown at checkout, and confirmed here); after
     // verification nothing is refunded by the platform (dispute route).
     const quote = await escrowService.refund(escrow.id, userId, null, { reason: 'BUYER_CANCEL', dryRun: true });
-    if (quote.refundable) {
+    if (!quote.refundable) {
+      // Dropping the inquiry here would leave the token HELD with no inquiry attached to it.
+      throw new ApiError(409,
+        'Your allocation letter has been verified, so this token can no longer be refunded by cancelling. Raise a dispute if something is wrong.',
+        { code: 'NOT_REFUNDABLE_AFTER_VERIFICATION', quote });
+    }
+    {
       if (quote.cancellationChargePaise > 0 && acceptCancellationCharge !== true) {
         throw new ApiError(409,
           `Cancelling now keeps a cancellation charge of ₹${(quote.cancellationChargePaise / 100).toLocaleString('en-IN')} from your token. Confirm to go ahead.`,

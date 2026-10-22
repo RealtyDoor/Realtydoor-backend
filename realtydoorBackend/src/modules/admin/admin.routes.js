@@ -77,6 +77,7 @@ router.patch('/leads/:id/note',          validateObjectId('id'), ctrl.setLeadNot
 router.patch('/leads/:id/otp-override',  ctrl.overrideLeadOtp);
 router.patch('/leads/:id/approve-drop',  leadsCtrl.approveDrop);
 router.patch('/leads/:id/reject-drop',   leadsCtrl.rejectDrop);
+router.patch('/leads/:id/allocation-letter/verify', validateObjectId('id'), requirePermission('FINANCE'), leadsCtrl.verifyAllocationLetter);
 
 // Property approval + admin edit
 router.get('/properties',              ctrl.getPendingProperties);

@@ -220,7 +220,7 @@ describe('refund dry run (what a cancelling buyer is told)', () => {
   });
   test('letter verified: not refundable, and a real refund attempt is refused with 409', async () => {
     prisma.escrowTransaction.findUnique.mockResolvedValue(held(72));
-    prisma.lead.findUnique.mockResolvedValue({ allocationLetterUrl: 'https://x/letter.pdf' });
+    prisma.lead.findUnique.mockResolvedValue({ allocationLetterUrl: 'https://x/letter.pdf', allocationLetterVerifiedAt: new Date() });
     expect((await escrow.refund('esc1', 'u1', null, { reason: 'BUYER_CANCEL', dryRun: true })).refundable).toBe(false);
     await expect(escrow.refund('esc1', 'u1', null, { reason: 'BUYER_CANCEL' }))
       .rejects.toMatchObject({ statusCode: 409, data: { code: 'NOT_REFUNDABLE_AFTER_VERIFICATION' } });

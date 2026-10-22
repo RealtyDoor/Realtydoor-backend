@@ -17,7 +17,7 @@ async function runOnce({ now = new Date() } = {}) {
   const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
   const due = await prisma.escrowTransaction.findMany({
     where: { status: 'HELD', heldAt: { lte: cutoff } },
-    select: { id: true, amount: true, leadId: true },
+    select: { id: true, amount: true, leadId: true, holdLimitAlertedAt: true },
   });
   const result = { due: due.length, refunded: 0, alerted: 0, failed: 0, auto };
   if (!due.length) return result;
@@ -25,11 +25,14 @@ async function runOnce({ now = new Date() } = {}) {
   const escrowService = require('../modules/escrow/escrow.service');
   for (const e of due) {
     if (!auto) {
+      // Once per escrow. Not filtered in the query: on MongoDB a never-written field does not match `null`.
+      if (e.holdLimitAlertedAt) continue;
       await notifyAdmins({
         title: 'Escrow past the hold limit',
         message: `A ₹${e.amount.toLocaleString('en-IN')} token has been held ${days}+ days. Refund it or extend with the parties' written OK. (Automatic refund is off.)`,
         type: 'ESCROW_HOLD_LIMIT', linkUrl: '/admin/escrow',
       });
+      await prisma.escrowTransaction.update({ where: { id: e.id }, data: { holdLimitAlertedAt: now } });
       result.alerted += 1;
       continue;
     }

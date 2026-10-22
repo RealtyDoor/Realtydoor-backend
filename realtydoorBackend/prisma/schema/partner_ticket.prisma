@@ -16,8 +16,23 @@ model PartnerSupportTicket {
   resolvedAt  DateTime?
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
+  messages    PartnerSupportTicketMessage[]
 
   @@index([partnerId])
   @@index([status])
   @@index([partnerId, status])
+}
+
+// B73 — the conversation on a ticket. `adminReply` keeps only the latest admin answer; every answer and every follow-up
+// from the partner is also written here, so nothing is overwritten and the partner can reply.
+model PartnerSupportTicketMessage {
+  id         String               @id @default(auto()) @map("_id") @db.ObjectId
+  ticketId   String               @db.ObjectId
+  ticket     PartnerSupportTicket @relation(fields: [ticketId], references: [id])
+  authorType String               // PARTNER | ADMIN
+  authorId   String?              @db.ObjectId
+  body       String
+  createdAt  DateTime             @default(now())
+
+  @@index([ticketId, createdAt])
 }

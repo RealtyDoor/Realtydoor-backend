@@ -109,6 +109,13 @@ async function approveDrop(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function verifyAllocationLetter(req, res, next) {
+  try {
+    const lead = await service.adminVerifyAllocationLetter(req.params.id, req.user.id, req.ip);
+    success(res, lead, 'Allocation letter marked verified');
+  } catch (err) { next(err); }
+}
+
 async function rejectDrop(req, res, next) {
   try {
     const result = await service.adminRejectDrop(req.params.id, req.user.id, req.ip);
@@ -116,4 +123,4 @@ async function rejectDrop(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, updateVisitOutcome, partnerAddLead, approveDrop, rejectDrop };
+module.exports = { submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, updateVisitOutcome, partnerAddLead, approveDrop, rejectDrop, verifyAllocationLetter };

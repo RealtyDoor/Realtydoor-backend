@@ -76,6 +76,11 @@ const createSupportTicketSchema = z.object({
   category:    z.enum(['LEAD', 'ESCROW', 'LISTING', 'PAYMENT', 'GENERAL']).optional(),
 });
 
+// B73 — a follow-up from the partner on their own ticket.
+const supportTicketReplySchema = z.object({
+  message: z.string().trim().min(2, 'Write at least 2 characters').max(2000),
+});
+
 // B12.3 — the agreement version the partner is accepting. Free-form string
 // (e.g. "2026-10-v1") rather than an enum so a new version needs no deploy.
 const acceptTermsSchema = z.object({
@@ -122,4 +127,5 @@ module.exports = {
   updateSettingsSchema,
   updateBankAccountSchema, updateBillingSchema,
   createSupportTicketSchema,
+  supportTicketReplySchema,
 };

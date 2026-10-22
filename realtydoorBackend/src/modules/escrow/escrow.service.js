@@ -442,7 +442,7 @@ async function getReleasePlan(escrowId) {
     select: {
       id: true, refCode: true, feePct: true, dealPriceAtLock: true,
       commissionLockedAt: true, commissionVersion: true,
-      allocationLetterUrl: true, buyerFeedbackStatus: true, status: true,
+      allocationLetterUrl: true, allocationLetterVerifiedAt: true, buyerFeedbackStatus: true, status: true,
       assignedPartnerId: true,
       property: { select: { price: true } },
       assignedPartner: { select: { id: true, name: true, payoutAccountStatus: true, razorpayFundAccountId: true } },
@@ -513,7 +513,7 @@ async function getReleasePlan(escrowId) {
     {
       key: 'ALLOCATION_LETTER', blocking: true,
       ok: !!lead.allocationLetterUrl,
-      detail: lead.allocationLetterUrl ? 'on file' : 'not uploaded',
+      detail: !lead.allocationLetterUrl ? 'not uploaded' : lead.allocationLetterVerifiedAt ? 'on file and verified' : 'on file, not yet marked verified',
     },
     {
       key: 'BUYER_CONFIRMED', blocking: false,
@@ -1063,7 +1063,7 @@ async function refund(escrowId, adminId, ip, opts = {}) {
 
   const [settings, lead] = await Promise.all([
     getMoneySettings(),
-    prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { allocationLetterUrl: true } }),
+    prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { allocationLetterUrl: true, allocationLetterVerifiedAt: true } }),
   ]);
   const quote = money.refundQuote({
     reason,
@@ -1071,7 +1071,7 @@ async function refund(escrowId, adminId, ip, opts = {}) {
     feePaise: escrow.processingFeePaise ?? 0,
     paidAt: escrow.heldAt,
     now: opts.now ?? new Date(),
-    letterVerified: !!lead?.allocationLetterUrl,
+    letterVerified: !!lead?.allocationLetterVerifiedAt,
     settings: settings.refund,
   });
   if (opts.dryRun) return quote;

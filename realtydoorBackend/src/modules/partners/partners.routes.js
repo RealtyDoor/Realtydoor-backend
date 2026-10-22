@@ -9,6 +9,7 @@ const projectCtrl = require('../projects/project.controller');
 const referralCtrl = require('../referrals/referral.controller');
 const builderInvoiceCtrl = require('../projects/builderInvoice.controller');
 const { authenticate } = require('../../middleware/auth');
+const { validateObjectId } = require('../../middleware/validateObjectId');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
 const { kycDocUploader, dealDocUploader, partnerProfilePhotoUploader, taxInvoiceUploader } = require('../../lib/fileUpload');
@@ -126,6 +127,7 @@ router.patch('/referrals/:id/revoke', requireKyc, referralCtrl.revokeMine);
 // Support tickets (Help & Support page)
 router.get('/support-tickets',      ctrl.getSupportTickets);
 router.post('/support-tickets',     ctrl.createSupportTicket);
-router.get('/support-tickets/:id',  ctrl.getSupportTicketById);
+router.get('/support-tickets/:id',  validateObjectId('id'), ctrl.getSupportTicketById);
+router.post('/support-tickets/:id/reply', validateObjectId('id'), ctrl.replyToSupportTicket);
 
 module.exports = router;

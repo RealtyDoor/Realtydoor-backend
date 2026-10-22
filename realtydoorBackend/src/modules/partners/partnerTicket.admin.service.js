@@ -49,7 +49,7 @@ async function listPartnerTickets(filters, skip, limit) {
   }
 
   const [data, total, statusCounts] = await Promise.all([
-    prisma.partnerSupportTicket.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
+    prisma.partnerSupportTicket.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' }, include: { messages: { orderBy: { createdAt: 'asc' } } } }),
     prisma.partnerSupportTicket.count({ where }),
     // Not narrowed by the current filters — same reasoning as
     // listContactMessages' statusCounts: tab counts must not reset to the
@@ -65,7 +65,7 @@ async function listPartnerTickets(filters, skip, limit) {
 }
 
 async function getPartnerTicketById(id) {
-  const ticket = await prisma.partnerSupportTicket.findUnique({ where: { id } });
+  const ticket = await prisma.partnerSupportTicket.findUnique({ where: { id }, include: { messages: { orderBy: { createdAt: 'asc' } } } });
   if (!ticket) throw new ApiError(404, 'Support ticket not found');
   const [withPartner] = await attachPartners([ticket]);
   return withPartner;
@@ -89,6 +89,10 @@ async function updatePartnerTicket(id, { status, adminReply }, adminId, ip) {
   if (data.status === 'RESOLVED') data.resolvedAt = new Date();
 
   const updated = await prisma.partnerSupportTicket.update({ where: { id }, data });
+  // B73 — adminReply holds only the latest answer; keep every one in the conversation.
+  if (adminReply !== undefined) {
+    await prisma.partnerSupportTicketMessage.create({ data: { ticketId: id, authorType: 'ADMIN', authorId: adminId || null, body: adminReply } });
+  }
 
   await createAuditLog({
     adminId, action: 'PARTNER_TICKET_UPDATED', targetType: 'PartnerSupportTicket', targetId: id,
