@@ -14,14 +14,7 @@ const server = app.listen(PORT, () => {
     pid: process.pid,
   });
 
-  require('./src/jobs/whatsappFeedback').start();
-  require('./src/jobs/expiredOtp').start();
-  require('./src/jobs/stillDecidingFollowup').start();
-  require('./src/jobs/cleanupIncompleteSignups').start();
-  require('./src/jobs/escrowAutoEscalate').start();
-  require('./src/jobs/resetWeeklyViews').start();
-  require('./src/jobs/processAccountDeletions').start();
-  require('./src/jobs/paymentReconcile').start();
+  require('./src/jobs').startJobs();
 });
 
 // Under nodemon a restart sends SIGUSR2/SIGINT and waits for the process to

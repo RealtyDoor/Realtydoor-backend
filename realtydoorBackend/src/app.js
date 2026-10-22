@@ -14,7 +14,10 @@ const app = express();
 // request (it refuses to guess client IPs when trust proxy is unset), and req.ip
 // would resolve to the proxy instead of the real client. Adjust the hop count if
 // there's more than one proxy in front of this app (e.g. Cloudflare + ALB → 2).
-app.set('trust proxy', 1);
+// TRUST_PROXY_HOPS (default 1) is that hop count: set 2 on AWS when the website's
+// server reaches this API through the ALB (T47), so req.ip is the real client.
+const TRUST_PROXY_HOPS = Math.max(1, parseInt(process.env.TRUST_PROXY_HOPS, 10) || 1);
+app.set('trust proxy', TRUST_PROXY_HOPS);
 
 // Backend gaps handoff, 2026-10-10 (follow-up) — the frontend proxy sends
 // X-Forwarded-For normally, falling back to X-Real-IP when it doesn't have

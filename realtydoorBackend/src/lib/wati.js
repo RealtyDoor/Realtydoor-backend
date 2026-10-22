@@ -12,6 +12,19 @@ const client = axios.create({
   timeout: 10000,
 });
 
+// T23 — outside production, WATI_ALLOWED_NUMBERS (comma-separated phone
+// numbers) limits who a test run can message, so admin and partner testing
+// cannot reach real people. Unset = no limit. Production ignores it.
+function normalizePhone(p) {
+  return String(p || '').replace(/\D/g, '').slice(-10);
+}
+function isRecipientAllowed(phone, env = process.env) {
+  if (env.NODE_ENV === 'production') return true;
+  const list = String(env.WATI_ALLOWED_NUMBERS || '').split(',').map(normalizePhone).filter(Boolean);
+  if (list.length === 0) return true;
+  return list.includes(normalizePhone(phone));
+}
+
 // 12.5 — every outbound send gets a WatiMessageLog row, success or failure.
 // Logging must never break a send: a notification going out matters more than
 // our record of it, so a logging failure is swallowed with a warning. The
@@ -33,6 +46,11 @@ async function logSend(fields) {
 // no toggle to respect without a user in scope.
 async function sendTemplateMessage(phone, templateName, parameters = [], context = {}, user, category) {
   if (!canSend({ user, channel: 'WHATSAPP', category })) return null;
+
+  if (!isRecipientAllowed(phone)) {
+    logger.warn(`[WATI] ${templateName} to ${normalizePhone(phone).replace(/\d(?=\d{4})/g, 'x')} blocked: not in WATI_ALLOWED_NUMBERS`);
+    return null;
+  }
 
   const e164 = phone.replace(/\D/g, '');
   const startedAt = Date.now();
@@ -148,4 +166,5 @@ module.exports = {
   sendPhoneVerificationOtp,
   notifyUser,
   sendTicketVendorDispatched,
+  isRecipientAllowed,
 };
