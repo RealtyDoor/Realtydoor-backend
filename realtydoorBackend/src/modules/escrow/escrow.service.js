@@ -68,7 +68,9 @@ async function getReceipt(escrowId, buyerId) {
     throw new ApiError(400, 'No receipt yet — payment has not been captured for this escrow');
   }
 
+  const { company } = await getMoneySettings();
   return buildEscrowReceiptPdf({
+    company,
     refCode: escrow.lead?.refCode,
     propertyTitle: escrow.lead?.property?.title || escrow.lead?.propertyInterest,
     buyerName: escrow.lead?.buyerName,

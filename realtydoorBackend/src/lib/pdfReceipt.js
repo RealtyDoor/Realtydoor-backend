@@ -5,9 +5,16 @@ const PDFDocument = require('pdfkit');
 // — deliberately out of scope until the business is ready to issue a real
 // tax invoice; upgrading this later doesn't require touching the Lead
 // fields that reference it, only this file).
+// PDFKit's built-in Helvetica has no rupee sign (U+20B9): it prints a superscript 1 ("¹50,000"). "Rs." is the standard
+// way to write rupees on a printed document and needs no embedded font.
+function rsPaise(paise, minFraction) {
+  const min = minFraction ?? (paise % 100 ? 2 : 0);
+  return `Rs. ${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: min, maximumFractionDigits: 2 })}`;
+}
+
 function formatRupees(amount) {
   if (amount == null) return 'N/A';
-  return `₹${Math.round(amount).toLocaleString('en-IN')}`;
+  return `Rs. ${Math.round(amount).toLocaleString('en-IN')}`;
 }
 
 function buildCommissionReceiptPdf({ refCode, propertyTitle, payerName, feePct, dealPrice, feeAmount, invoicedAt, collectedAt }) {
@@ -79,7 +86,7 @@ function buildTicketChargeReceiptPdf({ ticketSubject, userName, visitCharge, par
 // The money lines of the token receipt, in rupees with paise where there are some. The buyer paid the token PLUS the
 // payment processing fee (money model Rev 3), so the receipt shows both and the total, not just the token.
 function escrowReceiptLines({ amount, processingFeePaise, chargedPaise }) {
-  const rs = (paise) => `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: paise % 100 ? 2 : 0, maximumFractionDigits: 2 })}`;
+  const rs = rsPaise;
   const tokenPaise = Math.round((amount || 0) * 100);
   const feePaise = processingFeePaise > 0 ? processingFeePaise : 0;
   const totalPaise = chargedPaise > 0 ? chargedPaise : tokenPaise + feePaise;
@@ -90,33 +97,81 @@ function escrowReceiptLines({ amount, processingFeePaise, chargedPaise }) {
   ];
 }
 
-function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, processingFeePaise, chargedPaise, razorpayPaymentId, paidAt }) {
+function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, processingFeePaise, chargedPaise, razorpayPaymentId, paidAt, company = {} }) {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50 });
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
     const chunks = [];
     doc.on('data', (chunk) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    doc.fontSize(20).fillColor('#111').text('RealtyDoor', { align: 'left' });
-    doc.fontSize(11).fillColor('#666').text('Token Advance Receipt');
-    doc.moveDown(0.5).fontSize(9).fillColor('#999')
-      .text(`Receipt for lead ${refCode || ''}`.trim());
+    const left = 50;
+    const right = doc.page.width - 50;
+    const width = right - left;
+    const INK = '#111111'; const BODY = '#333333'; const MUTED = '#777777'; const RULE = '#DDDDDD'; const BRAND = '#2C2FEE';
+    const legalName = company.legalName || 'RealtyDoor';
+    const receiptNo = razorpayPaymentId ? `RCT-${String(razorpayPaymentId).replace(/^pay_/, '').slice(-8).toUpperCase()}` : 'RCT-N/A';
 
-    doc.moveDown(1).fontSize(11).fillColor('#333');
-    doc.text(`Paid by: ${buyerName || 'N/A'}`);
-    doc.text(`Property: ${propertyTitle || 'N/A'}`);
-    doc.moveDown(0.3).fontSize(11).fillColor('#333');
-    for (const line of escrowReceiptLines({ amount, processingFeePaise, chargedPaise })) {
-      doc.fontSize(line.strong ? 14 : 11).fillColor(line.strong ? '#111' : '#333').text(`${line.label}: ${line.value}`);
+    // Header: name on the left, document title on the right, a brand rule under both.
+    doc.fontSize(20).fillColor(INK).font('Helvetica-Bold').text(legalName, left, 50, { width: width * 0.6 });
+    doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('TOKEN ADVANCE RECEIPT', left, 56, { width, align: 'right' });
+    doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
+
+    // Who, what, when.
+    const meta = [
+      ['Receipt no.', receiptNo],
+      ['Date', paidAt ? new Date(paidAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'],
+      ['Deal reference', refCode || 'N/A'],
+      ['Paid by', buyerName || 'N/A'],
+      ['Property', propertyTitle || 'N/A'],
+      ['Payment reference', razorpayPaymentId || 'N/A'],
+    ];
+    let y = 108;
+    doc.font('Helvetica').fontSize(10);
+    for (const [label, value] of meta) {
+      doc.fillColor(MUTED).text(label, left, y, { width: 120 });
+      doc.fillColor(INK).text(value, left + 130, y, { width: width - 130 });
+      y = Math.max(y + 16, doc.y + 4);
     }
-    doc.moveDown(0.3).fontSize(11).fillColor('#333');
-    doc.text(`Payment reference: ${razorpayPaymentId || 'N/A'}`);
-    doc.text(`Paid on: ${paidAt ? new Date(paidAt).toLocaleDateString('en-IN') : 'N/A'}`);
 
-    doc.moveDown(1.5).fontSize(8).fillColor('#999')
-      .text('The token is held in escrow with our payment partner until the allocation letter is verified. The payment processing fee is not returned if you cancel.', { align: 'center' })
-      .text('This is a payment receipt, not a GST tax invoice.', { align: 'center' });
+    // The money, as a table: description left, amount right, total last.
+    y += 14;
+    doc.rect(left, y, width, 24).fill('#F3F4F8');
+    doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(9)
+      .text('DESCRIPTION', left + 10, y + 8, { width: width - 130 })
+      .text('AMOUNT', left, y + 8, { width: width - 10, align: 'right' });
+    y += 24;
+    for (const line of escrowReceiptLines({ amount, processingFeePaise, chargedPaise })) {
+      if (line.strong) {
+        doc.moveTo(left, y).lineTo(right, y).lineWidth(1).strokeColor(INK).stroke();
+        doc.rect(left, y, width, 30).fill('#F3F4F8');
+        doc.fillColor(INK).font('Helvetica-Bold').fontSize(12)
+          .text(line.label, left + 10, y + 9, { width: width - 130 })
+          .text(line.value, left, y + 9, { width: width - 10, align: 'right' });
+        y += 30;
+      } else {
+        doc.fillColor(BODY).font('Helvetica').fontSize(11)
+          .text(line.label, left + 10, y + 9, { width: width - 130 })
+          .text(line.value, left, y + 9, { width: width - 10, align: 'right' });
+        y += 30;
+        doc.moveTo(left, y).lineTo(right, y).lineWidth(0.5).strokeColor(RULE).stroke();
+      }
+    }
+
+    // What it means.
+    y += 22;
+    doc.font('Helvetica').fontSize(9).fillColor(BODY).text(
+      'Your token advance is held in escrow with our payment partner until your allocation letter is verified. '
+      + 'The payment processing fee covers the payment company\'s charge and is not returned if you cancel.',
+      left, y, { width },
+    );
+
+    // Footer.
+    const footerY = doc.page.height - 90;
+    doc.moveTo(left, footerY).lineTo(right, footerY).lineWidth(0.5).strokeColor(RULE).stroke();
+    doc.font('Helvetica').fontSize(8).fillColor(MUTED)
+      .text(`${legalName}${company.gstin ? `  |  GSTIN ${company.gstin}` : ''}`, left, footerY + 10, { width, align: 'center' })
+      .text('This is a payment receipt, not a GST tax invoice.', left, footerY + 24, { width, align: 'center' });
 
     doc.end();
   });
@@ -131,7 +186,7 @@ function buildPartnerStatementPdf(st) {
     doc.on('data', (chunk) => chunks.push(chunk));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
-    const rs = (paise) => (paise == null ? 'N/A' : `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+    const rs = (paise) => (paise == null ? 'N/A' : rsPaise(paise, 2));
 
     doc.fontSize(20).fillColor('#111').text(st.legalName || 'RealtyDoor');
     doc.fontSize(11).fillColor('#666').text('Partner commission statement');
