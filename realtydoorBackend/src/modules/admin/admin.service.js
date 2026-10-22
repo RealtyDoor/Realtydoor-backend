@@ -110,7 +110,15 @@ async function getAllLeads(filters, skip, limit) {
     prisma.lead.count({ where }),
   ]);
 
-  return { data: data.map(flattenBuyerInquiryCount), total };
+  // The partner-added review queue shows, per lead, whether the partner would be credited (one mobile number is one buyer).
+  const rows = await Promise.all(data.map(async (lead) => {
+    const row = flattenBuyerInquiryCount(lead);
+    if (lead.status !== 'AWAITING_ADMIN' || !lead.addedByPartnerId) return row;
+    const ownership = await evaluateBuyerOwnership(lead.buyerPhone, lead.addedByPartnerId, { excludeLeadId: lead.id, before: lead.createdAt });
+    return { ...row, ownership: { ...ownership, note: OWNERSHIP_TEXT[ownership.reason] } };
+  }));
+
+  return { data: rows, total };
 }
 
 // 6.4a — admin logs a lead that arrived off-platform (phone, walk-in, …).
