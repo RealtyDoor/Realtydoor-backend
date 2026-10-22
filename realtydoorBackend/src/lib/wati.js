@@ -163,8 +163,15 @@ async function notifyUser(userId, templateName, parameters, context = {}) {
   }
 }
 
+// T13 — the v2 template is intimation only (a "Call us" button, no "reply here"). It is used as soon as it is listed in
+// WATI_LIVE_TEMPLATES, i.e. once Meta has approved it; until then the approved v1 keeps being sent.
+function ticketVendorDispatchedTemplate(env = process.env) {
+  const live = String(env.WATI_LIVE_TEMPLATES || '').split(',').map((t) => t.trim());
+  return live.includes('ticket_vendor_dispatched_v2') ? 'ticket_vendor_dispatched_v2' : 'ticket_vendor_dispatched';
+}
+
 async function sendTicketVendorDispatched(userId, ticketSubject, vendorName, ticketId) {
-  return notifyUser(userId, 'ticket_vendor_dispatched', {
+  return notifyUser(userId, ticketVendorDispatchedTemplate(), {
     ticket_subject: ticketSubject, vendor_name: vendorName,
   }, { ticketId });
 }
@@ -178,5 +185,6 @@ module.exports = {
   notifyUser,
   sendVoucherOtp,
   sendTicketVendorDispatched,
+  ticketVendorDispatchedTemplate,
   isRecipientAllowed,
 };
