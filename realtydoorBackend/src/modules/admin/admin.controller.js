@@ -767,7 +767,7 @@ async function listConfig(req, res, next) {
 async function upsertConfig(req, res, next) {
   try {
     const data = upsertConfigSchema.parse(req.body);
-    const entry = await configService.adminUpsertConfig(req.params.key, data, req.user.id);
+    const entry = await configService.adminUpsertConfig(req.params.key, data, req.user.id, req.ip);
     success(res, entry, 'Config updated');
   } catch (err) { next(err); }
 }

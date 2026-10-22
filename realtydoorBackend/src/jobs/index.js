@@ -13,6 +13,7 @@ const JOB_MODULES = [
   './stillDecidingFollowup',
   './cleanupIncompleteSignups',
   './escrowAutoEscalate',
+  './escrowHoldExpiry',
   './resetWeeklyViews',
   './processAccountDeletions',
   './paymentReconcile',

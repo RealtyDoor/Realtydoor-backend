@@ -1,0 +1,68 @@
+// ─── MONEY LEDGER (money model Rev 3, phase 2) ───────────────────────────────
+// Append-only record of every money movement, in integer paise. Rows are never
+// updated or deleted (lib/prisma.js refuses it); a correction is a new
+// ADJUSTMENT row with reversesEntryId and a reason, and a later status of a
+// payout (paid / failed / reversed) is a new row pointing at the original with
+// relatedEntryId. See admin-nextjs/docs/MONEY_LEDGER_SPEC_DRAFT.md.
+//
+// type: TOKEN_IN | PROCESSING_FEE_IN | GATEWAY_FEE | SETTLEMENT_IN |
+//   SELLER_PAYOUT | PARTNER_COMMISSION | COMMISSION_VOUCHER | TDS_WITHHELD |
+//   TDS_DEPOSITED | TDS_RECEIVABLE | CANCELLATION_CHARGE | GST_OUTPUT |
+//   GST_INPUT | GST_INPUT_PENDING | BROKERAGE_INVOICED | BROKERAGE_RECEIVED |
+//   REFUND | PAYOUT_FEE | SERVICE_REVENUE | VENDOR_PAYMENT | ADJUSTMENT
+// direction: IN (cash in) | OUT (cash out) | NONE (liability / book entry)
+// status: DUE | PAID | FAILED | REVERSED | PENDING_INVOICE | MATCHED | RECORDED
+
+model MoneyLedgerEntry {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  entryDate DateTime @default(now())
+
+  leadId   String? @db.ObjectId
+  escrowId String? @db.ObjectId
+
+  type      String
+  direction String
+  status    String @default("RECORDED")
+
+  partyType String   // BUYER | SELLER | PARTNER | VENDOR | GOVERNMENT | RAZORPAY | REALTYDOOR
+  partyId   String?  @db.ObjectId
+  partyName String?
+
+  grossPaise Int
+  gstPaise   Int @default(0)
+  tdsPaise   Int @default(0)
+  feePaise   Int @default(0)
+  netPaise   Int
+
+  razorpayPaymentId    String?
+  razorpaySettlementId String?
+  razorpayPayoutId     String?
+  razorpayRefundId     String?
+  utr                  String?
+  invoiceNumber        String?
+  taxInvoiceId         String? @db.ObjectId
+  voucherId            String? @db.ObjectId
+  tdsEntryId           String? @db.ObjectId
+
+  // A later row about an earlier one (payout paid / failed / reversed).
+  relatedEntryId  String? @db.ObjectId
+  // An ADJUSTMENT that cancels an earlier row.
+  reversesEntryId String? @db.ObjectId
+
+  // Makes the writer safe to retry: the same business event writes one row.
+  idempotencyKey String @unique
+
+  createdByType String  // SYSTEM | WEBHOOK | ADMIN | BUYER | PARTNER
+  createdById   String? @db.ObjectId
+  reason        String?
+  note          String?
+  createdAt     DateTime @default(now())
+
+  @@index([leadId, entryDate])
+  @@index([escrowId])
+  @@index([type, entryDate])
+  @@index([partyType, partyId])
+  @@index([status, type])
+  @@index([relatedEntryId])
+  @@index([entryDate])
+}

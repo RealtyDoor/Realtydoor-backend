@@ -136,6 +136,15 @@ model Lead {
   rateCardVersion       Int?
   commissionLines       LeadCommissionLine[]
 
+  // Money model Rev 3 — what the partner and the seller were quoted, frozen
+  // when the terms are set (and so at assignment). Display and audit only:
+  // the payout still reads the locked commission lines.
+  partnerRatePct        Float?   // % of the deal price paid to the partner
+  platformFeePct        Float?   // % of the deal price Realtydoor keeps
+  commissionRateSource  String?  // DEAL | PARTNER_OVERRIDE | PROJECT | PROPERTY | CITY | PLATFORM_DEFAULT
+  commissionRateCustom  Boolean? // true when it differs from the platform default
+  commissionRateReason  String?
+
   platformCommissionPct Float?
   commissionAmountPaise Int?
   commissionStatus      CommissionStatus @default(PENDING)

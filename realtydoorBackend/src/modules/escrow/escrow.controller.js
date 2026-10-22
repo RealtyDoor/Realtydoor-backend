@@ -2,7 +2,7 @@ const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./escrow.service');
 const payoutService = require('./escrowPayout.service');
-const { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema, retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema, ESCROW_STATUSES } = require('./escrow.validator');
+const { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema, refundEscrowSchema, retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema, ESCROW_STATUSES } = require('./escrow.validator');
 const { verifyPaymentSignature } = require('../../lib/razorpay');
 const ApiError = require('../../utils/ApiError');
 
@@ -16,6 +16,16 @@ async function createOrder(req, res, next) {
         ? 'Resuming your existing escrow order'
         : 'Escrow order created';
     created(res, result, message);
+  } catch (err) { next(err); }
+}
+
+// Public: the numbers for "Booking this plot: token X + payment processing fee
+// Y" before sign-in, and the refund terms. Reads settings only.
+async function getCheckoutQuote(req, res, next) {
+  try {
+    const amount = Number(req.query.amount);
+    if (!Number.isFinite(amount) || amount <= 0) throw new ApiError(400, 'amount (rupees) is required');
+    success(res, await service.getCheckoutQuote(amount));
   } catch (err) { next(err); }
 }
 
@@ -57,7 +67,8 @@ async function releaseEscrow(req, res, next) {
 
 async function refundEscrow(req, res, next) {
   try {
-    const escrow = await service.refund(req.params.id, req.user.id, req.ip);
+    const body = refundEscrowSchema.parse(req.body) ?? {};
+    const escrow = await service.refund(req.params.id, req.user.id, req.ip, { reason: body.reason });
     success(res, escrow, 'Escrow refunded');
   } catch (err) { next(err); }
 }
@@ -75,6 +86,12 @@ async function unfreezeEscrow(req, res, next) {
   try {
     const escrow = await service.unfreeze(req.params.id, req.user.id, req.ip);
     success(res, escrow, 'Escrow unfrozen');
+  } catch (err) { next(err); }
+}
+
+async function payPartnerCommission(req, res, next) {
+  try {
+    success(res, await service.payDeferredPartnerCommission(req.params.id, req.user.id, req.ip), 'Partner commission paid');
   } catch (err) { next(err); }
 }
 
@@ -152,6 +169,6 @@ async function refundRemaining(req, res, next) {
 }
 
 module.exports = {
-  createOrder, getEscrowById, getReceipt, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
+  payPartnerCommission, getCheckoutQuote, createOrder, getEscrowById, getReceipt, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
   freezeEscrow, unfreezeEscrow, getPayouts, retryPayout, resolvePayout, refundRemaining,
 };

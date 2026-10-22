@@ -126,6 +126,8 @@ const rateLeadSchema = z.object({
 const cancelLeadSchema = z.object({
   reason:      z.string().min(3).max(1000),
   reasonLabel: z.string().min(2).max(200),
+  // Money model Rev 3 — the buyer has seen and accepted the cancellation charge.
+  acceptCancellationCharge: z.boolean().optional(),
 });
 
 const updateConsentSchema = z.object({

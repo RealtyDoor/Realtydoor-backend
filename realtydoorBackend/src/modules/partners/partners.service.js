@@ -136,9 +136,11 @@ async function runAutomatedKycChecks(partnerId) {
 }
 
 async function getProfile(partnerId) {
-  return prisma.user.findUnique({
+  const row = await prisma.user.findUnique({
     where: { id: partnerId },
     select: {
+      // The PAN itself is never returned: only whether it is on file and its last 4 characters.
+      panNumber: true,
       id: true, name: true, email: true, phone: true, companyName: true,
       bio: true, profileImageUrl: true, websiteUrl: true, partnerSubType: true,
       kycStatus: true, kycRejectionNote: true, kycVerifiedAt: true, kycConsentAt: true, createdAt: true,
@@ -146,13 +148,28 @@ async function getProfile(partnerId) {
       partnerTermsVersion: true, partnerTermsAcceptedAt: true,
     },
   });
+  if (!row) return row;
+  const { panNumber, ...rest } = row;
+  const pan = panNumber ? String(panNumber).trim() : '';
+  return { ...rest, panOnFile: !!pan, panMasked: pan ? `${'X'.repeat(Math.max(0, pan.length - 4))}${pan.slice(-4)}` : null };
 }
 
 async function updateProfile(partnerId, data) {
-  // panNumber is admin-set only — letting a partner change it after KYC
-  // approval would invalidate what admin verified without any trace.
-  const FORBIDDEN = ['role', 'kycStatus', 'kycDocumentUrls', 'email', 'panNumber'];
+  // An existing PAN is admin-set only (see below).
+  const FORBIDDEN = ['role', 'kycStatus', 'kycDocumentUrls', 'email'];
   FORBIDDEN.forEach((f) => delete data[f]);
+  // Money model Rev 3: a partner may ADD a PAN when none is on file (it decides
+  // the TDS rate); an existing PAN can only be changed by admin.
+  if (data.panNumber) {
+    const current = await prisma.user.findUnique({ where: { id: partnerId }, select: { panNumber: true } });
+    if (current?.panNumber && current.panNumber.trim().toUpperCase() !== data.panNumber) {
+      throw new ApiError(409, 'Your PAN is already on file. To change it, contact support.', { code: 'PAN_LOCKED' });
+    }
+    // A new PAN has not been verified yet.
+    data.panVerificationStatus = null;
+    data.panVerifiedName = null;
+    data.panVerifiedAt = null;
+  }
   return prisma.user.update({ where: { id: partnerId }, data });
 }
 
@@ -876,6 +893,56 @@ async function getPartnerAnalytics(partnerId) {
     },
   };
 }
+
+// ─── Audit of identity and payout details (money model phase 2) ──────────────
+// PAN, GSTIN, bank and billing details decide who is paid, how much is withheld
+// and which paperwork applies, so every change is recorded with old and new
+// value (account number and PAN masked). The wrappers below cover each way a
+// partner can change them.
+const IDENTITY_FIELDS = ['gstin', 'panNumber', 'bankHolderName', 'bankAccountNo', 'bankIfsc', 'bankName', 'billingLegalName', 'billingAddress'];
+const MASKED_FIELDS = ['bankAccountNo', 'panNumber'];
+const maskTail = (v) => (v ? `${'X'.repeat(Math.max(0, String(v).length - 4))}${String(v).slice(-4)}` : null);
+
+async function identitySnapshot(partnerId) {
+  return prisma.user.findUnique({ where: { id: partnerId }, select: Object.fromEntries(IDENTITY_FIELDS.map((f) => [f, true])) });
+}
+
+function identityDiff(before, after) {
+  const b = {}; const a = {};
+  for (const f of IDENTITY_FIELDS) {
+    if ((before?.[f] ?? null) !== (after?.[f] ?? null)) {
+      b[f] = MASKED_FIELDS.includes(f) ? maskTail(before?.[f]) : before?.[f] ?? null;
+      a[f] = MASKED_FIELDS.includes(f) ? maskTail(after?.[f]) : after?.[f] ?? null;
+    }
+  }
+  return { before: b, after: a, changed: Object.keys(a).length > 0 };
+}
+
+function withIdentityAudit(action, fn) {
+  return async function audited(partnerId, ...args) {
+    const before = await identitySnapshot(partnerId).catch(() => null);
+    const result = await fn(partnerId, ...args);
+    try {
+      const after = await identitySnapshot(partnerId);
+      const d = identityDiff(before, after);
+      if (d.changed) {
+        await createAuditLog({ adminId: partnerId, actorRole: 'PARTNER', action, targetType: 'User', targetId: partnerId, before: d.before, after: d.after });
+      }
+    } catch (err) {
+      logger.warn('[Partners] audit of identity change failed', { action, partnerId, error: err.message });
+    }
+    return result;
+  };
+}
+
+// eslint-disable-next-line no-func-assign
+updateProfile = withIdentityAudit('PARTNER_PROFILE_CHANGED', updateProfile);
+// eslint-disable-next-line no-func-assign
+updateBilling = withIdentityAudit('PARTNER_BILLING_CHANGED', updateBilling);
+// eslint-disable-next-line no-func-assign
+updateBankAccount = withIdentityAudit('PARTNER_BANK_CHANGED', updateBankAccount);
+// eslint-disable-next-line no-func-assign
+createPayoutAccount = withIdentityAudit('PARTNER_PAYOUT_ACCOUNT_CREATED', createPayoutAccount);
 
 module.exports = {
   acceptPartnerTerms, recordKycConsent, submitKyc, runAutomatedKycChecks, getProfile, updateProfile, uploadProfilePhoto, getListing, getMyListings,

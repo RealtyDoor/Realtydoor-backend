@@ -11,6 +11,7 @@ const { isVisitTooEarly, DEFAULT_EARLY_WINDOW_HOURS } = require('../../lib/visit
 const { getConfigNumber } = require('../config/config.service');
 const { nextRefCode } = require('../../lib/refCode');
 const { assertLeadNotPaused } = require('../../lib/accountDeletion');
+const { buildPartnerQuote } = require('../../lib/commissionQuote');
 
 const DEFAULT_MAX_ACTIVE_INQUIRIES = 5;
 const DEFAULT_MAX_INQUIRIES_PER_DAY = 3;
@@ -19,8 +20,10 @@ const DEFAULT_MAX_INQUIRIES_PER_DAY = 3;
 // it used a per-lead snapshot of platform_commission_pct (a share of the
 // brokerage fee, a different base), so identical tokens showed ₹49,000 on one
 // deal and ₹50,000 on another.
-const ESCROW_PLATFORM_FEE_PCT_KEY = 'escrow_platform_fee_pct';
-const DEFAULT_ESCROW_PLATFORM_FEE_PCT = 1;
+// Money model Rev 3: the old 1%-of-token platform fee is gone; the token-level
+// fee is escrow_token_platform_fee_pct (default 0). Same key moneyConfig reads.
+const ESCROW_PLATFORM_FEE_PCT_KEY = 'escrow_token_platform_fee_pct';
+const DEFAULT_ESCROW_PLATFORM_FEE_PCT = 0;
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 // The actual UTC instant corresponding to 00:00:00 IST "today" — regardless
@@ -48,6 +51,9 @@ const COMMISSION_INTERNAL_LEAD_FIELDS = [
   'feePct', 'dealPriceAtLock', 'commissionLockedAt', 'commissionVersion', 'rateCardId', 'rateCardVersion',
   'platformCommissionPct', 'commissionAmountPaise', 'commissionStatus', 'invoiceUrl', 'invoicedAt', 'collectedAt',
   'contactRevealedIp',
+  // Money model Rev 3 — the partner gets a built quote (commissionQuote), the
+  // buyer gets nothing of the seller-side rates.
+  'partnerRatePct', 'platformFeePct', 'commissionRateSource', 'commissionRateCustom', 'commissionRateReason',
 ];
 
 // Internal-only fields a buyer never needs: admin/partner free-text notes,
@@ -312,6 +318,7 @@ async function getPartnerLeads(partnerId) {
   ]);
   return leads.map((lead) => ({
     ...sanitizeLeadForPartner(lead),
+    commissionQuote: buildPartnerQuote(lead),
     netAmount: netAmountFor(lead, feePct),
     ...stalledInfoFor(lead),
   }));
@@ -330,7 +337,7 @@ async function getPartnerLeadById(leadId, partnerId) {
     getConfigNumber(ESCROW_PLATFORM_FEE_PCT_KEY, DEFAULT_ESCROW_PLATFORM_FEE_PCT),
   ]);
   if (!lead) throw new ApiError(404, 'Lead not found');
-  return { ...sanitizeLeadForPartner(lead), netAmount: netAmountFor(lead, feePct), ...stalledInfoFor(lead) };
+  return { ...sanitizeLeadForPartner(lead), commissionQuote: buildPartnerQuote(lead), netAmount: netAmountFor(lead, feePct), ...stalledInfoFor(lead) };
 }
 
 async function scheduleVisit(leadId, partnerId, scheduledAt) {

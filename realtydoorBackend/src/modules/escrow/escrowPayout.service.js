@@ -215,7 +215,10 @@ async function refundRemaining(escrowId, note, adminId, ip) {
   // money out of the collected payment — a leg that outright failed never did.
   const legs = [];
   if (escrow.razorpayPayoutId) legs.push({ leg: 'seller', payoutId: escrow.razorpayPayoutId, storedStatus: escrow.sellerPayoutStatus, amount: escrow.netAmount || 0 });
-  if (escrow.razorpayPartnerPayoutId) legs.push({ leg: 'partner', payoutId: escrow.razorpayPartnerPayoutId, storedStatus: escrow.partnerPayoutStatus, amount: escrow.partnerShareAmount || 0 });
+  // Money model Rev 3: the partner commission is paid from Realtydoor's own
+  // money, not out of the buyer's token, so it is not subtracted from what the
+  // buyer gets back. Rows released the old way (flag absent) keep the old rule.
+  if (escrow.razorpayPartnerPayoutId && !escrow.partnerPaidFromCompany) legs.push({ leg: 'partner', payoutId: escrow.razorpayPartnerPayoutId, storedStatus: escrow.partnerPayoutStatus, amount: escrow.partnerShareAmount || 0 });
 
   let processedPaise = 0;
   for (const l of legs) {

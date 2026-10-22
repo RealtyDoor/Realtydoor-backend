@@ -6,6 +6,8 @@ const { sendEscrowPaymentFailed } = require('../../lib/email');
 const { createNotification, broadcastNotification } = require('../../lib/notifications');
 const { notifyUser } = require('../../lib/wati');
 const logger = require('../../lib/logger');
+const ledger = require('../money/ledger.service');
+const { createAuditLog } = require('../../lib/auditLog');
 
 // The entire handler body is one try/catch, including signature verification
 // — this is a public, unauthenticated, internet-facing endpoint (it has to
@@ -255,6 +257,12 @@ async function razorpay(req, res) {
             : { partnerPayoutStatus: 'processed', partnerPayoutUtr: utr || null },
         });
 
+        // Money ledger: a new row saying this payout was paid (never an edit).
+        await ledger.onPayoutStatus({ escrowId: escrow.id, payoutId, status: 'processed', utr });
+        if (leg === 'partner' && utr) {
+          await prisma.commissionVoucher.updateMany({ where: { escrowId: escrow.id }, data: { utr, payoutId } }).catch(() => {});
+        }
+
         // Only the partner leg maps to a known platform user — sellerDetails
         // is typed ad-hoc into the release request and doesn't necessarily
         // belong to a User account, so there's no one reliable to notify for
@@ -337,6 +345,13 @@ async function razorpay(req, res) {
             type: 'ESCROW_PAYOUT_FAILED',
           });
         }
+
+        await ledger.onPayoutStatus({ escrowId: escrow.id, payoutId, status, reason });
+        await createAuditLog({
+          actorRole: 'WEBHOOK', action: status === 'reversed' ? 'PAYOUT_REVERSED' : 'PAYOUT_FAILED',
+          targetType: 'EscrowTransaction', targetId: escrow.id,
+          before: { [`${leg}PayoutStatus`]: currentLegStatus ?? null }, after: { [`${leg}PayoutStatus`]: status, payoutId }, reason,
+        }).catch((e) => logger.warn('[RazorpayWebhook] audit of payout failure failed', { error: e.message }));
 
         logger.error('[RazorpayWebhook] Escrow payout failed/reversed after release — flagged for manual review', {
           payoutId, escrowId: escrow.id, leg, status, reason,

@@ -163,6 +163,8 @@ router.get('/payout-accounts', ctrl.listPayoutAccounts);
 // Escrow (admin actions) — release/refund move real money, gated by FINANCE.
 router.patch('/escrow/:id/release', requirePermission('FINANCE'), escrowCtrl.releaseEscrow);
 router.post('/escrow/:id/refund', requirePermission('FINANCE'), escrowCtrl.refundEscrow);
+// Money model phase 2 — pay a partner commission that release held back (needs an accepted tax invoice for a GST-registered partner).
+router.post('/escrow/:id/partner-payout', requirePermission('FINANCE'), validateObjectId('id'), escrowCtrl.payPartnerCommission);
 // R10 — freeze / unfreeze for dispute. BE-4 — FINANCE-gated, same as
 // release/refund: freezing/unfreezing changes what release()/refund() will
 // accept, so it's a money-moving-adjacent action, not a plain status flag.
@@ -356,6 +358,15 @@ router.get('/rate-cards',            commissionCtrl.listRateCards);
 router.post('/rate-cards',           commissionCtrl.createRateCard);
 router.patch('/rate-cards/:id',      commissionCtrl.updateRateCard);
 router.delete('/rate-cards/:id',     commissionCtrl.deleteRateCard);
+// Money model phase 2 — ledger, TDS ledger, tax invoices, exports.
+router.use('/money', require('../money/money.routes'));
+
+// Money model Rev 3 — negotiated partner rate per Project (T58). Changing a
+// rate is a COMMISSION-gated action; it applies to leads assigned afterwards.
+router.get('/project-rates',                 commissionCtrl.listProjectRates);
+router.get('/projects/:id/commission-rate',  commissionCtrl.getProjectRate);
+router.put('/projects/:id/commission-rate',  requirePermission('COMMISSION'), commissionCtrl.setProjectRate);
+router.delete('/projects/:id/commission-rate', requirePermission('COMMISSION'), commissionCtrl.clearProjectRate);
 router.get('/commission-overrides',        commissionCtrl.listOverrides);
 router.post('/commission-overrides',       commissionCtrl.createOverride);
 router.delete('/commission-overrides/:id', commissionCtrl.revokeOverride);

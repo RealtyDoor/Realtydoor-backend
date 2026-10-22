@@ -5,6 +5,9 @@ const { requireUser } = require('../../middleware/requireRole');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 
+// Public price breakdown (token + processing fee + refund terms). Before /:id.
+router.get('/quote',            ctrl.getCheckoutQuote);
+
 // Buyer creates escrow order (token advance payment)
 router.post('/create-order',    authenticate, requireUser, requirePhone, ctrl.createOrder);
 router.post('/verify-payment',  authenticate, requireUser, ctrl.verifyPayment);

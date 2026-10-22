@@ -41,6 +41,26 @@ model EscrowTransaction {
   partnerPayoutFailureReason String?
 
   amount    Float
+  // Money model Rev 3 — the buyer pays the token PLUS a payment processing
+  // fee (token / 0.9764, rounded up to the rupee, setting-driven). `amount`
+  // stays the token alone, so every release/refund calculation that reads it
+  // keeps working; the Razorpay order is for chargedPaise.
+  processingFeePaise    Int?
+  chargedPaise          Int?
+  // Refund outcome (BUYER_WITHIN_WINDOW | BUYER_AFTER_WINDOW | SELLER_BACKOUT |
+  // LISTING_WRONG | OUR_FAULT | ADMIN_TOKEN_ONLY) and the cancellation charge
+  // kept from a refund after the free window.
+  refundReason          String?
+  cancellationChargePaise Int?
+  // Partner commission at release (1% of the deal price, TDS taken inside).
+  // partnerShareAmount/partnerSharePaise remain the NET actually paid.
+  // partnerPaidFromCompany = true: the commission is NOT taken out of the
+  // token (the token goes to the seller whole), so refund-remaining must not
+  // subtract it. Absent on rows released the old way.
+  partnerGrossPaise      Int?
+  partnerTdsPaise        Int?
+  partnerGstPendingPaise Int?
+  partnerPaidFromCompany Boolean?
   // BE-9 — integer paise, additive alongside the existing Float rupee
   // fields (never a replacement — every existing API response keeps
   // reading the rupee field unchanged). Backfilled for pre-existing rows by

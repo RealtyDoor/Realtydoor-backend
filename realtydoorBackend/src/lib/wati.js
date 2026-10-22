@@ -118,6 +118,17 @@ async function sendPhoneVerificationOtp(phone, otp, context = {}) {
   ], context, null, CATEGORIES.TRANSACTIONAL);
 }
 
+// Commission voucher acceptance code (money model phase 2). Uses its own
+// template name so the wording can say what the code is for; until that template
+// is created and approved in WATI (add it to WATI_LIVE_TEMPLATES) the send is
+// logged as FAILED and the partner can ask admin for help. [needs a WATI template]
+async function sendVoucherOtp(phone, otp, voucherNumber, context = {}) {
+  return sendTemplateMessage(phone, 'commission_voucher_otp', [
+    { name: '1', value: String(otp) },
+    { name: '2', value: String(voucherNumber) },
+  ], context, null, CATEGORIES.TRANSACTIONAL);
+}
+
 // Templates that are APPROVED in the WATI account and safe to send. A template
 // that is still a draft would just log a FAILED row, so notifyUser() skips
 // anything not listed here. Once Meta approves a new template, add its name to
@@ -165,6 +176,7 @@ module.exports = {
   sendBuyerFeedbackRequest,
   sendPhoneVerificationOtp,
   notifyUser,
+  sendVoucherOtp,
   sendTicketVendorDispatched,
   isRecipientAllowed,
 };

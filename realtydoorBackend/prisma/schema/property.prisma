@@ -66,6 +66,10 @@ model Property {
   // their own project's rating would be misleading; rating is computed live
   // from real PropertyReview rows instead (see properties.service.js).
   developer     String?
+  // Money model Rev 3 — links a listing to its Project record so a per-project
+  // negotiated partner rate (RateCard.projectId) can be found from a lead.
+  // Optional and unrelated by foreign key: existing listings stay unlinked.
+  projectId     String? @db.ObjectId
   landAreaValue Float?
   landAreaUnit  String? // "acres", "sqft", etc. — free text, matches furnishing/facing convention
   openSpacePct  Int?
@@ -183,6 +187,7 @@ model Property {
   microsite           Microsite?
 
   @@index([publishStatus, isB2BOnly])
+  @@index([projectId])
   @@index([partnerId])
   @@index([city, publishStatus])
   @@index([isFeatured])

@@ -2,7 +2,6 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const otpAuth = require('../../lib/otpAuth');
 const escrowService = require('../escrow/escrow.service');
-const { getConfigNumber } = require('../config/config.service');
 const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
 const { sanitizeLeadForBuyer } = require('../leads/leads.service');
 const { createPrivacyAuditLog } = require('../../lib/privacyAuditLog');
@@ -16,8 +15,6 @@ const { presentTicketForBuyer } = require('../../lib/ticketPresenter');
 const DELETION_GRACE_PERIOD_DAYS = 30;
 const DEFAULT_TERMS_VERSION = '1';
 const DEFAULT_PRIVACY_VERSION = '1';
-
-const DEFAULT_ESCROW_REFUND_WINDOW_HOURS = 48;
 
 // Lazy phone verification for already-authenticated users (favorites, tickets,
 // loan applications, etc. — gated by requirePhone). Backed by the shared
@@ -181,7 +178,18 @@ async function rateLead(userId, leadId, { rating, comment }) {
   return sanitizeLeadForBuyer(updated);
 }
 
-async function cancelLead(userId, leadId, { reason, reasonLabel }) {
+// What a buyer would get back if they cancelled now, for the confirm screen
+// (money model Rev 3, 2.2). Moves nothing.
+async function getCancelQuote(userId, leadId) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId: userId }, select: { id: true } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  const escrow = await prisma.escrowTransaction.findFirst({ where: { leadId, status: 'HELD' } });
+  if (!escrow) return { hasEscrow: false };
+  const quote = await escrowService.refund(escrow.id, userId, null, { reason: 'BUYER_CANCEL', dryRun: true });
+  return { hasEscrow: true, escrowId: escrow.id, ...quote };
+}
+
+async function cancelLead(userId, leadId, { reason, reasonLabel, acceptCancellationCharge }) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId: userId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (['CLOSED', 'DROPPED'].includes(lead.status)) {
@@ -194,14 +202,23 @@ async function cancelLead(userId, leadId, { reason, reasonLabel }) {
 
   let refund;
   if (escrow?.status === 'HELD') {
-    const windowHours = await getConfigNumber('escrow_refund_window_hours', DEFAULT_ESCROW_REFUND_WINDOW_HOURS);
-    const withinWindow = escrow.heldAt
-      && (Date.now() - new Date(escrow.heldAt).getTime()) < windowHours * 60 * 60 * 1000;
-
-    if (withinWindow) {
-      const updatedEscrow = await escrowService.refund(escrow.id, userId, null);
+    // Money model Rev 3: inside the free window the token comes back; after it,
+    // and before the allocation letter is verified, the token comes back minus
+    // the cancellation charge (shown at checkout, and confirmed here); after
+    // verification nothing is refunded by the platform (dispute route).
+    const quote = await escrowService.refund(escrow.id, userId, null, { reason: 'BUYER_CANCEL', dryRun: true });
+    if (quote.refundable) {
+      if (quote.cancellationChargePaise > 0 && acceptCancellationCharge !== true) {
+        throw new ApiError(409,
+          `Cancelling now keeps a cancellation charge of ₹${(quote.cancellationChargePaise / 100).toLocaleString('en-IN')} from your token. Confirm to go ahead.`,
+          { code: 'CANCELLATION_CHARGE_NOT_ACCEPTED', quote });
+      }
+      const updatedEscrow = await escrowService.refund(escrow.id, userId, null, { reason: 'BUYER_CANCEL', actorType: 'BUYER' });
       refund = {
-        amount: updatedEscrow.amount,
+        amount: updatedEscrow.refundedAmountPaise / 100,
+        tokenAmount: updatedEscrow.amount,
+        cancellationCharge: (updatedEscrow.cancellationChargePaise || 0) / 100,
+        feeReturned: false,
         refundId: updatedEscrow.razorpayRefundId,
         refundTo: 'original payment method',
         eta: '5-7 business days',
@@ -903,6 +920,7 @@ async function getMyVideoTours(userId) {
 const disputeService = require('../disputes/disputes.service');
 
 module.exports = {
+  getCancelQuote,
   requestPhoneOtp, verifyPhoneOtp, getClaimableLeads, claimLead, getMyLeads, getMyLead, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
   formatProfileSettings,
   updateConsent,

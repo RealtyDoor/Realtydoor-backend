@@ -55,9 +55,6 @@ const releaseEscrowSchema = z.object({
 ).refine(
   (data) => !data.manualTransferConfirmed || !!data.note,
   { message: 'A note is required to record how/why a manual transfer was made', path: ['note'] }
-).refine(
-  (data) => !data.partnerDetails || (data.partnerShare != null && data.partnerShare > 0),
-  { message: 'partnerShare is required (and must be positive) when partnerDetails is provided', path: ['partnerShare'] }
 );
 
 // R10 — freeze for dispute. The reason is required and audited; whether it
@@ -99,12 +96,19 @@ const resolvePayoutSchema = z.object({
   note: z.string().optional(),
 });
 
+// Money model Rev 3 — which refund rule applies. The admin button defaults to
+// ADMIN_TOKEN_ONLY (token back, as before); choose SELLER_BACKOUT,
+// LISTING_WRONG or OUR_FAULT to return the processing fee as well.
+const refundEscrowSchema = z.object({
+  reason: z.enum(['ADMIN_TOKEN_ONLY', 'SELLER_BACKOUT', 'LISTING_WRONG', 'OUR_FAULT']).optional(),
+}).optional();
+
 const refundRemainingSchema = z.object({
   note: z.string().max(500).optional(),
 });
 
 module.exports = {
-  createOrderSchema, releaseEscrowSchema, freezeEscrowSchema,
+  createOrderSchema, releaseEscrowSchema, freezeEscrowSchema, refundEscrowSchema,
   retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema,
   ESCROW_STATUSES,
 };

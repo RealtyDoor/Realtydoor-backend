@@ -11,7 +11,8 @@ const builderInvoiceCtrl = require('../projects/builderInvoice.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
-const { kycDocUploader, dealDocUploader, partnerProfilePhotoUploader } = require('../../lib/fileUpload');
+const { kycDocUploader, dealDocUploader, partnerProfilePhotoUploader, taxInvoiceUploader } = require('../../lib/fileUpload');
+const moneyCtrl = require('../money/money.controller');
 const { uploadLimiter, otpLimiter, perUserLimiter } = require('../../middleware/rateLimiter');
 
 router.use(authenticate, requirePartner, perUserLimiter);
@@ -46,6 +47,18 @@ router.patch('/leads/:id/document',         requireKyc,
 router.patch('/leads/:id/status',           requireKyc, leadsCtrl.updateVisitOutcome);
 router.patch('/leads/:id/close',            requireKyc, leadsCtrl.closeLead);
 router.patch('/leads/:id/request-drop',     requireKyc, leadsCtrl.requestDrop);
+
+// Money model phase 2 — commission paperwork and statements.
+// GST-registered partner: tax invoice per deal (no payout until admin accepts it).
+router.post('/tax-invoices',  requireKyc, uploadLimiter, taxInvoiceUploader.single('invoice'), moneyCtrl.uploadInvoice);
+router.get('/tax-invoices',   moneyCtrl.myInvoices);
+// Unregistered partner: commission voucher accepted by OTP.
+router.get('/vouchers',                    moneyCtrl.myVouchers);
+router.post('/vouchers/:id/request-otp',   otpLimiter, moneyCtrl.voucherOtp);
+router.post('/vouchers/:id/accept',        otpLimiter, moneyCtrl.voucherAccept);
+router.get('/statements',                  moneyCtrl.myStatements);
+router.get('/statements/:escrowId',        moneyCtrl.myStatement);
+router.get('/statements/:escrowId/pdf',    moneyCtrl.myStatementPdf);
 
 // Profile
 router.get('/profile', ctrl.getProfile);

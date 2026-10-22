@@ -133,6 +133,8 @@ const ticketEvidenceUploader = buildUploader('tickets',    ALL_FORMATS);
 const cmsMediaUploader       = buildUploader('admin-cms',  MEDIA_FORMATS);
 const videoTourUploader      = buildUploader('video-tours', VIDEO_FORMATS, 500); // 500 MB
 const partnerProfilePhotoUploader = buildUploader('partners/profile-photos', IMAGE_FORMATS);
+// Money model phase 2 — a GST-registered partner's tax invoice for a deal.
+const taxInvoiceUploader = buildUploader('partners/tax-invoices', DOC_FORMATS);
 
 async function deleteFile(s3Key) {
   await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: s3Key }));
@@ -151,6 +153,7 @@ module.exports = {
   cmsMediaUploader,
   videoTourUploader,
   partnerProfilePhotoUploader,
+  taxInvoiceUploader,
   deleteFile,
   s3Upload,
   buildMulter,

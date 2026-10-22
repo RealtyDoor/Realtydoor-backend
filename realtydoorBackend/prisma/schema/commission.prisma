@@ -58,9 +58,10 @@ enum CommissionOverrideScope {
 }
 
 // ─── RateCard — a DEFAULT TEMPLATE, never the money record ───────────────────
-// Resolution for pre-fill: property card → city card → platform default.
-// projectId is intentionally unused: when the Project entity (4.10) lands it
-// becomes a backfill, not a key change.
+// Resolution for pre-fill: project card → property card → city card → platform
+// default (money model Rev 3; the partner override and the deal's own terms
+// sit above all of these). projectId is plain (no relation) and is matched
+// through Property.projectId.
 
 model RateCard {
   id         String          @id @default(auto()) @map("_id") @db.ObjectId
@@ -72,6 +73,16 @@ model RateCard {
 
   // Default total brokerage as a % of deal price. A lead may negotiate its own.
   feePct      Float
+  // Money model Rev 3 (22 Oct 2026). The partner's own rate, as a % of the
+  // DEAL PRICE (1 by default). feePct above stays the seller's total
+  // brokerage % (partner rate + platform fee). Null on older cards: the
+  // partner rate is then derived from feePct x the partner lines.
+  partnerRatePct  Float?
+  platformFeePct  Float?
+  // A rate that differs from the platform default is "Custom": it needs a
+  // reason, shows a Custom label, and is audited.
+  isCustom        Boolean @default(false)
+  customReason    String?
   collectedBy CommissionCollectedBy @default(PLATFORM)
   payer       CommissionPayer       @default(SELLER)
   terms       String?
@@ -87,6 +98,7 @@ model RateCard {
   updatedAt            DateTime @updatedAt
 
   @@index([propertyId])
+  @@index([projectId, sellerType])
   @@index([city, sellerType])
   @@index([sellerType, isActive])
 }
@@ -168,4 +180,48 @@ model LeadCommissionLine {
 
   @@index([leadId, version])
   @@index([leadId])
+}
+
+// ─── TdsEntry — TDS withheld from a partner's commission (money model Rev 3) ─
+// One row per partner payout, written in the same step as the payout so a
+// payout without a TDS decision cannot exist. Append-only apart from the
+// deposit / return fields, which the accountant fills in (phase 2 endpoints).
+// Amounts in paise. Section, rate, threshold and the missing-PAN rule are
+// settings, never hard-coded; this row records what was applied and why.
+
+model TdsEntry {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  partnerId  String   @db.ObjectId
+  escrowId   String   @unique @db.ObjectId
+  leadId     String   @db.ObjectId
+
+  financialYear String  // "2026-27"
+  quarter       Int     // 1..4 within the financial year (Apr-Jun = 1)
+  panAtDeduction String? // PAN used for this deduction; null = none on file
+  section       String  // e.g. "194H" (label comes from settings)
+  ratePct       Float
+  rateReason    String  // STANDARD | NO_PAN | BELOW_THRESHOLD
+
+  commissionBasePaise Int  // commission excluding GST, this payout
+  ytdBeforePaise      Int  // credited to this partner earlier in the FY
+  thresholdPaise      Int
+  thresholdReached    Boolean
+  taxedBasePaise      Int  // the base TDS was computed on (catch-up when the threshold is first crossed)
+  tdsPaise            Int
+  netPaise            Int  // commission - TDS (GST is separate)
+
+  deductedAt      DateTime @default(now())
+  depositDueDate  DateTime?
+  depositedAt     DateTime?
+  challanNumber   String?
+  bsrCode         String?
+  returnQuarter   String?   // e.g. "2026-27 Q2"
+  returnFiledAt   DateTime?
+  form16aIssuedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([partnerId, financialYear])
+  @@index([financialYear, quarter])
+  @@index([depositedAt])
 }

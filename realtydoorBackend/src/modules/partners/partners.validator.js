@@ -8,9 +8,11 @@ const updateProfileSchema = z.object({
   profileImageUrl: z.string().url('Invalid URL').optional(),
   partnerSubType:  z.string().max(50).optional(),
   // B1.6 / B1.8 / admin 3.2-3.3 — structured instead of "read it off the
-  // uploaded KYC PDF". Deliberately NOT including panNumber: a partner
-  // editing their own PAN after KYC verification would silently invalidate
-  // what admin approved, so that one stays admin-set only.
+  // uploaded KYC PDF". panNumber (money model Rev 3: PAN is required for
+  // payouts, TDS is 20% without it) may be added by the partner ONLY while none
+  // is on file; changing an existing PAN stays admin-only (service refuses with
+  // 409 PAN_LOCKED), since it would invalidate what admin verified.
+  panNumber:       z.string().trim().toUpperCase().regex(/^[A-Z]{5}\d{4}[A-Z]$/, 'Invalid PAN (format ABCDE1234F)').optional(),
   reraNumber:      z.string().max(60).optional(),
   gstin:           z.string().max(20).optional(),
   coverageAreas:   z.array(z.string().min(1).max(100)).max(50).optional(),
@@ -26,7 +28,7 @@ const updateProfileSchema = z.object({
 // controller rejects them by name using this list.
 const UPDATE_PROFILE_FIELDS = [
   'name', 'companyName', 'bio', 'websiteUrl', 'profileImageUrl', 'partnerSubType',
-  'reraNumber', 'gstin', 'coverageAreas', 'address',
+  'reraNumber', 'gstin', 'panNumber', 'coverageAreas', 'address',
 ];
 function unsupportedProfileFields(body) {
   return Object.keys(body || {}).filter((k) => !UPDATE_PROFILE_FIELDS.includes(k));

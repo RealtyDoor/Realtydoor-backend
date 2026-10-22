@@ -6,7 +6,9 @@
 
 model AuditLog {
   id         String   @id @default(auto()) @map("_id") @db.ObjectId
-  adminId    String   @db.ObjectId
+  // Optional since money model phase 2: system and webhook actions have no
+  // admin (actorRole SYSTEM / WEBHOOK). Partners and buyers act as themselves.
+  adminId    String?  @db.ObjectId
   action     String
   targetType String
   targetId   String
@@ -16,6 +18,13 @@ model AuditLog {
   actorRole  String?
   requestId  String?
   metadata   String?
+  // Why the change was made (required for money settings, adjustments, rejections).
+  reason     String?
+  // Tamper evidence: HMAC-SHA256 over this row's content plus the previous
+  // row's hash. Rows are never updated or deleted by the app (lib/prisma.js
+  // refuses it); lib/auditLog.js verifyAuditChain() re-checks them.
+  prevHash   String?
+  hash       String?
   createdAt  DateTime @default(now())
 
   @@index([adminId])

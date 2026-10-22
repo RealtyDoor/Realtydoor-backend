@@ -104,4 +104,37 @@ function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, razo
   });
 }
 
-module.exports = { buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf };
+// Partner statement for one deal (money model Rev 3, section 2.6a): commission,
+// GST (registered partners only), TDS, net, bank reference, date.
+function buildPartnerStatementPdf(st) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50 });
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+    const rs = (paise) => (paise == null ? 'N/A' : `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+
+    doc.fontSize(20).fillColor('#111').text(st.legalName || 'RealtyDoor');
+    doc.fontSize(11).fillColor('#666').text('Partner commission statement');
+    doc.moveDown(0.5).fontSize(9).fillColor('#999').text(`Deal ${st.dealRef || ''}  ${st.propertyTitle || ''}`.trim());
+    doc.moveDown(1).fontSize(11).fillColor('#333');
+    doc.text(`Partner: ${st.partner?.name || 'N/A'}`);
+    doc.text(`Deal price: ${rs(st.dealPricePaise)}`);
+    doc.text(`Commission rate: ${st.ratePct != null ? `${st.ratePct}% of the deal price${st.isCustomRate ? ' (custom rate)' : ''}` : 'N/A'}`);
+    doc.moveDown(0.5);
+    doc.text(`Commission: ${rs(st.commissionPaise)}`);
+    if (st.gstRegistered) doc.text(`GST (paid after your tax invoice is matched in our GST return): ${rs(st.gstPaise)}`);
+    if (st.tds) doc.text(`TDS ${st.tds.ratePct}% (${st.tds.section}) withheld: - ${rs(st.tds.paise)}`);
+    doc.moveDown(0.3).fontSize(14).fillColor('#111').text(`Paid to your bank: ${rs(st.netPaise)}`);
+    doc.moveDown(0.3).fontSize(11).fillColor('#333');
+    doc.text(`Bank reference (UTR): ${st.bankReference || 'N/A'}`);
+    doc.text(`Date: ${st.date ? new Date(st.date).toLocaleDateString('en-IN') : 'N/A'}`);
+    doc.text(`Document: ${st.document?.type === 'TAX_INVOICE' ? `Tax invoice ${st.document.invoiceNumber || ''} (${st.document.status})` : `Commission voucher ${st.document?.voucherNumber || ''} (${st.document?.status || 'N/A'})`}`);
+    doc.moveDown(1.5).fontSize(8).fillColor('#999')
+      .text('TDS withheld is deposited under your PAN and shows in Form 26AS; a certificate (Form 16A) is issued each quarter.', { align: 'center' });
+    doc.end();
+  });
+}
+
+module.exports = { buildPartnerStatementPdf, buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf };

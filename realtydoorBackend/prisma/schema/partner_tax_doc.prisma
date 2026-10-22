@@ -1,0 +1,86 @@
+// ─── PARTNER TAX DOCUMENTS (money model Rev 3, phase 2) ──────────────────────
+// A GST-registered partner raises a tax invoice from their own registered
+// business for each deal and uploads it. NO payout of any kind to the partner
+// on that deal until an admin has accepted it. The file and its fields are
+// kept as proof of the transaction (input credit). An unregistered partner
+// instead accepts a commission voucher by OTP. Both are immutable once
+// ACCEPTED apart from the GSTR-2B match marker.
+
+model PartnerTaxInvoice {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  partnerId String @db.ObjectId
+  leadId    String @db.ObjectId
+  escrowId  String? @db.ObjectId
+
+  // UPLOADED | ACCEPTED | REJECTED | MATCHED (shows in our GSTR-2B)
+  status    String @default("UPLOADED")
+  fileUrl   String
+
+  supplierGstin   String
+  invoiceNumber   String
+  invoiceDate     DateTime
+  recipientGstin  String   // Realtydoor's GSTIN
+  sacCode         String
+  placeOfSupply   String
+  taxableValuePaise Int
+  cgstPaise       Int @default(0)
+  sgstPaise       Int @default(0)
+  igstPaise       Int @default(0)
+  totalPaise      Int
+
+  reviewedByAdminId String?  @db.ObjectId
+  reviewedAt        DateTime?
+  rejectionReason   String?
+  matchedByAdminId  String?  @db.ObjectId
+  matchedAt         DateTime?
+  gstr2bPeriod      String?  // e.g. "2026-11"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([partnerId, invoiceNumber])
+  @@index([leadId, status])
+  @@index([partnerId, status])
+  @@index([status, createdAt])
+}
+
+// Commission voucher for a partner without GST: the record of a payment to
+// someone who cannot issue a GST invoice. Generated when the commission is
+// credited; the partner accepts it with an OTP sent to their verified phone.
+model CommissionVoucher {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  voucherNumber String @unique
+  partnerId String @db.ObjectId
+  leadId    String @db.ObjectId
+  escrowId  String @unique @db.ObjectId
+
+  // ISSUED | ACCEPTED
+  status    String @default("ISSUED")
+
+  partnerName    String
+  partnerAddress String?
+  partnerPan     String?
+  dealRef        String?
+  propertyTitle  String?
+  dealPricePaise Int
+  ratePct        Float
+  commissionPaise Int
+  tdsPaise       Int
+  tdsRatePct     Float
+  tdsSection     String
+  netPaise       Int
+  payoutId       String?
+  utr            String?
+
+  otpHash       String?
+  otpExpiresAt  DateTime?
+  otpAttempts   Int @default(0)
+  otpSentAt     DateTime?
+  acceptedAt    DateTime?
+  acceptedIp    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([partnerId, status])
+}

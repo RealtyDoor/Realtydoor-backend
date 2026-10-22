@@ -7,6 +7,10 @@ const { isSelfListedByAgent } = require('../listings/integrity.service');
 const { getActiveReferralForPhone } = require('../referrals/referral.service');
 const { buildCommissionReceiptPdf } = require('../../lib/pdfReceipt');
 const { s3Upload } = require('../../lib/fileUpload');
+const money = require('../../lib/moneyModel');
+const { buildPartnerQuote } = require('../../lib/commissionQuote');
+const ledger = require('../money/ledger.service');
+const { getMoneySettings } = require('../money/moneyConfig');
 
 // backend-gaps-frontend-integration.md #1 — reverses the 826a73c leftover-
 // margin decision. The platform-default fee/share pre-fill is still
@@ -15,8 +19,10 @@ const { s3Upload } = require('../../lib/fileUpload');
 // fallback any more: "Admin sets every percentage" means nothing is ever
 // silently guessed by code. If neither a rate card nor this config key
 // exists, there's nothing to pre-fill and admin must enter terms by hand.
-const DEFAULT_FEE_PCT_KEY = 'default_fee_pct';
-const DEFAULT_PARTNER_SHARE_PCT_KEY = 'default_partner_share_pct';
+// Money model Rev 3 (22 Oct 2026) replaces these two keys with
+// default_partner_rate_pct / default_platform_fee_pct (see money/moneyConfig.js,
+// 1% + 1%), so there is always a platform default now. The old keys are no
+// longer read.
 
 // backend-gaps-frontend-integration.md #1, section 19 — R, the platform's
 // cost-recovery retained amount, calculated from the real payment-gateway
@@ -169,9 +175,19 @@ function assertStoredLinesFitHeadroom(lines, feeAmount, retainedAmount) {
 
 // ─── Rate cards (templates) ──────────────────────────────────────────────────
 
-async function resolveRateCard({ propertyId, city, sellerType }) {
-  // property card → city card. Platform default is handled by the caller,
-  // since it isn't a row.
+async function resolveRateCard({ propertyId, projectId, city, sellerType }) {
+  // project card → property card → city card. Platform default is handled by
+  // the caller, since it isn't a row. A project card is the negotiated rate
+  // for one Project and applies to every listing linked to it
+  // (Property.projectId), whatever the seller type.
+  if (projectId) {
+    const byProject = await prisma.rateCard.findFirst({
+      where: { projectId, isActive: true },
+      include: { lines: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (byProject) return { card: byProject, source: 'PROJECT' };
+  }
   if (propertyId) {
     const byProperty = await prisma.rateCard.findFirst({
       where: { propertyId, sellerType, isActive: true },
@@ -188,6 +204,7 @@ async function resolveRateCard({ propertyId, city, sellerType }) {
       where: {
         city: { equals: city, mode: 'insensitive' },
         OR: [{ propertyId: { isSet: false } }, { propertyId: null }],
+        AND: [{ OR: [{ projectId: { isSet: false } }, { projectId: null }] }],
         sellerType,
         isActive: true,
       },
@@ -231,7 +248,7 @@ async function previewTermsForLead(leadId) {
     where: { id: leadId },
     select: {
       id: true, assignedPartnerId: true, propertyId: true, buyerPhone: true, city: true,
-      property: { select: { id: true, city: true, price: true, partnerId: true } },
+      property: { select: { id: true, city: true, price: true, partnerId: true, projectId: true } },
     },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
@@ -261,25 +278,31 @@ async function previewTermsForLead(leadId) {
   // lead has no property to pull a city from; lead.city is the only source
   // then. A real listing's own city always wins when there is one.
   const { card, source } = await resolveRateCard({
-    propertyId: lead.propertyId, city: lead.property?.city || lead.city, sellerType,
+    propertyId: lead.propertyId, projectId: lead.property?.projectId ?? null,
+    city: lead.property?.city || lead.city, sellerType,
   });
 
-  // backend-gaps-frontend-integration.md #1 — no hardcoded JS fallback
-  // number: "Admin sets every percentage" means null (not a guessed 2%/50%)
-  // when neither a rate card nor this platform-level config exists.
-  const [defaultFeePct, defaultPartnerShare] = await Promise.all([
-    getConfigNumber(DEFAULT_FEE_PCT_KEY, null),
-    getConfigNumber(DEFAULT_PARTNER_SHARE_PCT_KEY, null),
-  ]);
+  // Money model Rev 3 — the rate is the partner's % of the DEAL PRICE plus the
+  // platform fee %, resolved deal terms > partner override > project >
+  // property > city > platform default (moneyModel.resolveCommissionRate).
+  // The platform default is a setting (1% + 1%), so there is always a rate.
+  const settings = await getMoneySettings();
+  const platformDefault = {
+    partnerRatePct: settings.commission.partnerRatePct,
+    platformFeePct: settings.commission.platformFeePct,
+  };
+  const cardRate = card ? rateFromCard(card) : null;
+  const candidates = cardRate ? { [source]: cardRate } : {};
+  const baseRate = money.resolveCommissionRate(candidates, platformDefault);
 
-  let feePct = card?.feePct ?? defaultFeePct;
+  let feePct = baseRate.totalFeePct;
+  // Lines: a card brings its own split; with no card the partner takes the
+  // whole partner rate as the closing agent. Pct is of the FEE, unrounded so
+  // 2.5 / 3.5 stays exact when multiplied back.
   let lines = card?.lines?.length
     ? card.lines.map((l) => ({ payeeRole: l.payeeRole, pct: l.pct }))
-    // Platform default shape: just the closing agent's share — no PLATFORM
-    // line (see resolvePartnerLines above). Empty when no default is
-    // configured either; there's nothing to pre-fill, not a guess.
-    : defaultPartnerShare != null
-      ? [{ payeeRole: 'CLOSING_AGENT', pct: defaultPartnerShare }]
+    : platformDefault.partnerRatePct > 0
+      ? [{ payeeRole: 'CLOSING_AGENT', pct: (baseRate.partnerRatePct / baseRate.totalFeePct) * 100 }]
       : [];
 
   // R21 — the template's LISTING_AGENT/CLOSING_AGENT line assumes whoever
@@ -293,8 +316,25 @@ async function previewTermsForLead(leadId) {
     lines = foldSelfListedPartnerLines(lines);
   }
 
+  // A partner override replaces only the partner's share OF THE FEE (existing
+  // meaning, unchanged); the rate that results is labelled PARTNER_OVERRIDE.
+  let rate = baseRate;
   const override = await resolveOverride(lead.assignedPartnerId, lead.propertyId);
-  if (override) lines = applyPartnerShareOverride(lines, override.partnerSharePct);
+  if (override) {
+    lines = applyPartnerShareOverride(lines, override.partnerSharePct);
+    const partnerRatePct = round6((baseRate.totalFeePct * override.partnerSharePct) / 100);
+    rate = money.resolveCommissionRate({
+      ...candidates,
+      PARTNER_OVERRIDE: {
+        partnerRatePct,
+        platformFeePct: round6(baseRate.totalFeePct - partnerRatePct),
+        reason: override.reason,
+        ref: override.id,
+      },
+    }, platformDefault);
+  } else if (card) {
+    rate = { ...baseRate, reason: card.customReason ?? null, ref: card.id };
+  }
 
   // R29 — this buyer was referred by an advisor; pre-fill their ADVISOR
   // line (no pct/flatAmountPaise — setLeadTerms's linesWithAdvisorDefault
@@ -331,10 +371,26 @@ async function previewTermsForLead(leadId) {
     platformRetained: retainedAmount,
     platformShareOfFee: platformPctOfFee,
     headroom: feeAmount != null ? round2(feeAmount - retainedAmount - partnerTotal) : null,
-    resolvedFrom: override ? 'PARTNER_OVERRIDE' : source,
+    resolvedFrom: rate.source,
+    rate: {
+      source: rate.source, partnerRatePct: rate.partnerRatePct, platformFeePct: rate.platformFeePct,
+      totalFeePct: rate.totalFeePct, isCustom: rate.isCustom, reason: rate.reason,
+    },
     rateCardId: card?.id ?? null,
     rateCardVersion: card?.version ?? null,
   };
+}
+
+const round6 = (n) => Math.round(n * 1e6) / 1e6;
+
+// A card's partner rate and platform fee, whether it carries them (Rev 3) or
+// predates them (partner rate = fee % x the partner lines' share of the fee).
+function rateFromCard(card) {
+  const total = card.feePct;
+  const linesShare = (card.lines || []).reduce((sum, l) => sum + l.pct, 0);
+  const partnerRatePct = card.partnerRatePct ?? round6((total * linesShare) / 100);
+  const platformFeePct = card.platformFeePct ?? round6(total - partnerRatePct);
+  return { partnerRatePct, platformFeePct, reason: card.customReason ?? null, ref: card.id };
 }
 
 // Rescale the ASSIGNED PARTNER's slices to a new total share. Unlike the
@@ -453,13 +509,13 @@ function computeAmounts(lead, lines) {
 // by computePlatformRetained below, never submitted. An ADVISOR line may
 // omit both pct and flatAmountPaise; when it does, their standard rate
 // (User.advisorStandardFeePaise) is used.
-async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId, ip) {
+async function setLeadTerms(leadId, { feePct, dealPrice, lines, note, rateMeta }, adminId, ip) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
     select: {
       id: true, assignedPartnerId: true, commissionLockedAt: true, commissionVersion: true,
       feePct: true, dealPriceAtLock: true, city: true, propertyId: true,
-      property: { select: { price: true, city: true, partnerId: true } },
+      property: { select: { price: true, city: true, partnerId: true, projectId: true } },
     },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
@@ -490,11 +546,14 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
   // than resolvePartnerLines' own generic NO_COMMISSION_LINES, which says
   // nothing about WHY nothing could be pre-filled.
   if (!lines?.length) {
-    const [{ card }, defaultPartnerShare] = await Promise.all([
-      resolveRateCard({ propertyId: lead.propertyId, city: diagnosticCity, sellerType: diagnosticSellerType }),
-      getConfigNumber(DEFAULT_PARTNER_SHARE_PCT_KEY, null),
+    const [{ card }, moneySettings] = await Promise.all([
+      resolveRateCard({
+        propertyId: lead.propertyId, projectId: lead.property?.projectId ?? null,
+        city: diagnosticCity, sellerType: diagnosticSellerType,
+      }),
+      getMoneySettings(),
     ]);
-    if (!card && defaultPartnerShare == null) {
+    if (!card && !(moneySettings.commission.partnerRatePct > 0)) {
       throw new ApiError(400,
         'No commission lines were given, and no rate card or platform default exists for this city/seller type to fall back to.',
         { code: 'PARTNER_SHARE_PCT_REQUIRED', city: diagnosticCity, sellerType: diagnosticSellerType });
@@ -538,6 +597,26 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
   const wasLocked = !!lead.commissionLockedAt;
   const version = wasLocked ? lead.commissionVersion + 1 : lead.commissionVersion;
 
+  // Money model Rev 3 — what the partner and the seller are quoted, frozen
+  // with the terms: the assigned partner's % of the DEAL PRICE (their lines'
+  // share of the fee x the fee %), and the platform fee as the rest. Terms
+  // typed by hand count as DEAL; a pre-fill passes the card / override / default
+  // it came from in rateMeta.
+  const moneySettings = await getMoneySettings();
+  const partnerLinesPct = resolvedLines
+    .filter((l) => ASSIGNED_PARTNER_ROLES.includes(l.payeeRole))
+    .reduce((sum, l) => sum + l.pct, 0);
+  const snapPartnerRate = round6((effectiveFeePct * partnerLinesPct) / 100);
+  const snapPlatformFee = round6(effectiveFeePct - snapPartnerRate);
+  const rateSnapshot = {
+    partnerRatePct: snapPartnerRate,
+    platformFeePct: snapPlatformFee,
+    commissionRateSource: rateMeta?.source ?? 'DEAL',
+    commissionRateCustom: snapPartnerRate !== moneySettings.commission.partnerRatePct
+      || snapPlatformFee !== moneySettings.commission.platformFeePct,
+    commissionRateReason: rateMeta?.reason ?? note ?? null,
+  };
+
   // Agent-never-earns-on-own-property (3.17): a partner must not be paid for
   // selling a listing they themselves own.
   await assertPartnerNotOwnProperty(leadId, resolvedLines);
@@ -572,6 +651,7 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
         // this record. commissionAmountPaise is R itself, in paise.
         platformCommissionPct: platformPctOfFee,
         ...(feeAmount != null && { commissionAmountPaise: Math.round(retainedAmount * 100) }),
+        ...rateSnapshot,
       },
     }),
   ]);
@@ -580,7 +660,11 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note }, adminId,
     adminId, action: wasLocked ? 'COMMISSION_REVISED' : 'COMMISSION_TERMS_SET',
     targetType: 'Lead', targetId: leadId,
     before: { version: lead.commissionVersion, feePct: lead.feePct },
-    after: { version, feePct: effectiveFeePct, lines: resolvedLines, retainedAmount, note: note ?? null },
+    after: {
+      version, feePct: effectiveFeePct, lines: resolvedLines, retainedAmount, note: note ?? null,
+      partnerRatePct: snapPartnerRate, platformFeePct: snapPlatformFee,
+      rateSource: rateSnapshot.commissionRateSource, custom: rateSnapshot.commissionRateCustom,
+    },
     ipAddress: ip,
   });
 
@@ -639,6 +723,7 @@ async function prefillLeadTerms(leadId, adminId, ip) {
     dealPrice: preview.dealPrice,
     lines: preview.lines,
     note: `Pre-filled from ${preview.resolvedFrom}`,
+    rateMeta: { source: preview.rate.source, reason: preview.rate.reason },
   }, adminId, ip);
 
   await prisma.lead.update({
@@ -751,14 +836,15 @@ async function invoiceLeadCommission(leadId, adminId, ip) {
   }
 
   await createAuditLog({
-    adminId, action: 'COMMISSION_INVOICED', targetType: 'Lead', targetId: leadId,
+    adminId, actorRole: 'ADMIN', action: 'COMMISSION_INVOICED', targetType: 'Lead', targetId: leadId,
     after: { invoiceUrl: url, invoicedAt }, ipAddress: ip,
   });
+  await ledger.onBrokerageInvoiced({ id: leadId, sellerId: lead.property?.partnerId }, await sellerInvoiceFromTerms(terms), { adminId });
 
   return getLeadTerms(leadId);
 }
 
-async function collectLeadCommission(leadId, adminId, ip) {
+async function collectLeadCommission(leadId, adminId, ip, { tdsDeductedRupees = 0 } = {}) {
   const terms = await getLeadTerms(leadId);
   if (terms.commissionStatus !== 'INVOICED') {
     throw new ApiError(400, `Cannot collect from status ${terms.commissionStatus}`, { code: 'INVALID_COMMISSION_STATUS' });
@@ -782,11 +868,34 @@ async function collectLeadCommission(leadId, adminId, ip) {
   }
 
   await createAuditLog({
-    adminId, action: 'COMMISSION_COLLECTED', targetType: 'Lead', targetId: leadId,
-    after: { collectedAt }, ipAddress: ip,
+    adminId, actorRole: 'ADMIN', action: 'COMMISSION_COLLECTED', targetType: 'Lead', targetId: leadId,
+    after: { collectedAt, tdsDeductedRupees }, ipAddress: ip,
   });
+  const inv = await sellerInvoiceFromTerms(terms);
+  const tdsPaise = money.toPaise(tdsDeductedRupees || 0);
+  await ledger.onBrokerageReceived({ id: leadId, sellerId: lead.property?.partnerId }, inv, { adminId, tdsDeductedPaise: tdsPaise });
+  if (tdsPaise > 0) {
+    // The payer deducted TDS from our fee: it is a receivable, to claim with their certificate.
+    await ledger.recordSafe({
+      leadId, type: 'TDS_RECEIVABLE', direction: 'NONE', status: 'RECORDED', partyType: 'SELLER', partyId: lead.property?.partnerId || null,
+      grossPaise: tdsPaise, netPaise: tdsPaise, note: 'TDS deducted by the payer on our brokerage; claim with the TDS certificate',
+      idempotencyKey: `tdsReceivable:${leadId}`, createdByType: 'ADMIN', createdById: adminId,
+    });
+  }
 
   return getLeadTerms(leadId);
+}
+
+// The seller / developer invoice for the ledger: partner share + platform fee
+// + GST on the whole (money model Rev 3). Falls back to the lead's fee when the
+// terms carry no partner/platform split.
+async function sellerInvoiceFromTerms(terms) {
+  const settings = await getMoneySettings();
+  const a = terms.amounts;
+  const subtotal = money.toPaise(a?.feeAmount ?? 0);
+  const partner = money.toPaise(a?.partnerTotal ?? 0);
+  const gst = money.pctOf(subtotal, settings.commission.gstPct);
+  return { partnerPaise: partner, platformPaise: subtotal - partner, subtotalPaise: subtotal, gstPaise: gst, totalPaise: subtotal + gst };
 }
 
 // A COLLECTED fee is already settled — disputing it needs a human to first
@@ -1065,7 +1174,8 @@ async function getPartnerRateCards(partnerId) {
       select: {
         id: true, refCode: true, feePct: true, dealPriceAtLock: true,
         commissionLockedAt: true, commissionVersion: true,
-        property: { select: { title: true, city: true } },
+        partnerRatePct: true, commissionRateSource: true, commissionRateCustom: true, commissionRateReason: true,
+        property: { select: { title: true, city: true, price: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: 50,
@@ -1093,6 +1203,10 @@ async function getPartnerRateCards(partnerId) {
       feePct: l.feePct,
       partnerSharePct,
       partnerAmount: feeAmount && partnerSharePct ? round2((feeAmount * partnerSharePct) / 100) : null,
+      // Money model Rev 3 — the quote the partner sees BEFORE working the lead:
+      // their % of the final deal price, where it came from, and a Custom flag
+      // with the reason. Locked at assignment with the terms.
+      commissionQuote: buildPartnerQuote(l),
       locked: !!l.commissionLockedAt,
       lines: mine.map((r) => ({ payeeRole: r.payeeRole, pct: r.pct })),
     };
@@ -1101,7 +1215,102 @@ async function getPartnerRateCards(partnerId) {
   return { override: override ?? null, leads: perLead };
 }
 
+// ─── Per-project negotiated rate (T58) ───────────────────────────────────────
+// One active RateCard per Project holds the partner rate (e.g. 2, 2.5, 3 % of
+// the deal price). Differing from the platform default makes it Custom: a
+// reason is required, it is audited, shown to the partner, and frozen on each
+// lead at assignment. Existing leads keep their locked terms.
+
+async function listProjectRates(skip, limit) {
+  const where = { projectId: { not: null } };
+  const [cards, total] = await Promise.all([
+    prisma.rateCard.findMany({ where, skip, take: limit, orderBy: { updatedAt: 'desc' }, include: { lines: true } }),
+    prisma.rateCard.count({ where }),
+  ]);
+  const ids = [...new Set(cards.map((c) => c.projectId))];
+  const projects = ids.length
+    ? await prisma.project.findMany({ where: { id: { in: ids } }, select: { id: true, title: true, city: true, builderId: true } })
+    : [];
+  const byId = new Map(projects.map((p) => [p.id, p]));
+  return { data: cards.map((c) => ({ ...c, project: byId.get(c.projectId) || null })), total };
+}
+
+async function getProjectRate(projectId) {
+  const [project, card, settings] = await Promise.all([
+    prisma.project.findUnique({ where: { id: projectId }, select: { id: true, title: true, city: true } }),
+    prisma.rateCard.findFirst({ where: { projectId, isActive: true }, include: { lines: true }, orderBy: { updatedAt: 'desc' } }),
+    getMoneySettings(),
+  ]);
+  if (!project) throw new ApiError(404, 'Project not found');
+  const platformDefault = { partnerRatePct: settings.commission.partnerRatePct, platformFeePct: settings.commission.platformFeePct };
+  const effective = money.resolveCommissionRate(card ? { PROJECT: rateFromCard(card) } : {}, platformDefault);
+  return { project, card, platformDefault, effective };
+}
+
+async function setProjectRate(projectId, { partnerRatePct, platformFeePct, reason, sellerType }, adminId, ip) {
+  const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true, title: true } });
+  if (!project) throw new ApiError(404, 'Project not found');
+
+  const settings = await getMoneySettings();
+  const platformFee = platformFeePct ?? settings.commission.platformFeePct;
+  const isCustom = partnerRatePct !== settings.commission.partnerRatePct || platformFee !== settings.commission.platformFeePct;
+  if (isCustom && !reason?.trim()) {
+    throw new ApiError(400,
+      `A rate different from the platform default (${settings.commission.partnerRatePct}% + ${settings.commission.platformFeePct}%) needs a reason.`,
+      { code: 'CUSTOM_RATE_REASON_REQUIRED' });
+  }
+  const totalFeePct = round6(partnerRatePct + platformFee);
+  if (!(totalFeePct > 0 && totalFeePct <= 100)) throw new ApiError(400, 'The total fee must be between 0 and 100%');
+
+  const data = {
+    feePct: totalFeePct,
+    partnerRatePct, platformFeePct: platformFee,
+    isCustom, customReason: isCustom ? reason.trim() : null,
+    sellerType: sellerType ?? 'BUILDER',
+    isActive: true,
+    lastChangedByAdminId: adminId,
+  };
+  const lineData = partnerRatePct > 0
+    ? [{ payeeRole: 'CLOSING_AGENT', pct: (partnerRatePct / totalFeePct) * 100 }]
+    : [];
+
+  const existing = await prisma.rateCard.findFirst({ where: { projectId, isActive: true }, include: { lines: true } });
+  let card;
+  if (existing) {
+    card = await prisma.rateCard.update({
+      where: { id: existing.id },
+      data: { ...data, version: existing.version + 1, lines: { deleteMany: {}, create: lineData } },
+      include: { lines: true },
+    });
+  } else {
+    card = await prisma.rateCard.create({
+      data: { ...data, projectId, lines: { create: lineData } },
+      include: { lines: true },
+    });
+  }
+
+  await createAuditLog({
+    adminId, action: 'PROJECT_COMMISSION_RATE_SET', targetType: 'Project', targetId: projectId,
+    before: existing ? { partnerRatePct: existing.partnerRatePct, platformFeePct: existing.platformFeePct, version: existing.version } : undefined,
+    after: { partnerRatePct, platformFeePct: platformFee, isCustom, reason: data.customReason, version: card.version, rateCardId: card.id },
+    ipAddress: ip,
+  });
+  return card;
+}
+
+async function clearProjectRate(projectId, adminId, ip) {
+  const existing = await prisma.rateCard.findFirst({ where: { projectId, isActive: true } });
+  if (!existing) throw new ApiError(404, 'This project has no negotiated rate');
+  const card = await prisma.rateCard.update({ where: { id: existing.id }, data: { isActive: false, lastChangedByAdminId: adminId } });
+  await createAuditLog({
+    adminId, action: 'PROJECT_COMMISSION_RATE_CLEARED', targetType: 'Project', targetId: projectId,
+    before: { partnerRatePct: existing.partnerRatePct, platformFeePct: existing.platformFeePct }, ipAddress: ip,
+  });
+  return card;
+}
+
 module.exports = {
+  listProjectRates, getProjectRate, setProjectRate, clearProjectRate, buildPartnerQuote, rateFromCard,
   listRateCards, createRateCard, updateRateCard, deleteRateCard,
   listOverrides, createOverride, revokeOverride, getPartnerRateCards,
   resolveRateCard, resolveOverride, previewTermsForLead,

@@ -2,6 +2,8 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { withCache, cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
+const { isMoneyKey } = require('../money/moneyConfig');
+const { createAuditLog } = require('../../lib/auditLog');
 
 // Keys the frontend depends on unconditionally (no code-level fallback of its
 // own, unlike e.g. max_active_inquiries/max_inquiries_per_day which always
@@ -78,11 +80,18 @@ function validateConfigValue(key, value, existing) {
   }
 }
 
-async function adminUpsertConfig(key, { value, description, isPublic }, adminId) {
+async function adminUpsertConfig(key, { value, description, isPublic, reason }, adminId, ip) {
   if (isSecretKey(key)) {
     throw new ApiError(400, `"${key}" looks like a secret. Store secrets in the server environment, not in platform config.`, { code: 'CONFIG_SECRET_REFUSED' });
   }
-  validateConfigValue(key, value, await prisma.platformConfig.findUnique({ where: { key } }));
+  const existing = await prisma.platformConfig.findUnique({ where: { key } });
+  validateConfigValue(key, value, existing);
+  // Money model phase 2: a rate, fee, TDS or refund setting changes only with a
+  // reason, and the old and new value are kept in the audit trail.
+  const money = isMoneyKey(key);
+  if (money && !reason?.trim()) {
+    throw new ApiError(400, `Changing "${key}" needs a reason (it is a money setting and is audited).`, { code: 'REASON_REQUIRED' });
+  }
   const updated = await prisma.platformConfig.upsert({
     where:  { key },
     create: { key, value, description, isPublic: isPublic ?? false, updatedByAdminId: adminId },
@@ -94,6 +103,12 @@ async function adminUpsertConfig(key, { value, description, isPublic }, adminId)
     },
   });
   cacheDel(CACHE_KEYS.PUBLIC_CONFIG);
+  if (money) {
+    await createAuditLog({
+      adminId, actorRole: 'ADMIN', action: 'MONEY_SETTING_CHANGED', targetType: 'PlatformConfig', targetId: key,
+      before: existing ? { value: existing.value } : null, after: { value }, reason: reason.trim(), ipAddress: ip,
+    });
+  }
   return updated;
 }
 

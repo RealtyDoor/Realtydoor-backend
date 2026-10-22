@@ -83,6 +83,17 @@ const setLeadTermsSchema = z.object({
   note:      z.string().max(500).optional(),
 });
 
+// Money model Rev 3 — a negotiated per-project partner rate (% of the deal
+// price). platformFeePct defaults to the platform setting. A rate that differs
+// from the default needs a reason (checked in the service, which knows the
+// default).
+const projectRateSchema = z.object({
+  partnerRatePct: z.number().min(0).max(20),
+  platformFeePct: z.number().min(0).max(20).optional(),
+  reason:         z.string().max(500).optional(),
+  sellerType:     z.enum(SELLER_TYPES).optional(),
+});
+
 // R26
 const disputeCommissionSchema = z.object({
   reason: z.string().min(5).max(500),
@@ -90,6 +101,6 @@ const disputeCommissionSchema = z.object({
 
 module.exports = {
   createRateCardSchema, updateRateCardSchema, createOverrideSchema, setLeadTermsSchema,
-  disputeCommissionSchema,
+  disputeCommissionSchema, projectRateSchema,
   PAYEE_ROLES, SELLER_TYPES,
 };

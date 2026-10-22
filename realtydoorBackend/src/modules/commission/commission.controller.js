@@ -3,7 +3,7 @@ const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./commission.service');
 const {
   createRateCardSchema, updateRateCardSchema, createOverrideSchema, setLeadTermsSchema,
-  disputeCommissionSchema,
+  disputeCommissionSchema, projectRateSchema,
 } = require('./commission.validator');
 
 // ─── Rate cards (admin) ──────────────────────────────────────────────────────
@@ -109,7 +109,7 @@ async function invoiceLeadCommission(req, res, next) {
 
 async function collectLeadCommission(req, res, next) {
   try {
-    success(res, await service.collectLeadCommission(req.params.id, req.user.id, req.ip), 'Payment recorded as collected');
+    success(res, await service.collectLeadCommission(req.params.id, req.user.id, req.ip, { tdsDeductedRupees: Number(req.body?.tdsDeductedRupees) || 0 }), 'Payment recorded as collected');
   } catch (err) { next(err); }
 }
 
@@ -144,7 +144,35 @@ async function myRateCards(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// ─── Per-project negotiated rate (admin) ─────────────────────────────────────
+
+async function listProjectRates(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const { data, total } = await service.listProjectRates(skip, limit);
+    success(res, paginate(data, total, page, limit));
+  } catch (err) { next(err); }
+}
+
+async function getProjectRate(req, res, next) {
+  try { success(res, await service.getProjectRate(req.params.id)); } catch (err) { next(err); }
+}
+
+async function setProjectRate(req, res, next) {
+  try {
+    const data = projectRateSchema.parse(req.body);
+    success(res, await service.setProjectRate(req.params.id, data, req.user.id, req.ip), 'Project rate saved');
+  } catch (err) { next(err); }
+}
+
+async function clearProjectRate(req, res, next) {
+  try {
+    success(res, await service.clearProjectRate(req.params.id, req.user.id, req.ip), 'Project rate cleared');
+  } catch (err) { next(err); }
+}
+
 module.exports = {
+  listProjectRates, getProjectRate, setProjectRate, clearProjectRate,
   listRateCards, createRateCard, updateRateCard, deleteRateCard,
   listOverrides, createOverride, revokeOverride,
   previewLeadTerms, getLeadTerms, prefillLeadTerms, setLeadTerms, lockLeadTerms, leadTermsHistory,
