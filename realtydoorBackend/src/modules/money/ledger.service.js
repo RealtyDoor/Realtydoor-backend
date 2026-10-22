@@ -475,10 +475,13 @@ async function profitView({ from, to }) {
 // ─── CSV (Tally-ready columns) ───────────────────────────────────────────────
 
 // Cells that start with = + - @ would be run as a formula by a spreadsheet.
+// A plain number (a negative amount such as -120.00, or a +91 phone number) is not a formula, so it is left alone: prefixing it would
+// turn the accountant's amounts into text.
+const PLAIN_NUMBER = /^[-+]?\d+(\.\d+)?$/;
 function csvCell(v) {
   if (v == null) return '';
   let s = String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  if (/^[=+\-@\t\r]/.test(s) && !PLAIN_NUMBER.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 const csv = (headers, records) => [headers.join(','), ...records.map((r) => r.map(csvCell).join(','))].join('\r\n');

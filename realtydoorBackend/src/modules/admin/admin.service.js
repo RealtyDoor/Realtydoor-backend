@@ -30,6 +30,7 @@ const partnerService = require('../partners/partners.service');
 const { buildTicketChargeReceiptPdf } = require('../../lib/pdfReceipt');
 const { s3Upload } = require('../../lib/fileUpload');
 const { getConfigNumber } = require('../config/config.service');
+const { csvCell } = require('../money/ledger.service');
 const { distanceMetres } = require('../../lib/mapLink');
 const { invalidateCacheForPropertyStatusChange: invalidateMicrositeCache } = require('../microsites/microsite.service');
 const {
@@ -2221,10 +2222,7 @@ async function getAuditLogs(filters, skip, limit) {
 // admin looking at someone's privacy history is itself a sensitive action.
 
 function toCsvRow(fields) {
-  return fields.map((f) => {
-    const s = f == null ? '' : String(f);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  }).join(',');
+  return fields.map((f) => csvCell(f)).join(',');
 }
 
 function privacyEventsToCsv(events) {

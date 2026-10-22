@@ -9,6 +9,8 @@ const { notifyAdmins } = require('../../lib/notifications');
 // Backend gaps handoff, 2026-10-10 (#7C) — same alias-group safety net as
 // properties.service.js's search, applied here too ("apply the same to
 // locality-insights and city counts").
+const MAX_SUGGESTIONS_PER_DAY = 10;
+
 const suggestionKey = (city, locality) => `${canonicalizeCity(city).trim().toLowerCase()}|${String(locality).trim().toLowerCase()}`;
 
 // What the listing form offers in its Locality dropdown: every curated locality for the city plus the ones partners have
@@ -37,9 +39,22 @@ async function suggestLocality({ city: rawCity, locality: rawLocality }, user) {
   const existing = (await listLocalityOptions(city)).find((o) => o.name.toLowerCase() === locality.toLowerCase());
   if (existing) return { city, locality: existing.name, created: false };
 
-  await prisma.localitySuggestion.create({
-    data: { key: suggestionKey(city, locality), city, locality, addedByUserId: user.id },
-  });
+  // A person adds a new locality now and then. A daily cap keeps one account from filling the list with junk.
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const todays = await prisma.localitySuggestion.count({ where: { addedByUserId: user.id, createdAt: { gte: since } } });
+  if (todays >= MAX_SUGGESTIONS_PER_DAY) {
+    throw new ApiError(429, 'You have added several new localities today. Please try again tomorrow, or ask support.', { code: 'LOCALITY_DAILY_LIMIT' });
+  }
+
+  try {
+    await prisma.localitySuggestion.create({
+      data: { key: suggestionKey(city, locality), city, locality, addedByUserId: user.id },
+    });
+  } catch (err) {
+    // Two people adding the same new name at once: the second one simply uses the first one's row, with no second alert.
+    if (err.code === 'P2002') return { city, locality, created: false };
+    throw err;
+  }
   await notifyAdmins({
     title: 'New locality added',
     message: `${locality}, ${city} was added by ${user.role === 'ADMIN' ? 'an admin' : 'a partner'} while listing a property. Please fill in its details in the CMS.`,

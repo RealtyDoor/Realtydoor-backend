@@ -138,10 +138,18 @@ const upsertLocalitySchema = z.object({
   lastReviewedBy:          z.string().max(100).optional(),
 });
 
+// Place names are letters (any script), digits, spaces and a few marks. No angle brackets, quotes or slashes-as-markup: the name
+// is shown to admins in the CMS and in notifications, so keep it plain text.
+const PLACE_NAME = /^[\p{L}\p{N}][\p{L}\p{M}\p{N} .,'&()/-]*$/u;
+const placeName = (label) => z.string().trim().min(2, `Enter a valid ${label}`).max(80, `${label} is too long`)
+  .regex(PLACE_NAME, `${label} can only have letters, numbers, spaces and . , ' & ( ) / -`);
+
 const suggestLocalitySchema = z.object({
-  city: z.string().trim().min(2).max(80),
-  locality: z.string().trim().min(2, 'Enter a valid locality').max(80),
+  city: placeName('city'),
+  locality: placeName('locality'),
 });
 
+const localityOptionsQuerySchema = z.object({ city: placeName('city') });
+
 module.exports = {
-  suggestLocalitySchema, upsertLocalitySchema, MARKET_STAGES, DEMAND_LEVELS, INFRA_STRENGTHS };
+  suggestLocalitySchema, localityOptionsQuerySchema, upsertLocalitySchema, MARKET_STAGES, DEMAND_LEVELS, INFRA_STRENGTHS };

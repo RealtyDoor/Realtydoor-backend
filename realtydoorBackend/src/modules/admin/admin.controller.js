@@ -35,6 +35,7 @@ const {
   moderateReviewSchema,
   createRoutingRuleSchema,
   updateRoutingRuleSchema,
+  overrideOtpSchema, suspendUserSchema,
 } = require('./admin.validator');
 // backend-work-still-open.md #9 — same shape the user-side ticket comment
 // endpoint already validates against; reused rather than duplicated.
@@ -156,7 +157,7 @@ async function setLeadNote(req, res, next) {
 
 async function overrideLeadOtp(req, res, next) {
   try {
-    const { note } = req.body ?? {};
+    const { note } = overrideOtpSchema.parse(req.body ?? {});
     const result = await service.overrideLeadOtp(req.params.id, req.user.id, req.ip, note);
     success(res, result, 'OTP unlocked and a fresh code sent to the buyer');
   } catch (err) { next(err); }
@@ -360,8 +361,7 @@ async function getLoanBankStats(req, res, next) {
 
 async function suspendUser(req, res, next) {
   try {
-    const { suspend, reason } = req.body;
-    if (typeof suspend !== 'boolean') throw new ApiError(400, '"suspend" must be a boolean');
+    const { suspend, reason } = suspendUserSchema.parse(req.body ?? {});
     const updated = await service.suspendUser(req.params.id, suspend, reason, req.user.id, req.ip);
     success(res, updated, suspend ? 'User suspended' : 'User unsuspended');
   } catch (err) { next(err); }

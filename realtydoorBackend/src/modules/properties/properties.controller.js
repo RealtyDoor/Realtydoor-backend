@@ -1,4 +1,5 @@
 const { success, created } = require('../../utils/ApiResponse');
+const { isTrustedMediaUrl } = require('../../lib/trustedUrl');
 const { parsePagination } = require('../../utils/pagination');
 const { searchSchema, createPropertySchema, missingPriceMessage, reportUnauthorizedListingSchema } = require('./properties.validator');
 const service = require('./properties.service');
@@ -25,7 +26,8 @@ async function getBySlug(req, res, next) {
 async function getBrochure(req, res, next) {
   try {
     const property = await service.getPropertyByIdOrSlug(req.params.slug);
-    const stored = (property.documents || []).find((d) => d && d.url && /brochure/i.test(d.name || ''));
+    // Only a brochure stored on our own storage is linked to; a partner-supplied link elsewhere would make this an open redirect.
+    const stored = (property.documents || []).find((d) => d && isTrustedMediaUrl(d.url) && /brochure/i.test(d.name || ''));
     if (stored) return res.redirect(302, stored.url);
     const { buildPropertyBrochurePdf } = require('../../lib/propertyBrochure');
     const pdf = await buildPropertyBrochurePdf(property, (process.env.FRONTEND_URL || '').replace(/\/$/, '') || undefined);

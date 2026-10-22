@@ -107,7 +107,14 @@ const disputeCommissionSchema = z.object({
   reason: z.string().min(5).max(500),
 });
 
+// Collecting a seller's success fee: the TDS the seller held back is a plain non-negative rupee amount (a negative one would
+// inflate what we record as received).
+const collectCommissionSchema = z.object({
+  tdsDeductedRupees: z.coerce.number().finite().min(0, 'TDS cannot be negative').max(1_000_000_000).optional().default(0),
+}).default({});
+
 module.exports = {
+  collectCommissionSchema,
   createRateCardSchema, updateRateCardSchema, createOverrideSchema, setLeadTermsSchema, dealRateSchema,
   disputeCommissionSchema, projectRateSchema,
   PAYEE_ROLES, SELLER_TYPES,

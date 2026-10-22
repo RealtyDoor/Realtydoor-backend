@@ -349,7 +349,15 @@ const updateRoutingRuleSchema = z.object({
   { message: 'At least one field must be provided' },
 );
 
+// Admin actions that took a loose req.body: bound the type and length of every field.
+const overrideOtpSchema = z.object({ note: z.string().trim().max(500).optional() }).default({});
+const suspendUserSchema = z.object({
+  suspend: z.boolean({ required_error: '"suspend" must be a boolean', invalid_type_error: '"suspend" must be a boolean' }),
+  reason: z.string().trim().max(500).optional(),
+});
+
 module.exports = {
+  overrideOtpSchema, suspendUserSchema,
   getUsersQuerySchema,
   assignLeadSchema,
   createLeadSchema,

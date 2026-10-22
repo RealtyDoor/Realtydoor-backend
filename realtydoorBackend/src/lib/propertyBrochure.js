@@ -1,6 +1,6 @@
 const https = require('https');
-const http = require('http');
 const PDFDocument = require('pdfkit');
+const { isTrustedMediaUrl } = require('./trustedUrl');
 
 // A brochure for any listed property, built from its CMS record. Used when the property has no brochure PDF of its own
 // (a partner-uploaded or imported one always wins; see properties.controller.js getBrochure).
@@ -15,21 +15,24 @@ function priceLine(p) {
   return `From ${rs(p.price)} (${lakh})${p.priceNegotiable ? ', negotiable' : ''}`;
 }
 
-function fetchImage(url, hops = 2) {
+// Only images on our own storage are fetched, and a redirect is never followed: listing image URLs are partner-controlled,
+// so anything else could be made to point the server at an internal address (server-side request forgery).
+function fetchImage(url) {
   return new Promise((resolve) => {
-    if (!/^https?:\/\//i.test(url || '')) return resolve(null);
-    const lib = url.startsWith('https') ? https : http;
-    const req = lib.get(url, { timeout: 8000 }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && hops > 0) {
-        res.resume();
-        return resolve(fetchImage(res.headers.location, hops - 1));
-      }
+    if (!isTrustedMediaUrl(url)) return resolve(null);
+    const req = https.get(url, { timeout: 8000 }, (res) => {
       if (res.statusCode !== 200) { res.resume(); return resolve(null); }
       const type = String(res.headers['content-type'] || '');
       // pdfkit reads JPEG and PNG only
-      if (!/jpe?g|png/i.test(type) && !/\.(jpe?g|png)(\?|$)/i.test(url)) { res.resume(); return resolve(null); }
+      if (!/jpe?g|png/i.test(type)) { res.resume(); return resolve(null); }
+      const MAX_BYTES = 5 * 1024 * 1024;
       const chunks = [];
-      res.on('data', (c) => chunks.push(c));
+      let size = 0;
+      res.on('data', (c) => {
+        size += c.length;
+        if (size > MAX_BYTES) { req.destroy(); return resolve(null); }
+        chunks.push(c);
+      });
       res.on('end', () => resolve(Buffer.concat(chunks)));
       res.on('error', () => resolve(null));
     });

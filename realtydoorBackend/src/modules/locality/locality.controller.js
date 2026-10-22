@@ -2,7 +2,7 @@ const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const ApiError = require('../../utils/ApiError');
 const service = require('./locality.service');
-const { upsertLocalitySchema, suggestLocalitySchema } = require('./locality.validator');
+const { upsertLocalitySchema, suggestLocalitySchema, localityOptionsQuerySchema } = require('./locality.validator');
 
 async function getLocality(req, res, next) {
   try {
@@ -14,7 +14,10 @@ async function getLocality(req, res, next) {
 }
 
 async function listOptions(req, res, next) {
-  try { success(res, await service.listLocalityOptions(req.query.city)); } catch (err) { next(err); }
+  try {
+    const { city } = localityOptionsQuerySchema.parse({ city: req.query.city });
+    success(res, await service.listLocalityOptions(city));
+  } catch (err) { next(err); }
 }
 
 async function suggest(req, res, next) {

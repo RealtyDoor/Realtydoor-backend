@@ -4,6 +4,7 @@ const service = require('./escrow.service');
 const payoutService = require('./escrowPayout.service');
 const { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema, refundEscrowSchema, retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema, ESCROW_STATUSES } = require('./escrow.validator');
 const { verifyPaymentSignature } = require('../../lib/razorpay');
+const { verifyPaymentSchema } = require('../../lib/paymentSchemas');
 const ApiError = require('../../utils/ApiError');
 
 async function createOrder(req, res, next) {
@@ -133,10 +134,7 @@ async function getEscrowStats(req, res, next) {
 
 async function verifyPayment(req, res, next) {
   try {
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
-    if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
-      throw new ApiError(400, 'razorpayOrderId, razorpayPaymentId and razorpaySignature are required');
-    }
+    const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = verifyPaymentSchema.parse(req.body ?? {});
     if (!verifyPaymentSignature(razorpayOrderId, razorpayPaymentId, razorpaySignature)) {
       throw new ApiError(400, 'Invalid payment signature');
     }

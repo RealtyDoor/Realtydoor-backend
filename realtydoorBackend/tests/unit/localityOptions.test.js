@@ -1,6 +1,6 @@
 jest.mock('../../src/lib/prisma', () => ({
   localityInsight: { findMany: jest.fn(), upsert: jest.fn() },
-  localitySuggestion: { findMany: jest.fn(), create: jest.fn(), updateMany: jest.fn() },
+  localitySuggestion: { findMany: jest.fn(), create: jest.fn(), updateMany: jest.fn(), count: jest.fn() },
 }));
 jest.mock('../../src/lib/notifications', () => ({ notifyAdmins: jest.fn().mockResolvedValue({ count: 1 }) }));
 jest.mock('../../src/lib/cache', () => ({ withCache: (_k, _t, fn) => fn(), cacheDel: jest.fn() }));
@@ -15,6 +15,7 @@ beforeEach(() => {
   prisma.localitySuggestion.findMany.mockResolvedValue([]);
   prisma.localitySuggestion.create.mockResolvedValue({});
   prisma.localitySuggestion.updateMany.mockResolvedValue({ count: 1 });
+  prisma.localitySuggestion.count.mockResolvedValue(0);
 });
 
 describe('locality dropdown options', () => {
@@ -64,5 +65,51 @@ describe('adding a locality that is not in the list', () => {
     prisma.localityInsight.upsert.mockResolvedValue({ locality: 'Hebbal' });
     await locality.upsertLocality({ city: 'Bangalore', locality: 'Hebbal', avgPricePerSqftPaise: 700000 }, 'admin1');
     expect(prisma.localitySuggestion.updateMany.mock.calls[0][0]).toMatchObject({ data: { status: 'RESOLVED' } });
+  });
+});
+
+describe('abuse and edge cases for adding a locality', () => {
+  const partner = { id: '64b000000000000000000001', role: 'PARTNER' };
+
+  test('one account cannot add more than 10 new localities a day', async () => {
+    prisma.localitySuggestion.count.mockResolvedValue(10);
+    await expect(locality.suggestLocality({ city: 'Bangalore', locality: 'Brand New Place' }, partner))
+      .rejects.toMatchObject({ statusCode: 429, data: { code: 'LOCALITY_DAILY_LIMIT' } });
+    expect(prisma.localitySuggestion.create).not.toHaveBeenCalled();
+    expect(notifyAdmins).not.toHaveBeenCalled();
+  });
+
+  test('losing the race to add the same new name is not an error and sends no second alert', async () => {
+    prisma.localitySuggestion.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 'P2002' }));
+    const out = await locality.suggestLocality({ city: 'Bangalore', locality: 'Brand New Place' }, partner);
+    expect(out.created).toBe(false);
+    expect(notifyAdmins).not.toHaveBeenCalled();
+  });
+
+  test('any other database error is not swallowed', async () => {
+    prisma.localitySuggestion.create.mockRejectedValue(new Error('db down'));
+    await expect(locality.suggestLocality({ city: 'Bangalore', locality: 'Brand New Place' }, partner)).rejects.toThrow('db down');
+  });
+});
+
+describe('locality input validation', () => {
+  const { suggestLocalitySchema, localityOptionsQuerySchema } = require('../../src/modules/locality/locality.validator');
+
+  test.each(['Kogilu Cross', 'Yelahanka (New Town)', "St. Mark's Road", 'HSR Layout 2nd Sector', 'Koramangala 5th Block', 'ಯಲಹಂಕ', 'बेंगलुरु', 'J.P. Nagar', 'R&D Colony', 'A-B/C'])(
+    'accepts the real place name %s',
+    (name) => { expect(suggestLocalitySchema.parse({ city: 'Bangalore', locality: name }).locality).toBe(name); },
+  );
+
+  test.each(['<script>alert(1)</script>', 'Whitefield<img src=x>', '"; drop', 'a', ' ', '', '{"$ne":null}', 'line\nbreak', 'x'.repeat(81), '=cmd|calc', '-leading', '/leading'])(
+    'rejects %j',
+    (bad) => { expect(() => suggestLocalitySchema.parse({ city: 'Bangalore', locality: bad })).toThrow(); },
+  );
+
+  test('trims spaces, rejects a non-string, and the options query needs a real city', () => {
+    expect(suggestLocalitySchema.parse({ city: ' Bangalore ', locality: '  Hebbal ' })).toEqual({ city: 'Bangalore', locality: 'Hebbal' });
+    expect(() => suggestLocalitySchema.parse({ city: 'Bangalore', locality: { $ne: 'x' } })).toThrow();
+    expect(() => suggestLocalitySchema.parse({ city: ['a', 'b'], locality: 'Hebbal' })).toThrow();
+    expect(() => localityOptionsQuerySchema.parse({ city: undefined })).toThrow();
+    expect(() => localityOptionsQuerySchema.parse({ city: '<b>x</b>' })).toThrow();
   });
 });

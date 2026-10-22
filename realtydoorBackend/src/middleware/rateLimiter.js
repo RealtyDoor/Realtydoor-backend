@@ -127,7 +127,27 @@ const privacyActionLimiter = rateLimit({
   message: rateLimitMessage('Too many requests. Try again later.'),
 });
 
+// Money-adjacent PDFs (receipt, fee tax invoice) are generated on demand; a buyer needs a handful, not hundreds.
+// Keyed by the signed-in buyer, so it must sit after `authenticate`.
+const documentLimiter = rateLimit({
+  ...BASE,
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: rateLimitMessage('Too many document downloads. Try again in a few minutes.'),
+});
+
+// Adding a new locality from the listing form: a partner adds one now and then, never dozens.
+const localitySuggestLimiter = rateLimit({
+  ...BASE,
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: rateLimitMessage('Too many new localities added. Try again later.'),
+});
+
 module.exports = {
+  documentLimiter, localitySuggestLimiter,
   defaultLimiter, perUserLimiter, otpLimiter, authLimiter, uploadLimiter, searchLimiter,
   otpSendLimiter, otpVerifyLimiter, perUserPhoneOtpLimiter, privacyActionLimiter,
 };

@@ -118,7 +118,7 @@ function userProfile(u) {
 // POST /api/auth/set-role
 async function setRole(req, res, next) {
   try {
-    const { role } = req.body;
+    const { role } = req.body ?? {};
     if (role !== 'PARTNER') throw new ApiError(400, 'Only PARTNER role can be self-assigned');
     if (req.user.role !== 'USER') return success(res, { role: req.user.role }); // idempotent
 

@@ -163,9 +163,13 @@ function checkoutBreakdown(tokenPaise, settings) {
 
 // Public quote for the listing page and checkout ("Booking this plot: token X
 // + payment processing fee Y"). Reads settings only; moves no money.
+const MAX_QUOTE_RUPEES = 1_000_000_000; // Rs. 100 crore
+
 async function getCheckoutQuote(amountInRupees) {
   const tokenPaise = money.toPaise(amountInRupees);
   if (!Number.isInteger(tokenPaise) || tokenPaise <= 0) throw new ApiError(400, 'amount must be a positive number');
+  // This price check is public. A token can never be anywhere near this, and a huge number would only produce nonsense arithmetic.
+  if (!Number.isSafeInteger(tokenPaise) || amountInRupees > MAX_QUOTE_RUPEES) throw new ApiError(400, 'amount is too large');
   return checkoutBreakdown(tokenPaise, await getMoneySettings());
 }
 

@@ -75,4 +75,5 @@ model LocalitySuggestion {
 
   @@index([status])
   @@index([city])
+  @@index([addedByUserId, createdAt])
 }

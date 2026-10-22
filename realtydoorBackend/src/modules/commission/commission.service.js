@@ -898,11 +898,26 @@ async function invoiceLeadCommission(leadId, adminId, ip) {
   return getLeadTerms(leadId);
 }
 
+// The TDS a seller held back from our fee is never negative and never more than the invoice it came out of.
+function assertTdsWithinInvoice(tdsRupees, invoiceTotalPaise) {
+  const tdsPaise = money.toPaise(tdsRupees || 0);
+  if (!Number.isFinite(tdsPaise) || tdsPaise < 0) {
+    throw new ApiError(400, 'The TDS deducted cannot be negative', { code: 'TDS_INVALID' });
+  }
+  if (tdsPaise > invoiceTotalPaise) {
+    throw new ApiError(400, 'The TDS deducted cannot be more than the invoice total', { code: 'TDS_EXCEEDS_INVOICE' });
+  }
+}
+
 async function collectLeadCommission(leadId, adminId, ip, { tdsDeductedRupees = 0 } = {}) {
   const terms = await getLeadTerms(leadId);
   if (terms.commissionStatus !== 'INVOICED') {
     throw new ApiError(400, `Cannot collect from status ${terms.commissionStatus}`, { code: 'INVALID_COMMISSION_STATUS' });
   }
+
+  // The TDS a seller held back can never be more than the invoice it came out of. Checked before anything is marked collected.
+  const invoice = await sellerInvoiceFromTerms(terms);
+  assertTdsWithinInvoice(tdsDeductedRupees, invoice.totalPaise);
 
   const collectedAt = new Date();
   await prisma.lead.update({ where: { id: leadId }, data: { commissionStatus: 'COLLECTED', collectedAt } });
@@ -925,7 +940,7 @@ async function collectLeadCommission(leadId, adminId, ip, { tdsDeductedRupees = 
     adminId, actorRole: 'ADMIN', action: 'COMMISSION_COLLECTED', targetType: 'Lead', targetId: leadId,
     after: { collectedAt, tdsDeductedRupees }, ipAddress: ip,
   });
-  const inv = await sellerInvoiceFromTerms(terms);
+  const inv = invoice;
   const tdsPaise = money.toPaise(tdsDeductedRupees || 0);
   await ledger.onBrokerageReceived({ id: leadId, sellerId: lead.property?.partnerId }, inv, { adminId, tdsDeductedPaise: tdsPaise });
   if (tdsPaise > 0) {
@@ -1364,6 +1379,7 @@ async function clearProjectRate(projectId, adminId, ip) {
 }
 
 module.exports = {
+  assertTdsWithinInvoice,
   listProjectRates, getProjectRate, setProjectRate, clearProjectRate, buildPartnerQuote, rateFromCard,
   listRateCards, createRateCard, updateRateCard, deleteRateCard,
   listOverrides, createOverride, revokeOverride, getPartnerRateCards,

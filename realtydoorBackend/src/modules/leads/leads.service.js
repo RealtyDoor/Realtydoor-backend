@@ -167,6 +167,9 @@ const ACTIVE_LEAD_STATUSES = { notIn: ['CLOSED', 'DROPPED'] };
 // consented to it — attributing it to their account would surface it in that
 // buyer's own dashboard as an inquiry they never made, and would eat into
 // their submitLead quota.
+// A lead belongs to a partner when they added it or it is assigned to them.
+const isPartnersOwn = (lead, partnerId) => [lead.addedByPartnerId, lead.assignedPartnerId].some((id) => id && String(id) === String(partnerId));
+
 // Loads what the platform knows about this phone and applies the one-number-one-buyer rules (lib/leadOwnership).
 // `before`/`excludeLeadId` let the admin Confirm step re-run it for an existing lead as at the time it was added.
 async function evaluateBuyerOwnership(phone, partnerId, { excludeLeadId, before } = {}) {
@@ -206,12 +209,13 @@ async function partnerAddLead(partnerId, data) {
   // B3.2 — same buyer, same property, still active.
   const duplicate = await prisma.lead.findFirst({
     where: { propertyId: data.propertyId, buyerPhone: data.buyerPhone, status: ACTIVE_LEAD_STATUSES },
-    select: { id: true, refCode: true, status: true },
+    select: { id: true, refCode: true, status: true, addedByPartnerId: true, assignedPartnerId: true },
   });
   if (duplicate) {
+    // Show the lead's reference only when it is this partner's own. Someone else's lead id and status are not theirs to see.
     throw new ApiError(409, 'There is already an active lead for this buyer and property', {
       code: 'DUPLICATE_LEAD',
-      lead: duplicate,
+      ...(isPartnersOwn(duplicate, partnerId) && { lead: { id: duplicate.id, refCode: duplicate.refCode, status: duplicate.status } }),
     });
   }
 
@@ -220,7 +224,7 @@ async function partnerAddLead(partnerId, data) {
   const earlier = await prisma.lead.findFirst({
     where: { buyerPhone: data.buyerPhone },
     orderBy: { createdAt: 'desc' },
-    select: { id: true, refCode: true },
+    select: { id: true, refCode: true, addedByPartnerId: true, assignedPartnerId: true },
   });
 
   const ownership = await evaluateBuyerOwnership(data.buyerPhone, partnerId);
@@ -257,7 +261,11 @@ async function partnerAddLead(partnerId, data) {
     linkUrl: `/admin/leads/${lead.id}`,
   })));
 
-  return { ...sanitizeLeadForPartner(lead), isRepeatBuyer: !!earlier, relatedLead: earlier ?? null, ownership };
+  return { ...sanitizeLeadForPartner(lead), isRepeatBuyer: !!earlier,
+    relatedLead: earlier && isPartnersOwn(earlier, partnerId) ? { id: earlier.id, refCode: earlier.refCode } : null,
+    // The partner is told the outcome, never who else holds the buyer (that is another partner's internal id).
+    ownership: { credited: ownership.credited, reason: ownership.reason },
+  };
 }
 
 // `buyer` is only present when the caller's query included it (getPartnerLeads/

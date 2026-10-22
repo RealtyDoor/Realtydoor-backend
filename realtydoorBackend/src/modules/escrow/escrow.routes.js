@@ -4,6 +4,7 @@ const { authenticate } = require('../../middleware/auth');
 const { requireUser } = require('../../middleware/requireRole');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { validateObjectId } = require('../../middleware/validateObjectId');
+const { documentLimiter } = require('../../middleware/rateLimiter');
 
 // Public price breakdown (token + processing fee + refund terms). Before /:id.
 router.get('/quote',            ctrl.getCheckoutQuote);
@@ -15,8 +16,8 @@ router.get('/:id',              authenticate, requireUser, validateObjectId('id'
 // Dev feedback, 2026-10-08 — registered after /:id is fine here since
 // Express only falls through to /:id/receipt if the path actually has
 // that extra segment; a bare /:id request never reaches this route.
-router.get('/:id/receipt',      authenticate, requireUser, validateObjectId('id'), ctrl.getReceipt);
+router.get('/:id/receipt',      authenticate, requireUser, validateObjectId('id'), documentLimiter, ctrl.getReceipt);
 // T62 — GST tax invoice for the processing fee (409 FEE_INVOICE_UNAVAILABLE until the company GSTIN is set).
-router.get('/:id/fee-invoice',  authenticate, requireUser, validateObjectId('id'), ctrl.getFeeInvoice);
+router.get('/:id/fee-invoice',  authenticate, requireUser, validateObjectId('id'), documentLimiter, ctrl.getFeeInvoice);
 
 module.exports = router;

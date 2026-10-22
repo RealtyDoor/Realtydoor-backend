@@ -43,7 +43,7 @@ describe('partnerAddLead: one mobile number is one buyer', () => {
   test('another partner holding a valid registration is reported, and the lead is still recorded for the admin', async () => {
     prisma.lead.findMany.mockResolvedValue([{ id: 'old', addedByPartnerId: 'B', createdAt: daysAgo(10) }]);
     const out = await leads.partnerAddLead('A', data);
-    expect(out.ownership).toMatchObject({ credited: false, reason: 'OTHER_PARTNER', holderPartnerId: 'B' });
+    expect(out.ownership).toEqual({ credited: false, reason: 'OTHER_PARTNER' }); // never the other partner's id
     expect(prisma.lead.create).toHaveBeenCalledTimes(1);
   });
 
@@ -57,5 +57,33 @@ describe('partnerAddLead: one mobile number is one buyer', () => {
     await leads.evaluateBuyerOwnership(PHONE, 'A', { excludeLeadId: 'l9', before: daysAgo(1) });
     const where = prisma.lead.findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({ buyerPhone: PHONE, id: { not: 'l9' }, createdAt: { lt: expect.any(Date) } });
+  });
+});
+
+describe('partnerAddLead does not leak other people\'s leads', () => {
+  test('a duplicate that is another partner\'s lead reports the conflict without its id, reference or status', async () => {
+    prisma.lead.findFirst.mockResolvedValueOnce({ id: 'other1', refCode: 'RD-L-000009', status: 'ASSIGNED', addedByPartnerId: 'B', assignedPartnerId: 'B' });
+    const err = await leads.partnerAddLead('A', data).catch((e) => e);
+    expect(err).toMatchObject({ statusCode: 409, data: { code: 'DUPLICATE_LEAD' } });
+    expect(err.data.lead).toBeUndefined();
+  });
+
+  test('a duplicate that is the partner\'s own lead still shows which lead it is', async () => {
+    prisma.lead.findFirst.mockResolvedValueOnce({ id: 'mine1', refCode: 'RD-L-000010', status: 'ASSIGNED', addedByPartnerId: 'A', assignedPartnerId: 'A' });
+    const err = await leads.partnerAddLead('A', data).catch((e) => e);
+    expect(err.data.lead).toEqual({ id: 'mine1', refCode: 'RD-L-000010', status: 'ASSIGNED' });
+  });
+
+  test('the "related lead" is shown only when it is the partner\'s own, though the link is still saved for the admin', async () => {
+    const earlier = { id: 'e1', refCode: 'RD-L-000002', addedByPartnerId: 'B', assignedPartnerId: 'B' };
+    prisma.lead.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(earlier);
+    const out = await leads.partnerAddLead('A', data);
+    expect(out.relatedLead).toBeNull();
+    expect(out.isRepeatBuyer).toBe(true);
+    expect(prisma.lead.create.mock.calls[0][0].data.relatedLeadId).toBe('e1');
+
+    prisma.lead.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ ...earlier, addedByPartnerId: 'A', assignedPartnerId: 'A' });
+    const own = await leads.partnerAddLead('A', data);
+    expect(own.relatedLead).toEqual({ id: 'e1', refCode: 'RD-L-000002' });
   });
 });

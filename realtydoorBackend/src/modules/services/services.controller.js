@@ -1,6 +1,7 @@
 const { success, created } = require('../../utils/ApiResponse');
 const service = require('./services.service');
 const { verifyPaymentSignature } = require('../../lib/razorpay');
+const { verifyPaymentSchema } = require('../../lib/paymentSchemas');
 const { createOrderSchema, SERVICE_CATEGORIES } = require('./services.validator');
 const ApiError = require('../../utils/ApiError');
 
@@ -27,10 +28,7 @@ async function createOrder(req, res, next) {
 
 async function verifyPayment(req, res, next) {
   try {
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
-    if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
-      throw new ApiError(400, 'razorpayOrderId, razorpayPaymentId and razorpaySignature are required');
-    }
+    const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = verifyPaymentSchema.parse(req.body ?? {});
     if (!verifyPaymentSignature(razorpayOrderId, razorpayPaymentId, razorpaySignature)) {
       throw new ApiError(400, 'Invalid payment signature');
     }

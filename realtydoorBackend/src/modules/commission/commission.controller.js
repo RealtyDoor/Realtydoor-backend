@@ -3,8 +3,7 @@ const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./commission.service');
 const {
   createRateCardSchema, updateRateCardSchema, createOverrideSchema, setLeadTermsSchema, dealRateSchema,
-  disputeCommissionSchema, projectRateSchema,
-} = require('./commission.validator');
+  disputeCommissionSchema, projectRateSchema, collectCommissionSchema } = require('./commission.validator');
 
 // ─── Rate cards (admin) ──────────────────────────────────────────────────────
 
@@ -116,7 +115,8 @@ async function invoiceLeadCommission(req, res, next) {
 
 async function collectLeadCommission(req, res, next) {
   try {
-    success(res, await service.collectLeadCommission(req.params.id, req.user.id, req.ip, { tdsDeductedRupees: Number(req.body?.tdsDeductedRupees) || 0 }), 'Payment recorded as collected');
+    const { tdsDeductedRupees } = collectCommissionSchema.parse(req.body ?? {});
+    success(res, await service.collectLeadCommission(req.params.id, req.user.id, req.ip, { tdsDeductedRupees }), 'Payment recorded as collected');
   } catch (err) { next(err); }
 }
 
