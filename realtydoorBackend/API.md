@@ -3606,7 +3606,29 @@ Single support ticket detail.
 }
 ```
 
+The response also carries `messages` (oldest first): `{ id, authorType: "ADMIN" | "PARTNER", body, createdAt }`, every admin answer and every partner follow-up.
+
 **Errors:** `404` ticket not found or does not belong to you.
+
+---
+
+### POST /api/partner/support-tickets/:id/reply
+
+A partner follows up on their own ticket. An `ANSWERED`, `RESOLVED` or `IN_PROGRESS` ticket goes back to `OPEN`; admins get a notification.
+
+**Auth:** PARTNER (own tickets only)
+
+**Body:** `{ "message": "string, 2 to 2000 characters" }`
+
+**Response `201`:** the saved message. **Errors:** `404` not your ticket, `409` `TICKET_CLOSED` (raise a new ticket), `400` validation.
+
+---
+
+### PATCH /api/admin/leads/:id/allocation-letter/verify
+
+Admin marks the partner's uploaded allocation letter as verified. Until then the buyer can still cancel for a refund (minus the cancellation charge after the free window); after it the token can only be released or disputed. Idempotent, audited (`ALLOCATION_LETTER_VERIFIED`), notifies the buyer.
+
+**Auth:** ADMIN with FINANCE permission. **Errors:** `404` lead not found, `400` `NO_ALLOCATION_LETTER`.
 
 ---
 
