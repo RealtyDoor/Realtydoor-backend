@@ -51,6 +51,17 @@ async function getMyLead(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getMyRatings(req, res, next) {
+  try { success(res, await service.getMyRatings(req.user.id)); } catch (err) { next(err); }
+}
+
+async function updateLeadRating(req, res, next) {
+  try {
+    const data = rateLeadSchema.parse(req.body);
+    success(res, await service.updateLeadRating(req.user.id, req.params.leadId, data), 'Rating updated');
+  } catch (err) { next(err); }
+}
+
 async function rateLead(req, res, next) {
   try {
     const data = rateLeadSchema.parse(req.body);
@@ -325,7 +336,7 @@ async function getMyDisputes(req, res, next) {
 }
 
 module.exports = {
-  requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyLead, rateLead, getCancelQuote, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyLead, rateLead, getMyRatings, updateLeadRating, getCancelQuote, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
   updateConsent,
   getConsentState, getPrivacyState,
   withdrawConsent, withdrawConsentLegacy,

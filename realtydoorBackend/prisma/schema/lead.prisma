@@ -115,6 +115,8 @@ model Lead {
   // Buyer → partner rating (post site-visit / closure)
   buyerRating        Int?
   buyerRatingComment String?
+  // B88 — the buyer may change their rating for a few days after giving it.
+  buyerRatingEditedAt DateTime?
   buyerRatedAt       DateTime?
 
   // 7-day re-ping for STILL_DECIDING (Appendix C.4)

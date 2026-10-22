@@ -63,6 +63,8 @@ router.get('/leads/claimable', ctrl.getClaimableLeads);
 router.post('/leads/:id/claim', validateObjectId('id'), ctrl.claimLead);
 router.get('/leads/:id', validateObjectId('id'), ctrl.getMyLead);
 router.post('/leads/:leadId/rating', ctrl.rateLead);
+router.patch('/leads/:leadId/rating', validateObjectId('leadId'), ctrl.updateLeadRating);
+router.get('/ratings', ctrl.getMyRatings);
 router.get('/leads/:id/cancel-quote', ctrl.getCancelQuote);
 router.post('/leads/:id/cancel', ctrl.cancelLead);
 router.post('/leads/:id/confirm-deal', validateObjectId('id'), ctrl.confirmDeal);

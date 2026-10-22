@@ -3624,6 +3624,20 @@ A partner follows up on their own ticket. An `ANSWERED`, `RESOLVED` or `IN_PROGR
 
 ---
 
+### PATCH /api/user/leads/:leadId/rating
+
+Changes a partner rating the buyer already gave, within 7 days of giving it. Body as for the first rating: `{ rating: 1-5, comment?: string }`.
+
+**Auth:** USER (own lead only). **Errors:** `404` not your lead, `400` `NOT_RATED_YET`, `409` `RATING_EDIT_WINDOW_CLOSED`.
+
+### GET /api/user/ratings
+
+The buyer's own ratings, newest first: `{ leadId, refCode, partnerName, propertyTitle, city, rating, comment, ratedAt, editedAt, editableUntil, canEdit }`.
+
+**Auth:** USER.
+
+---
+
 ### POST /api/user/leads/:id/confirm-deal
 
 The buyer confirms in the app that the deal is done. Same effect as the WhatsApp "yes" reply: `buyerFeedbackStatus` becomes `VERIFIED_CLOSED`, which the admin sees as the advisory "Buyer confirmed the deal" release condition. Admins are notified. Idempotent.

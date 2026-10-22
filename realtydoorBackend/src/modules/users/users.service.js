@@ -158,6 +158,47 @@ async function getMyLead(userId, id) {
 }
 
 const RATEABLE_STATUSES = ['SITE_VISIT_DONE', 'CLOSED'];
+// B88 — how long after rating a buyer can still change it.
+const RATING_EDIT_DAYS = 7;
+const ratingEditableUntil = (ratedAt) => (ratedAt ? new Date(new Date(ratedAt).getTime() + RATING_EDIT_DAYS * 24 * 3600e3) : null);
+
+// B88 — the buyer's own ratings, newest first, each with whether it can still be changed.
+async function getMyRatings(userId, now = new Date()) {
+  const leads = await prisma.lead.findMany({
+    where: { buyerId: userId, buyerRating: { not: null } },
+    select: {
+      id: true, refCode: true, buyerRating: true, buyerRatingComment: true, buyerRatedAt: true, buyerRatingEditedAt: true,
+      property: { select: { title: true, city: true } },
+      assignedPartner: { select: { name: true } },
+    },
+    orderBy: { buyerRatedAt: 'desc' },
+  });
+  return leads.map((l) => {
+    const editableUntil = ratingEditableUntil(l.buyerRatedAt);
+    return {
+      leadId: l.id, refCode: l.refCode, partnerName: l.assignedPartner?.name ?? null,
+      propertyTitle: l.property?.title ?? null, city: l.property?.city ?? null,
+      rating: l.buyerRating, comment: l.buyerRatingComment, ratedAt: l.buyerRatedAt, editedAt: l.buyerRatingEditedAt,
+      editableUntil, canEdit: !!editableUntil && now < editableUntil,
+    };
+  });
+}
+
+// B88 — change a rating already given, within RATING_EDIT_DAYS of the first one.
+async function updateLeadRating(userId, leadId, { rating, comment }, now = new Date()) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId: userId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.buyerRating == null) throw new ApiError(400, 'You have not rated this partner yet', { code: 'NOT_RATED_YET' });
+  const until = ratingEditableUntil(lead.buyerRatedAt);
+  if (!until || now >= until) {
+    throw new ApiError(409, `A rating can be changed for ${RATING_EDIT_DAYS} days after you give it. That time has passed.`, { code: 'RATING_EDIT_WINDOW_CLOSED' });
+  }
+  const updated = await prisma.lead.update({
+    where: { id: leadId },
+    data: { buyerRating: rating, buyerRatingComment: comment ?? null, buyerRatingEditedAt: now },
+  });
+  return sanitizeLeadForBuyer(updated);
+}
 
 async function rateLead(userId, leadId, { rating, comment }) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId: userId } });
@@ -948,7 +989,7 @@ const disputeService = require('../disputes/disputes.service');
 
 module.exports = {
   getCancelQuote,
-  requestPhoneOtp, verifyPhoneOtp, getClaimableLeads, claimLead, getMyLeads, getMyLead, rateLead, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getClaimableLeads, claimLead, getMyLeads, getMyLead, rateLead, getMyRatings, updateLeadRating, RATING_EDIT_DAYS, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
   formatProfileSettings,
   updateConsent,
   getConsentState, getPrivacyState, withdrawConsent, requestAccountDeletion, cancelAccountDeletion,
