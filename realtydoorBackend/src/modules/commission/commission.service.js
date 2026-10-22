@@ -2,6 +2,7 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { createAuditLog } = require('../../lib/auditLog');
 const { createNotification } = require('../../lib/notifications');
+const logger = require('../../lib/logger');
 const { getConfigNumber, getConfigValue } = require('../config/config.service');
 const { isSelfListedByAgent } = require('../listings/integrity.service');
 const { getActiveReferralForPhone } = require('../referrals/referral.service');
@@ -671,6 +672,59 @@ async function setLeadTerms(leadId, { feePct, dealPrice, lines, note, rateMeta }
   return getLeadTerms(leadId);
 }
 
+// Money model Rev 3 — "change the rate on this one deal": the partner's % and Realtydoor's % of the DEAL PRICE, which are
+// what the partner earns and what the seller / developer is invoiced (partner + platform + GST). It writes the lead's
+// commission terms through setLeadTerms, so it is audited, versioned (a locked deal gets a new version, the old one stays
+// as history) and re-snapshots the rate on the lead. Nothing about the buyer's token changes.
+// Refused once the deal's money has moved: the token is released, or the brokerage is already invoiced.
+async function setDealRate(leadId, { partnerRatePct, platformFeePct, reason }, adminId, ip) {
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: {
+      id: true, refCode: true, assignedPartnerId: true, commissionLockedAt: true, commissionStatus: true, partnerRatePct: true,
+      escrowTransactions: { select: { status: true } },
+    },
+  });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!lead.assignedPartnerId) throw new ApiError(400, 'Assign a partner to this deal before setting its rate', { code: 'NO_ASSIGNED_PARTNER' });
+  const released = (lead.escrowTransactions || []).some((e) => ['RELEASED', 'HELD_PAYOUT_FAILED'].includes(e.status));
+  if (released || (lead.commissionStatus && lead.commissionStatus !== 'PENDING')) {
+    throw new ApiError(409, 'The money on this deal has already moved (token released or brokerage invoiced), so its rate can no longer be changed.', { code: 'DEAL_RATE_FROZEN' });
+  }
+
+  const settings = await getMoneySettings();
+  const platform = platformFeePct ?? settings.commission.platformFeePct;
+  const total = round6(partnerRatePct + platform);
+  if (!(partnerRatePct > 0)) throw new ApiError(400, 'The partner rate must be above 0%', { code: 'PARTNER_RATE_REQUIRED' });
+  if (!(total > 0)) throw new ApiError(400, 'The total rate must be above 0%', { code: 'FEE_PCT_REQUIRED' });
+  const custom = partnerRatePct !== settings.commission.partnerRatePct || platform !== settings.commission.platformFeePct;
+  const cleanReason = typeof reason === 'string' ? reason.trim() : '';
+  if (custom && cleanReason.length < 5) {
+    throw new ApiError(400,
+      `A rate different from the platform default (${settings.commission.partnerRatePct}% + ${settings.commission.platformFeePct}%) needs a reason of at least 5 characters.`,
+      { code: 'RATE_REASON_REQUIRED' });
+  }
+
+  const terms = await module.exports.setLeadTerms(leadId, {
+    feePct: total,
+    lines: [{ payeeRole: 'CLOSING_AGENT', pct: round6((partnerRatePct / total) * 100) }],
+    note: cleanReason || undefined,
+    rateMeta: { source: 'DEAL', reason: cleanReason || null },
+  }, adminId, ip);
+
+  // A partner who already saw a locked rate is told it changed (before the work, not after the payout).
+  if (lead.commissionLockedAt && lead.partnerRatePct != null && lead.partnerRatePct !== partnerRatePct) {
+    await createNotification({
+      userId: lead.assignedPartnerId,
+      title: 'Commission rate changed',
+      message: `Your commission on ${lead.refCode || 'a deal'} is now ${partnerRatePct}% of the deal price (was ${lead.partnerRatePct}%).${cleanReason ? ` Reason: ${cleanReason}` : ''}`,
+      type: 'COMMISSION_RATE_CHANGED',
+      linkUrl: `/partners/leads/${leadId}`,
+    }).catch((err) => logger.warn('[Commission] rate-change notification failed', { leadId, error: err.message }));
+  }
+  return terms;
+}
+
 // 3.17 — refuse to pay a partner commission on their own listing.
 async function assertPartnerNotOwnProperty(leadId, lines) {
   const lead = await prisma.lead.findUnique({
@@ -1314,7 +1368,7 @@ module.exports = {
   listRateCards, createRateCard, updateRateCard, deleteRateCard,
   listOverrides, createOverride, revokeOverride, getPartnerRateCards,
   resolveRateCard, resolveOverride, previewTermsForLead,
-  getLeadTerms, setLeadTerms, prefillLeadTerms, lockLeadTerms, getLeadTermsHistory,
+  getLeadTerms, setLeadTerms, setDealRate, prefillLeadTerms, lockLeadTerms, getLeadTermsHistory,
   invoiceLeadCommission, collectLeadCommission, disputeLeadCommission,
   listFeesDue, sendFeeReminder,
   resolvePartnerLines, resolveRateCardLines, assertStoredLinesFitHeadroom,

@@ -377,6 +377,7 @@ router.get('/leads/:id/commission/preview',  commissionCtrl.previewLeadTerms);
 router.get('/leads/:id/commission/history',  commissionCtrl.leadTermsHistory);
 router.post('/leads/:id/commission/prefill', commissionCtrl.prefillLeadTerms);
 router.put('/leads/:id/commission',          commissionCtrl.setLeadTerms);
+router.put('/leads/:id/commission/deal-rate', validateObjectId('id'), requirePermission('COMMISSION'), commissionCtrl.setDealRate);
 // 16.x — locking/collecting commission is a FINANCE-gated action; setting
 // terms (above, PUT) is left ungated on COMMISSION since negotiating terms
 // and actually finalizing/collecting money are different levels of trust.

@@ -2,7 +2,7 @@ const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./commission.service');
 const {
-  createRateCardSchema, updateRateCardSchema, createOverrideSchema, setLeadTermsSchema,
+  createRateCardSchema, updateRateCardSchema, createOverrideSchema, setLeadTermsSchema, dealRateSchema,
   disputeCommissionSchema, projectRateSchema,
 } = require('./commission.validator');
 
@@ -84,6 +84,13 @@ async function setLeadTerms(req, res, next) {
     const data = setLeadTermsSchema.parse(req.body);
     const result = await service.setLeadTerms(req.params.id, data, req.user.id, req.ip);
     success(res, result, result.locked ? 'Terms revised as a new version' : 'Terms saved');
+  } catch (err) { next(err); }
+}
+
+async function setDealRate(req, res, next) {
+  try {
+    const data = dealRateSchema.parse(req.body);
+    success(res, await service.setDealRate(req.params.id, data, req.user.id, req.ip), 'Deal rate saved');
   } catch (err) { next(err); }
 }
 
@@ -175,7 +182,7 @@ module.exports = {
   listProjectRates, getProjectRate, setProjectRate, clearProjectRate,
   listRateCards, createRateCard, updateRateCard, deleteRateCard,
   listOverrides, createOverride, revokeOverride,
-  previewLeadTerms, getLeadTerms, prefillLeadTerms, setLeadTerms, lockLeadTerms, leadTermsHistory,
+  previewLeadTerms, getLeadTerms, prefillLeadTerms, setLeadTerms, setDealRate, lockLeadTerms, leadTermsHistory,
   invoiceLeadCommission, collectLeadCommission, disputeLeadCommission,
   listFeesDue, sendFeeReminder,
   myRateCards,

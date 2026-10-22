@@ -94,13 +94,21 @@ const projectRateSchema = z.object({
   sellerType:     z.enum(SELLER_TYPES).optional(),
 });
 
+// Money model Rev 3 — the rate on one deal. The reason is required (checked in the service, which knows the default)
+// whenever the rate differs from the platform default.
+const dealRateSchema = z.object({
+  partnerRatePct: z.number().gt(0).max(20),
+  platformFeePct: z.number().min(0).max(20).optional(),
+  reason:         z.string().max(500).optional(),
+});
+
 // R26
 const disputeCommissionSchema = z.object({
   reason: z.string().min(5).max(500),
 });
 
 module.exports = {
-  createRateCardSchema, updateRateCardSchema, createOverrideSchema, setLeadTermsSchema,
+  createRateCardSchema, updateRateCardSchema, createOverrideSchema, setLeadTermsSchema, dealRateSchema,
   disputeCommissionSchema, projectRateSchema,
   PAYEE_ROLES, SELLER_TYPES,
 };
