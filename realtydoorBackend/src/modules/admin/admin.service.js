@@ -13,7 +13,8 @@ const { setUserRole } = require('../../lib/clerkAdmin');
 const { ROLES } = require('../../utils/validators');
 const { normalizePhone } = require('../../lib/phoneUtils');
 const { nextRefCode } = require('../../lib/refCode');
-const { stalledInfoFor } = require('../leads/leads.service');
+const { stalledInfoFor, evaluateBuyerOwnership } = require('../leads/leads.service');
+const { OWNERSHIP_TEXT } = require('../../lib/leadOwnership');
 const { CONTACT_STATUSES } = require('../contact/contact.admin.validator');
 const { generate, expiresAt } = require('../../lib/otp');
 const logger = require('../../lib/logger');
@@ -257,7 +258,13 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
   // (the Confirm dialog and the partner's own form both say so). With no
   // explicit partner chosen, assign it to the adding partner instead of
   // dropping it into UNASSIGNED, where it vanished from their list.
-  const targetPartnerId = partnerId || lead.addedByPartnerId || null;
+  // One mobile number is one buyer: a partner is credited only for a buyer the platform did not already have, or one that
+  // partner registered earlier and is still valid. An explicit partner choice by the admin always stands.
+  const ownership = lead.addedByPartnerId
+    ? await evaluateBuyerOwnership(lead.buyerPhone, lead.addedByPartnerId, { excludeLeadId: leadId, before: lead.createdAt })
+    : null;
+  const creditAdder = !ownership || ownership.credited;
+  const targetPartnerId = partnerId || (creditAdder ? lead.addedByPartnerId : null) || null;
   let partner = null;
   if (targetPartnerId) {
     partner = await prisma.user.findFirst({
@@ -311,7 +318,9 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
     await createNotification({
       userId: lead.addedByPartnerId,
       title: 'Lead Confirmed',
-      message: `${lead.refCode} · ${lead.buyerName} has been confirmed and is now in the assignment queue.`,
+      message: creditAdder
+        ? `${lead.refCode} · ${lead.buyerName} has been confirmed and is now in the assignment queue.`
+        : `${lead.refCode} · ${lead.buyerName} is in the assignment queue. ${OWNERSHIP_TEXT[ownership.reason]}`,
       type: 'LEAD_ASSIGNED',
       linkUrl: `/partners/leads/${leadId}`,
     });
@@ -322,7 +331,8 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
 
   await createAuditLog({
     adminId, action: 'LEAD_CONFIRMED', targetType: 'Lead', targetId: leadId,
-    before: { status: lead.status }, after: { status: updated.status, assignedPartnerId: updated.assignedPartnerId },
+    before: { status: lead.status },
+    after: { status: updated.status, assignedPartnerId: updated.assignedPartnerId, ...(ownership && { buyerOwnership: ownership.reason }) },
     ipAddress: ip,
   });
 

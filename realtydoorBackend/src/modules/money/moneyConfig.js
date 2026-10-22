@@ -30,6 +30,9 @@ const DEFINITIONS = {
   escrow_hold_auto_refund:   ['false', 'Refund tokens automatically at the hold limit (escrow_hold_days). "true" or "false". Off by default: with it off the daily job only alerts admins.'],
   escrow_token_platform_fee_pct: [0, 'Platform fee taken from the TOKEN at release. 0 under money model Rev 3 (the fee is on the seller invoice). Replaces the old escrow_platform_fee_pct, which is now ignored.'],
 
+  // Partner-added leads: how long a partner keeps a buyer they registered (restarts on a site visit, token or closed deal).
+  partner_lead_window_days:  [60, 'Days a partner keeps a buyer they registered, counted from the last activity on it (lead, site visit, token, closed deal). After that the buyer is free and a fresh registration is credited again.'],
+
   // TDS on partner commission (s.194H; section label under the Income-tax Act 2025 is open with the CA)
   tds_rate_pct:              [2, 'TDS % withheld from partner commission (excluding GST).'],
   tds_no_pan_rate_pct:       [20, 'TDS % when the partner has no valid PAN.'],
@@ -71,6 +74,7 @@ function parseSettings(rows) {
       holdDays: num('escrow_hold_days'),
     },
     tokenPlatformFeePct: num('escrow_token_platform_fee_pct'),
+    partnerLeadWindowDays: num('partner_lead_window_days'),
     company: {
       gstin: str('company_gstin').trim().toUpperCase(),
       legalName: str('company_legal_name'),

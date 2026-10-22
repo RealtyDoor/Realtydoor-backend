@@ -12,6 +12,8 @@ const { getConfigNumber } = require('../config/config.service');
 const { nextRefCode } = require('../../lib/refCode');
 const { assertLeadNotPaused } = require('../../lib/accountDeletion');
 const { buildPartnerQuote } = require('../../lib/commissionQuote');
+const { decideBuyerOwnership, OWNERSHIP_TEXT } = require('../../lib/leadOwnership');
+const { getMoneySettings } = require('../money/moneyConfig');
 
 const DEFAULT_MAX_ACTIVE_INQUIRIES = 5;
 const DEFAULT_MAX_INQUIRIES_PER_DAY = 3;
@@ -165,6 +167,31 @@ const ACTIVE_LEAD_STATUSES = { notIn: ['CLOSED', 'DROPPED'] };
 // consented to it — attributing it to their account would surface it in that
 // buyer's own dashboard as an inquiry they never made, and would eat into
 // their submitLead quota.
+// Loads what the platform knows about this phone and applies the one-number-one-buyer rules (lib/leadOwnership).
+// `before`/`excludeLeadId` let the admin Confirm step re-run it for an existing lead as at the time it was added.
+async function evaluateBuyerOwnership(phone, partnerId, { excludeLeadId, before } = {}) {
+  const [priorLeads, account, settings] = await Promise.all([
+    prisma.lead.findMany({
+      where: {
+        buyerPhone: phone,
+        ...(excludeLeadId && { id: { not: excludeLeadId } }),
+        ...(before && { createdAt: { lt: before } }),
+      },
+      select: {
+        id: true, addedByPartnerId: true, createdAt: true, assignedAt: true, siteVisitScheduledAt: true,
+        otpGeneratedAt: true, otpVerifiedAt: true, visitOutcomeAt: true, closedAt: true,
+        escrowTransactions: { select: { createdAt: true, heldAt: true, releasedAt: true } },
+      },
+    }),
+    prisma.user.findFirst({ where: { phone, role: 'USER', deletedAt: { isSet: false } }, select: { createdAt: true } }),
+    getMoneySettings(),
+  ]);
+  return decideBuyerOwnership({
+    priorLeads, accountCreatedAt: account?.createdAt ?? null, partnerId,
+    windowDays: settings.partnerLeadWindowDays, asOf: before ?? new Date(),
+  });
+}
+
 async function partnerAddLead(partnerId, data) {
   // Scoped to the partner's own listings — they shouldn't be able to attach a
   // self-sourced buyer to someone else's property.
@@ -196,6 +223,8 @@ async function partnerAddLead(partnerId, data) {
     select: { id: true, refCode: true },
   });
 
+  const ownership = await evaluateBuyerOwnership(data.buyerPhone, partnerId);
+
   const refCode = await nextRefCode('lead');
   const lead = await prisma.lead.create({
     data: {
@@ -223,12 +252,12 @@ async function partnerAddLead(partnerId, data) {
   await Promise.all(admins.map((admin) => createNotification({
     userId: admin.id,
     title: 'Partner-added lead needs review',
-    message: `${lead.refCode} · ${lead.buyerName} for "${property.title}" — added by a partner, awaiting your confirmation.`,
+    message: `${lead.refCode} · ${lead.buyerName} for "${property.title}" — added by a partner, awaiting your confirmation. ${OWNERSHIP_TEXT[ownership.reason]}`,
     type: 'LEAD_NEW',
     linkUrl: `/admin/leads/${lead.id}`,
   })));
 
-  return { ...sanitizeLeadForPartner(lead), isRepeatBuyer: !!earlier, relatedLead: earlier ?? null };
+  return { ...sanitizeLeadForPartner(lead), isRepeatBuyer: !!earlier, relatedLead: earlier ?? null, ownership };
 }
 
 // `buyer` is only present when the caller's query included it (getPartnerLeads/
@@ -734,4 +763,4 @@ async function adminRejectDrop(leadId, adminId, ip) {
   return { message: 'Drop request rejected. Partner notified.' };
 }
 
-module.exports = { submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };
+module.exports = { evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };

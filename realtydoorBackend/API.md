@@ -1257,6 +1257,8 @@ Creates the lead with `status: AWAITING_ADMIN` and `source: PARTNER`, so it stay
 
 If this phone already has an earlier lead on a **different** property, the new lead is linked to the most recent one via `relatedLeadId` and `isRepeatBuyer` is `true`, so admin sees a repeat buyer rather than a new one. The link is informational — deleting the earlier lead leaves a dangling id rather than blocking.
 
+**Who owns the buyer.** One mobile number is one buyer. The response also carries `ownership: { credited, reason, holderPartnerId }`. `reason` is `NEW_BUYER` or `OWN_REGISTRATION` (the adding partner is credited), `OTHER_PARTNER` (another partner registered it first and it is still valid) or `EXISTING_BUYER` (the platform already had the number, as its own lead, an admin-added lead or a registered buyer account). A partner registration stays valid for `partner_lead_window_days` (default 60) after its last activity (lead, site visit, token, closed deal). When admin confirms a partner-added lead with no explicit partner, it is assigned to the adding partner only if `credited`; otherwise it goes to the assignment queue and the partner is told. The decision is recorded in the audit log as `buyerOwnership`.
+
 **Errors:** `400` `consent` missing or not `true` · `404` property not in your listings · `409 DUPLICATE_LEAD` — this buyer already has an active (not closed/dropped) lead for this same property; `data.lead` carries the existing one.
 
 ---
