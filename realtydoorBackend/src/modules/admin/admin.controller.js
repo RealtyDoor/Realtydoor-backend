@@ -475,7 +475,7 @@ async function getTicketComments(req, res, next) {
 async function addTicketComment(req, res, next) {
   try {
     const data = ticketCommentSchema.parse(req.body);
-    const comment = await service.addAdminTicketComment(req.params.id, req.user.id, data);
+    const comment = await service.addAdminTicketComment(req.params.id, req.user.id, data, req.ip);
     created(res, comment, 'Comment posted');
   } catch (err) { next(err); }
 }
@@ -498,6 +498,22 @@ async function getUserById(req, res, next) {
   try {
     const user = await service.getUserByIdAdmin(req.params.id);
     success(res, user);
+  } catch (err) { next(err); }
+}
+
+async function getUserInquiries(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const { data, total } = await service.listUserInquiriesAdmin(req.params.id, skip, limit);
+    success(res, paginate(data, total, page, limit));
+  } catch (err) { next(err); }
+}
+
+async function getUserSubscriptions(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const { data, total } = await service.listUserSubscriptionsAdmin(req.params.id, skip, limit);
+    success(res, paginate(data, total, page, limit));
   } catch (err) { next(err); }
 }
 
@@ -775,7 +791,7 @@ module.exports = {
   getTickets, getTicket, updateTicket, getTicketStats, getRatingsSummary,
   dispatchTicket, resolveTicket, linkTicketToDeal, getTicketComments, addTicketComment,
   getLoans, getLoanById, updateLoanStatus, getLoanBankStats,
-  getUsers, changeUserRole, getUserById, suspendUser,
+  getUsers, changeUserRole, getUserById, getUserInquiries, getUserSubscriptions, suspendUser,
   listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,
   getPartnerById,
   getPropertyById,

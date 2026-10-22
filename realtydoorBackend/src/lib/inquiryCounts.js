@@ -15,4 +15,16 @@ function countInquiriesByUser(users, leads) {
   return counts;
 }
 
-module.exports = { countInquiriesByUser };
+// T42 — the same ownership rule as countInquiriesByUser, for one user: the
+// where-clause that finds the leads the admin user page lists, so the tab and
+// the "Inquiries N" count can never disagree.
+function inquiryWhereForUser(user) {
+  return {
+    OR: [
+      { buyerId: user.id },
+      ...(user.phone ? [{ buyerId: null, buyerPhone: user.phone }] : []),
+    ],
+  };
+}
+
+module.exports = { countInquiriesByUser, inquiryWhereForUser };

@@ -25,6 +25,14 @@ const { perUserLimiter } = require('../../middleware/rateLimiter');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 const { videoTourUploader, buildMulter, IMAGE_FORMATS } = require('../../lib/fileUpload');
 const { auditAction } = require('../../middleware/auditAction');
+
+// T45 — a vendor is never hard-deleted (DELETE only deactivates), so the audit
+// log says what actually happened.
+const vendorPatchAction = (req) => (
+  req.body?.isActive === false ? 'VENDOR_DEACTIVATED'
+    : req.body?.isActive === true ? 'VENDOR_REACTIVATED'
+      : 'VENDOR_UPDATED'
+);
 const ApiError = require('../../utils/ApiError');
 
 // CMS image upload — a bare `multer()` instance (not the buildUploader()
@@ -229,6 +237,8 @@ router.patch('/loan/:id/status',  auditAction('LOAN_STATUS_UPDATED', 'LoanApplic
 // User management & role assignment
 router.get('/users',                   ctrl.getUsers);
 router.get('/users/:id',               ctrl.getUserById);
+router.get('/users/:id/inquiries',     validateObjectId('id'), ctrl.getUserInquiries);
+router.get('/users/:id/subscriptions', validateObjectId('id'), ctrl.getUserSubscriptions);
 router.patch('/users/:id/role',        ctrl.changeUserRole);
 router.patch('/users/:id/suspend',     ctrl.suspendUser);
 // Backend gaps handoff, 2026-10-10 (#3) — a user's own privacy/consent
@@ -298,8 +308,8 @@ router.post('/video-tours/:id/upload', videoTourUploader.single('video'),   ctrl
 router.get('/vendors',         ctrl.listVendors);
 router.post('/vendors',        auditAction('VENDOR_CREATED', 'Vendor', { idParam: 'id' }), ctrl.createVendor);
 router.get('/vendors/:id',     ctrl.getVendor);
-router.patch('/vendors/:id',   auditAction('VENDOR_UPDATED', 'Vendor'), ctrl.updateVendor);
-router.delete('/vendors/:id',  auditAction('VENDOR_DELETED', 'Vendor'), ctrl.deleteVendor);
+router.patch('/vendors/:id',   auditAction(vendorPatchAction, 'Vendor'), ctrl.updateVendor);
+router.delete('/vendors/:id',  auditAction('VENDOR_DEACTIVATED', 'Vendor'), ctrl.deleteVendor);
 // 7.1 — recurring weekly availability.
 router.get('/vendors/:id/availability',             ctrl.listVendorAvailability);
 router.post('/vendors/:id/availability',            ctrl.addVendorAvailability);

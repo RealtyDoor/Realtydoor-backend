@@ -21,9 +21,9 @@ const { cacheDel, cacheDelPattern } = require('../../lib/cache');
 const dataAckService = require('../partners/dataAck.service');
 const { attachLoanDocuments } = require('../../lib/loanEligibility');
 const { canLinkLeadToUser } = require('../../lib/leadClaim');
-const { countInquiriesByUser } = require('../../lib/inquiryCounts');
+const { countInquiriesByUser, inquiryWhereForUser } = require('../../lib/inquiryCounts');
 const { averageResolutionDays } = require('../../lib/ticketStats');
-const { isLoanTransitionAllowed } = require('../../lib/loanTransitions');
+const { isLoanTransitionAllowed, hasVerifiedDocument } = require('../../lib/loanTransitions');
 const { assertLeadNotPaused } = require('../../lib/accountDeletion');
 const partnerService = require('../partners/partners.service');
 const { buildTicketChargeReceiptPdf } = require('../../lib/pdfReceipt');
@@ -812,6 +812,12 @@ async function dispatchTicketAutomatically(ticketId, adminId, ip) {
 
 async function getPendingProperties(filters, skip, limit) {
   const where = { publishStatus: filters.status || 'PENDING_APPROVAL' };
+  // T37 — optional text search so a list capped at 50 per page can still reach
+  // every listing (the microsites page uses it).
+  const q = typeof filters.search === 'string' ? filters.search.trim().slice(0, 100) : '';
+  if (q) {
+    where.OR = ['title', 'locality', 'city'].map((f) => ({ [f]: { contains: q, mode: 'insensitive' } }));
+  }
 
   const [rows, total] = await Promise.all([
     prisma.property.findMany({ where, skip, take: limit, orderBy: { createdAt: 'asc' } }),
@@ -1392,6 +1398,13 @@ async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields 
   if (!loan) throw new ApiError(404, 'Loan application not found');
   if (!isLoanTransitionAllowed(loan.status, status)) {
     throw new ApiError(400, `Cannot move a loan from ${loan.status} to ${status}`, { code: 'INVALID_LOAN_TRANSITION' });
+  }
+
+  if (status === 'DOCUMENTS_VERIFIED') {
+    const { documents } = await attachLoanDocuments(loan);
+    if (!hasVerifiedDocument(documents)) {
+      throw new ApiError(400, 'Cannot mark documents verified: no approved document is attached to this application', { code: 'LOAN_NO_VERIFIED_DOCUMENTS' });
+    }
   }
 
   const statusFields = {};
@@ -2136,7 +2149,7 @@ async function getAdminTicketComments(ticketId) {
   return prisma.ticketComment.findMany({ where: { ticketId }, orderBy: { createdAt: 'asc' } });
 }
 
-async function addAdminTicketComment(ticketId, adminId, { text, photos }) {
+async function addAdminTicketComment(ticketId, adminId, { text, photos }, ip) {
   const ticket = await prisma.serviceTicket.findUnique({ where: { id: ticketId } });
   if (!ticket) throw new ApiError(404, 'Ticket not found');
 
@@ -2150,6 +2163,12 @@ async function addAdminTicketComment(ticketId, adminId, { text, photos }) {
     message: `${text.slice(0, 150)}${text.length > 150 ? '…' : ''}`,
     type: 'TICKET_ADMIN_REPLY',
     linkUrl: `/user/tickets/${ticketId}`,
+  });
+
+  // T46 — the reply is visible to the buyer, so it is on the record too.
+  await createAuditLog({
+    adminId, action: 'TICKET_REPLIED', targetType: 'ServiceTicket', targetId: ticketId,
+    after: { commentId: comment.id, text: text.length > 200 ? `${text.slice(0, 200)}…` : text }, ipAddress: ip,
   });
 
   return comment;
@@ -2486,6 +2505,43 @@ async function getUserByIdAdmin(userId) {
   return { ...user, ...activity.get(userId) };
 }
 
+// T42 — the Inquiries and Subscriptions tabs of the admin user page.
+async function listUserInquiriesAdmin(userId, skip, limit) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, phone: true } });
+  if (!user) throw new ApiError(404, 'User not found');
+  const where = inquiryWhereForUser(user);
+  const [data, total] = await Promise.all([
+    prisma.lead.findMany({
+      where, skip, take: limit, orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, refCode: true, status: true, source: true, buyerMessage: true, createdAt: true,
+        buyerId: true, propertyId: true, propertyInterest: true,
+        property: { select: { id: true, title: true, slug: true, locality: true, city: true } },
+        assignedPartner: { select: { id: true, name: true } },
+      },
+    }),
+    prisma.lead.count({ where }),
+  ]);
+  return { data, total };
+}
+
+async function listUserSubscriptionsAdmin(userId, skip, limit) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+  if (!user) throw new ApiError(404, 'User not found');
+  const where = { userId };
+  const [data, total] = await Promise.all([
+    prisma.userSubscription.findMany({
+      where, skip, take: limit, orderBy: { startDate: 'desc' },
+      select: {
+        id: true, paymentStatus: true, amountPaid: true, currency: true, startDate: true, endDate: true,
+        service: { select: { id: true, name: true } },
+      },
+    }),
+    prisma.userSubscription.count({ where }),
+  ]);
+  return { data, total };
+}
+
 // ─── CONTACT INBOX ────────────────────────────────────────────────────────────
 
 async function listContactMessages(filters, skip, limit) {
@@ -2596,7 +2652,7 @@ module.exports = {
   listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,
   getPartnerMetrics, getPartnerById,
   adminListServices, adminCreateService, adminUpdateService, adminDeleteService,
-  getPropertyByIdAdmin, getKycByUserId, getUserByIdAdmin,
+  getPropertyByIdAdmin, getKycByUserId, getUserByIdAdmin, listUserInquiriesAdmin, listUserSubscriptionsAdmin,
   listContactMessages, markContactRead,
   listNriLeads, markNriLeadRead,
   adminListTeam, adminCreateTeamMember, adminUpdateTeamMember, adminDeleteTeamMember,

@@ -1,4 +1,13 @@
-const { isLoanTransitionAllowed } = require('../../src/lib/loanTransitions');
+const { isLoanTransitionAllowed, hasVerifiedDocument } = require('../../src/lib/loanTransitions');
+
+describe('hasVerifiedDocument (T53)', () => {
+  test('needs at least one APPROVED document', () => {
+    expect(hasVerifiedDocument([])).toBe(false);
+    expect(hasVerifiedDocument(undefined)).toBe(false);
+    expect(hasVerifiedDocument([{ status: 'PENDING_REVIEW' }, { status: 'REJECTED' }])).toBe(false);
+    expect(hasVerifiedDocument([{ status: 'REJECTED' }, { status: 'APPROVED' }])).toBe(true);
+  });
+});
 
 describe('isLoanTransitionAllowed', () => {
   test('allows moving forward, including skipping stages', () => {

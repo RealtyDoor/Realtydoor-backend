@@ -23,4 +23,10 @@ function isLoanTransitionAllowed(from, to) {
   return fromIdx < SANCTIONED_INDEX;
 }
 
-module.exports = { isLoanTransitionAllowed, LOAN_PIPELINE: PIPELINE };
+// T53 — "documents verified" means at least one attached document has been
+// approved; a loan with nothing uploaded cannot pass that stage.
+function hasVerifiedDocument(documents) {
+  return Array.isArray(documents) && documents.some((d) => d && d.status === 'APPROVED');
+}
+
+module.exports = { hasVerifiedDocument, isLoanTransitionAllowed, LOAN_PIPELINE: PIPELINE };
