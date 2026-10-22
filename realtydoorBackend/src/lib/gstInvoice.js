@@ -6,7 +6,9 @@
 // paisa, and the tax is whatever is left, so taxable + tax always equals what the buyer paid. With no buyer address on record
 // the place of supply is the supplier's location, so the tax is split into equal CGST and SGST (the odd paisa goes to SGST).
 function splitGstInclusive(inclusivePaise, gstPct = 18) {
-  const total = Math.max(0, Math.round(inclusivePaise || 0));
+  // Anything that is not a finite number (text, NaN, Infinity, nothing) is treated as zero rather than carried through as NaN.
+  const n = Number(inclusivePaise);
+  const total = Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
   const taxable = Math.round((total * 100) / (100 + gstPct));
   const tax = total - taxable;
   const cgst = Math.floor(tax / 2);

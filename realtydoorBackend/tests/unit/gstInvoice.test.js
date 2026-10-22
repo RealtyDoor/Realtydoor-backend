@@ -35,3 +35,38 @@ describe('formatInvoiceNo', () => {
     expect(formatInvoiceNo('26-27', 123456).length).toBeLessThanOrEqual(16);
   });
 });
+
+describe('splitGstInclusive: odd inputs', () => {
+  test('text numbers, floats and negatives never produce a NaN or a negative tax', () => {
+    expect(splitGstInclusive('120900').totalPaise).toBe(120900);
+    expect(splitGstInclusive(120900.4).totalPaise).toBe(120900);
+    for (const bad of [NaN, -5, null, Infinity, -Infinity, 'abc', {}, []]) {
+      const s = splitGstInclusive(bad);
+      for (const v of Object.values(s)) expect(Number.isFinite(v) && v >= 0).toBe(true);
+    }
+  });
+
+  test('a very large amount keeps taxable + tax equal to the total', () => {
+    const s = splitGstInclusive(99_999_999_999);
+    expect(s.taxablePaise + s.cgstPaise + s.sgstPaise).toBe(99_999_999_999);
+  });
+
+  test('a one-paisa fee has no tax, rather than a negative or fractional one', () => {
+    expect(splitGstInclusive(1)).toEqual({ taxablePaise: 1, cgstPaise: 0, sgstPaise: 0, totalPaise: 1 });
+  });
+});
+
+describe('financialYear and invoice numbers: edges', () => {
+  test('the last second of March and the first of April', () => {
+    expect(financialYear(new Date(2027, 2, 31, 23, 59, 59))).toBe('26-27');
+    expect(financialYear(new Date(2027, 3, 1, 0, 0, 0))).toBe('27-28');
+  });
+  test('a century boundary keeps two digits', () => {
+    expect(financialYear(new Date(2099, 5, 1))).toBe('99-00');
+  });
+  test('the sequence pads to five digits and grows past it without breaking the 16-character limit until 99,999 invoices', () => {
+    expect(formatInvoiceNo('26-27', 99999)).toBe('RD/26-27/99999');
+    expect(formatInvoiceNo('26-27', 99999).length).toBeLessThanOrEqual(16);
+    expect(formatInvoiceNo('26-27', 100000)).toBe('RD/26-27/100000');
+  });
+});

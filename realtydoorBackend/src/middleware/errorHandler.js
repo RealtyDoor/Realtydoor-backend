@@ -56,6 +56,15 @@ function errorHandler(err, req, res, next) {
     });
   }
 
+  // The body parser's own failures are the client's mistake, not a server fault: a body that is not valid JSON (400) or is
+  // bigger than the limit (413). Without this they surfaced as a 500 and filled the error log with stack traces.
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ success: false, message: 'The request body is not valid JSON', data: { code: 'INVALID_JSON' } });
+  }
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({ success: false, message: 'The request body is too large', data: { code: 'BODY_TOO_LARGE' } });
+  }
+
   if (isMalformedObjectIdError(err)) {
     return res.status(400).json({
       success: false,

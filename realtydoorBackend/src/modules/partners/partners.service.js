@@ -789,10 +789,18 @@ async function getSupportTicketById(partnerId, ticketId) {
 
 // B73 — a partner follows up on their own ticket. An answered or resolved ticket goes back to OPEN so the admin sees it;
 // a CLOSED ticket stays closed (raise a new one).
+const MAX_PARTNER_REPLIES_PER_TICKET = 100;
+
 async function replyToSupportTicket(partnerId, ticketId, message) {
   const ticket = await prisma.partnerSupportTicket.findFirst({ where: { id: ticketId, partnerId } });
   if (!ticket) throw new ApiError(404, 'Support ticket not found');
   if (ticket.status === 'CLOSED') throw new ApiError(409, 'This ticket is closed. Raise a new ticket instead.', { code: 'TICKET_CLOSED' });
+
+  // A real conversation is a few messages. A cap keeps one ticket from being used to flood the admins' inbox and the database.
+  const sent = await prisma.partnerSupportTicketMessage.count({ where: { ticketId, authorType: 'PARTNER' } });
+  if (sent >= MAX_PARTNER_REPLIES_PER_TICKET) {
+    throw new ApiError(429, 'This ticket already has many messages. Please wait for the support team to reply, or raise a new ticket.', { code: 'TICKET_REPLY_LIMIT' });
+  }
 
   const saved = await prisma.partnerSupportTicketMessage.create({
     data: { ticketId, authorType: 'PARTNER', authorId: partnerId, body: message },

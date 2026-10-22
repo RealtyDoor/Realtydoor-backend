@@ -4584,7 +4584,7 @@ Partner or admin (JWT). The Locality dropdown on the listing form: every curated
 
 Partner or admin (JWT). Adds a locality that is not in the list. It is usable at once, and the admins get a `LOCALITY_NEW` notification linking to `/admin/cms/locality-insights/new?city=&locality=`.
 
-**Body:** `{ "city": "Bangalore", "locality": "Kogilu Cross" }` (2 to 80 characters each).
+**Body:** `{ "city": "Bangalore", "locality": "Kogilu Cross" }` (2 to 80 characters each; letters in any script, digits, spaces and `. , ' & ( ) / -` only). At most 10 new localities per account per day (`429 LOCALITY_DAILY_LIMIT`) and 20 requests per hour. `GET /options` needs a valid `city` (400 otherwise).
 
 **Response:** `201 { city, locality, created: true }` for a new name. `200 { city, locality, created: false }` when the name already exists in either list in any letter case (the stored spelling is returned and no second alert is sent). When an admin later saves the full locality in the CMS, the suggestion is marked `RESOLVED`.
 
@@ -10379,3 +10379,19 @@ Delete a platform config key permanently.
 
 ### Notification Type (examples)
 `LEAD_NEW` · `LEAD_ASSIGNED` · `PROPERTY_APPROVED` · `PROPERTY_REJECTED` · `PROPERTY_EDITED_BY_ADMIN` · `KYC_PENDING` · `KYC_UPDATE` · `DEAL_CLOSED` · `ESCROW_REFUNDED` · `SERVICE_ACTIVATED` · `LOAN_STATUS_UPDATE` · `ANNOUNCEMENT`
+
+## Security-related responses (22 Oct 2026)
+
+| Status | `data.code` | When |
+|---|---|---|
+| 400 | `INVALID_JSON` | The request body is not valid JSON. |
+| 413 | `BODY_TOO_LARGE` | A JSON body over 2 MB (`JSON_BODY_LIMIT` changes it). File uploads use multipart and have their own limits. |
+| 400 | `FILE_CONTENT_MISMATCH` | An uploaded image or PDF does not start with the bytes its extension says (for example a web page named `photo.png`). |
+| 429 | `TICKET_REPLY_LIMIT` | A partner has sent 100 messages on one support ticket. |
+| 429 | `LOCALITY_DAILY_LIMIT` | An account has added 10 new localities today. |
+| 400 | `TDS_EXCEEDS_INVOICE` / `TDS_INVALID` | The TDS deducted when collecting a seller fee is negative or more than the invoice total. |
+| 429 | `RATE_LIMITED` | Receipt and tax-invoice downloads: 30 per 15 minutes per account. |
+
+`POST /escrow/verify-payment` and the service-subscription verify call now validate all three Razorpay fields as short text (400 `VALIDATION_ERROR` otherwise). `GET /escrow/quote` refuses amounts above Rs. 100 crore.
+
+`POST /leads/partner` no longer returns another partner's id, lead id or lead status: `ownership` is `{ credited, reason }` only, `relatedLead` appears only for the partner's own earlier lead, and a `DUPLICATE_LEAD` 409 carries `lead` only when that lead is the partner's own.

@@ -1,6 +1,6 @@
 jest.mock('../../src/lib/prisma', () => ({
   partnerSupportTicket: { findFirst: jest.fn(), update: jest.fn() },
-  partnerSupportTicketMessage: { create: jest.fn() },
+  partnerSupportTicketMessage: { create: jest.fn(), count: jest.fn() },
 }));
 jest.mock('../../src/lib/notifications', () => ({ createNotification: jest.fn(), notifyAdmins: jest.fn().mockResolvedValue({}), broadcastNotification: jest.fn() }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn() }));
@@ -10,7 +10,7 @@ const { notifyAdmins } = require('../../src/lib/notifications');
 const service = require('../../src/modules/partners/partners.service');
 const { supportTicketReplySchema } = require('../../src/modules/partners/partners.validator');
 
-beforeEach(() => { jest.clearAllMocks(); prisma.partnerSupportTicketMessage.create.mockResolvedValue({ id: 'm1' }); });
+beforeEach(() => { jest.clearAllMocks(); prisma.partnerSupportTicketMessage.create.mockResolvedValue({ id: 'm1' }); prisma.partnerSupportTicketMessage.count.mockResolvedValue(0); });
 
 describe('partner follow-up on a support ticket (B73)', () => {
   test('is saved on the conversation and tells the admins', async () => {
@@ -38,3 +38,19 @@ describe('partner follow-up on a support ticket (B73)', () => {
     expect(supportTicketReplySchema.safeParse({ message: 'Still broken' }).success).toBe(true);
   });
 });
+
+describe('a ticket cannot be used to flood the inbox', () => {
+  test('after 100 partner messages on one ticket the next is refused with a clear code, and nothing is saved or sent', async () => {
+    prisma.partnerSupportTicket.findFirst.mockResolvedValue({ id: 't1', ticketNo: 'SUP-0001', status: 'OPEN' });
+    prisma.partnerSupportTicketMessage.count.mockResolvedValue(100);
+    await expect(service.replyToSupportTicket('p1', 't1', 'again')).rejects.toMatchObject({ statusCode: 429, data: { code: 'TICKET_REPLY_LIMIT' } });
+    expect(prisma.partnerSupportTicketMessage.create).not.toHaveBeenCalled();
+    expect(notifyAdmins).not.toHaveBeenCalled();
+  });
+  test('the 100th message is still allowed', async () => {
+    prisma.partnerSupportTicket.findFirst.mockResolvedValue({ id: 't1', ticketNo: 'SUP-0001', status: 'OPEN' });
+    prisma.partnerSupportTicketMessage.count.mockResolvedValue(99);
+    await expect(service.replyToSupportTicket('p1', 't1', 'last one')).resolves.toBeDefined();
+  });
+});
+

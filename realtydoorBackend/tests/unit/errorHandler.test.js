@@ -26,3 +26,23 @@ describe('malformed ObjectId handling (B128)', () => {
     expect(res.status).toHaveBeenCalledWith(500);
   });
 });
+
+describe('body parser failures are the client\'s mistake', () => {
+  test('a body that is not valid JSON is a 400 INVALID_JSON, not a 500', () => {
+    const res = run(Object.assign(new SyntaxError('Unexpected token'), { type: 'entity.parse.failed', status: 400 }));
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json.mock.calls[0][0].data.code).toBe('INVALID_JSON');
+  });
+
+  test('a body over the size limit is a 413 BODY_TOO_LARGE', () => {
+    const res = run(Object.assign(new Error('request entity too large'), { type: 'entity.too.large', status: 413 }));
+    expect(res.status).toHaveBeenCalledWith(413);
+    expect(res.json.mock.calls[0][0].data.code).toBe('BODY_TOO_LARGE');
+  });
+
+  test('neither leaks internals', () => {
+    const res = run(Object.assign(new SyntaxError('Unexpected token < in JSON at position 0'), { type: 'entity.parse.failed' }));
+    expect(JSON.stringify(res.json.mock.calls[0][0])).not.toMatch(/position|stack|Unexpected/);
+  });
+});
+

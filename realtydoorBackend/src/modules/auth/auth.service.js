@@ -1,6 +1,7 @@
 const { createClerkClient } = require('@clerk/clerk-sdk-node');
 const crypto = require('crypto');
 const prisma = require('../../lib/prisma');
+const { SUSPENDED_MESSAGE } = require('../../lib/supportContact');
 const ApiError = require('../../utils/ApiError');
 const logger = require('../../lib/logger');
 const otpAuth = require('../../lib/otpAuth');
@@ -199,7 +200,7 @@ async function loginVerify({ phone, code }) {
   if (!user) throw new ApiError(400, 'Invalid or expired code.', { code: 'OTP_INVALID' });
 
   if (user.isSuspended) {
-    throw new ApiError(403, 'Your account has been suspended. Contact support@realtydoor.in');
+    throw new ApiError(403, SUSPENDED_MESSAGE);
   }
   // USER and PARTNER both sign in through this phone flow — a USER who later
   // upgrades to PARTNER (POST /auth/set-role, or direct partner signup below)
@@ -301,7 +302,7 @@ async function syncUserByClerkId(clerkId, clerkUser) {
   }
 
   if (existing?.isSuspended) {
-    throw new ApiError(403, 'Your account has been suspended. Contact support@realtydoor.in');
+    throw new ApiError(403, SUSPENDED_MESSAGE);
   }
 
   // DB is the sole authority on role once a row exists — Clerk's

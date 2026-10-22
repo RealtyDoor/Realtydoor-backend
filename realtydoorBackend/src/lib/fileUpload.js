@@ -46,8 +46,27 @@ const CONTENT_TYPE_BY_EXT = {
   '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.avi': 'video/x-msvideo',
 };
 
+// The extension is chosen by the sender, so a script or web page can be sent as "photo.png". Images and PDFs must start with the
+// bytes that format starts with. (Videos are left to the allow-listed extension and the forced content type below.)
+const SIGNATURES = {
+  '.jpg': (b) => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  '.jpeg': (b) => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  '.png': (b) => b.length > 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  '.webp': (b) => b.length > 12 && b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP',
+  '.pdf': (b) => b.subarray(0, 1024).includes('%PDF-', 0, 'latin1'),
+};
+
+function assertFileMatchesExtension(buffer, ext) {
+  const check = SIGNATURES[ext];
+  if (!check) return;
+  if (!Buffer.isBuffer(buffer) || !check(buffer)) {
+    throw new ApiError(400, `This file is not a valid ${ext.slice(1).toUpperCase()}. Upload the original file.`, { code: 'FILE_CONTENT_MISMATCH' });
+  }
+}
+
 async function s3Upload(buffer, folder, originalname, mimetype) {
   const ext = path.extname(originalname).toLowerCase();
+  assertFileMatchesExtension(buffer, ext);
   const key = `${folder}/${randomUUID()}${ext}`;
 
   await s3.send(new PutObjectCommand({
@@ -156,6 +175,7 @@ module.exports = {
   taxInvoiceUploader,
   deleteFile,
   s3Upload,
+  assertFileMatchesExtension,
   buildMulter,
   IMAGE_FORMATS,
 };

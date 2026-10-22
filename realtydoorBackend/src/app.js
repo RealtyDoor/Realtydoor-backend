@@ -58,7 +58,9 @@ const webhookRoutes = require('./modules/webhooks/webhooks.routes');
 app.use('/api/webhooks', webhookRoutes);
 
 // ── Body parsers (all other routes) ───────────────────────────────────────────
-app.use(express.json({ limit: '10mb' }));
+// JSON bodies are small (files go through multipart upload). A big JSON body is a mistake or an attack, so cap it; JSON_BODY_LIMIT
+// raises it if a feature ever needs more.
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // ── Centralised request/response logger ───────────────────────────────────────

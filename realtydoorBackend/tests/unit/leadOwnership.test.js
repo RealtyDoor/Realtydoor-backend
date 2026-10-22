@@ -53,3 +53,53 @@ describe('decideBuyerOwnership', () => {
     expect(run({ priorLeads: [partnerLead('B', 30), partnerLead('A', 10)] })).toMatchObject({ credited: false, reason: 'OTHER_PARTNER', holderPartnerId: 'B' });
   });
 });
+
+describe('decideBuyerOwnership: boundaries and odd data', () => {
+  const MS = 86_400_000;
+  const asOfFixed = new Date('2026-10-22T00:00:00Z');
+  const at = (msAgo) => new Date(asOfFixed.getTime() - msAgo);
+  const decide = (o) => decideBuyerOwnership({ partnerId: 'A', windowDays: 60, asOf: asOfFixed, ...o });
+
+  test('exactly 60 days since the last activity is still valid; one millisecond more is free', () => {
+    expect(decide({ priorLeads: [{ addedByPartnerId: 'B', createdAt: at(60 * MS) }] }).reason).toBe('OTHER_PARTNER');
+    expect(decide({ priorLeads: [{ addedByPartnerId: 'B', createdAt: at(60 * MS + 1) }] }).reason).toBe('NEW_BUYER');
+  });
+
+  test('a window of 0 days frees every old registration, and a longer window holds longer', () => {
+    expect(decide({ windowDays: 0, priorLeads: [{ addedByPartnerId: 'B', createdAt: at(MS) }] }).reason).toBe('NEW_BUYER');
+    expect(decide({ windowDays: 365, priorLeads: [{ addedByPartnerId: 'B', createdAt: at(300 * MS) }] }).reason).toBe('OTHER_PARTNER');
+  });
+
+  test('activity dated after the moment being judged (clock skew) counts as recent, not as an error', () => {
+    const r = decide({ priorLeads: [{ addedByPartnerId: 'B', createdAt: at(90 * MS), closedAt: new Date(asOfFixed.getTime() + MS) }] });
+    expect(r.reason).toBe('OTHER_PARTNER');
+  });
+
+  test('the same partner id as a string and as an object-like id compares equal', () => {
+    const idLike = { toString: () => 'A' };
+    expect(decide({ priorLeads: [{ addedByPartnerId: idLike, createdAt: at(MS) }] })).toMatchObject({ credited: true, reason: 'OWN_REGISTRATION' });
+  });
+
+  test('a platform lead and an account that both pre-date the registration still make the buyer ours', () => {
+    const r = decide({
+      priorLeads: [{ addedByPartnerId: null, createdAt: at(200 * MS) }, { addedByPartnerId: 'B', createdAt: at(10 * MS) }],
+      accountCreatedAt: at(300 * MS),
+    });
+    expect(r).toMatchObject({ credited: false, reason: 'EXISTING_BUYER' });
+  });
+
+  test('an old, expired partner registration plus a newer platform enquiry: the buyer is ours', () => {
+    const r = decide({ priorLeads: [{ addedByPartnerId: 'B', createdAt: at(200 * MS) }, { addedByPartnerId: null, createdAt: at(5 * MS) }] });
+    expect(r).toMatchObject({ credited: false, reason: 'EXISTING_BUYER' });
+  });
+
+  test('many prior leads in any order give the same answer', () => {
+    const leads = [
+      { addedByPartnerId: 'B', createdAt: at(20 * MS) }, { addedByPartnerId: 'C', createdAt: at(40 * MS) }, { addedByPartnerId: 'A', createdAt: at(10 * MS) },
+    ];
+    const forward = decide({ priorLeads: leads });
+    const reversed = decide({ priorLeads: [...leads].reverse() });
+    expect(forward).toEqual(reversed);
+    expect(forward).toMatchObject({ credited: false, reason: 'OTHER_PARTNER', holderPartnerId: 'C' }); // C registered first and is still valid
+  });
+});

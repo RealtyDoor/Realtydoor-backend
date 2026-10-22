@@ -1,5 +1,6 @@
 const { createClerkClient } = require('@clerk/clerk-sdk-node');
 const prisma = require('../lib/prisma');
+const { SUSPENDED_MESSAGE } = require('../lib/supportContact');
 const ApiError = require('../utils/ApiError');
 const { computeOnboardingComplete } = require('../lib/onboarding');
 const authService = require('../modules/auth/auth.service');
@@ -34,7 +35,7 @@ function assertAccountUsable(dbUser, req) {
   // (properties, leads, tickets they owned) stay valid — it must never be
   // usable to authenticate again, same as if the row were actually gone.
   if (dbUser.deletedAt) throw new ApiError(401, 'Invalid token');
-  if (dbUser.isSuspended) throw new ApiError(403, 'Your account has been suspended. Contact support@realtydoor.in');
+  if (dbUser.isSuspended) throw new ApiError(403, SUSPENDED_MESSAGE);
 
   if (dbUser.deletionRequestedAt && dbUser.deletionScheduledAt && !isDeletionPendingAllowed(req)) {
     throw new ApiError(403, 'Your account is scheduled for deletion. Cancel the request to continue using RealtyDoor.', {
