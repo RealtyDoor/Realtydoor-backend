@@ -51,3 +51,33 @@ describe('report-only finders', () => {
     expect(c.findPlaceholderDescriptions(props).map((p) => p.id)).toEqual(['3']);
   });
 });
+
+describe('old test listings (archive, never delete)', () => {
+  const props = [
+    { id: '1', title: 'MOCK QA — Change Request Pending', partnerId: 'p1', publishStatus: 'APPROVED', listingType: 'SALE' },
+    { id: '2', title: 'CS Reddy Vilas', partnerId: 'gone', publishStatus: 'APPROVED', listingType: 'SALE' },
+    { id: '3', title: 'Maruthi Nilya', partnerId: 'p1', publishStatus: 'APPROVED', listingType: 'RENT', monthlyRent: 12339900 },
+    { id: '4', title: 'Prestige Lakeside', partnerId: 'p1', publishStatus: 'APPROVED', listingType: 'SALE' },
+    { id: '5', title: 'E2E QA 2BHK Apartment', partnerId: 'p1', publishStatus: 'ARCHIVED', listingType: 'SALE' },
+    { id: '6', title: 'Aqua Heights', partnerId: 'p1', publishStatus: 'APPROVED', listingType: 'SALE', description: `x ${c.PLACEHOLDER_TEXT}` },
+  ];
+  test('names QA fixtures, but not ordinary names that contain "qa" letters', () => {
+    expect(c.isTestListing({ title: 'E2E QA 2BHK Apartment' })).toBe(true);
+    expect(c.isTestListing({ title: 'Mock QA Owner' })).toBe(true);
+    expect(c.isTestListing({ title: 'Aqua Heights' })).toBe(false);
+    expect(c.isTestListing({ title: 'Qatar Road Residency' })).toBe(false);
+  });
+  test('archives test-named, orphaned, bad-rent and hint-text listings, once, with the reasons', () => {
+    const r = c.planArchiveListings(props, ['p1']);
+    expect(r.map((x) => x.id)).toEqual(['1', '2', '3', '6']); // not 4 (clean), not 5 (already archived)
+    expect(r.find((x) => x.id === '3').reasons).toEqual(['rent looks like a sale price']);
+    expect(r.find((x) => x.id === '1').reasons).toEqual(['test name']);
+  });
+  test('closes open leads on archived listings, but never one with a token held', () => {
+    const leads = [
+      { id: 'a', propertyId: '1', status: 'ASSIGNED' }, { id: 'b', propertyId: '1', status: 'SITE_VISIT_DONE' },
+      { id: 'c', propertyId: '1', status: 'DROPPED' }, { id: 'd', propertyId: '4', status: 'ASSIGNED' },
+    ];
+    expect(c.planLeadsOnArchived(leads, ['1'], ['b'])).toEqual({ toDrop: ['a'], skippedHeld: ['b'] });
+  });
+});

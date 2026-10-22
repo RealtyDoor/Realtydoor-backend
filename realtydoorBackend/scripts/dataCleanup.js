@@ -4,6 +4,7 @@
  *   node scripts/dataCleanup.js                  # report only, changes nothing
  *   node scripts/dataCleanup.js --apply          # deactivates QA services (T41) and CLOSES the known junk tickets (T19, B46)
  *   node scripts/dataCleanup.js --apply --fix-types   # also fixes property types saved as PLOT whose title says flat / villa / house (B51)
+ *   node scripts/dataCleanup.js --apply --archive-old  # ARCHIVES old test listings (QA-named, orphaned partner, rent typed as a price, hint-text description) and closes the open leads on them (B35, T4, T5, T8, B27b). Hidden from the site, reversible.
  *
  * Never deletes anything. B35 (orphaned partner), T4 (rent typed as a sale price) and T5 (placeholder description) are only
  * REPORTED: they need a person to decide what is right. Run it against the database you mean to clean.
@@ -14,18 +15,21 @@ const plan = require('../src/lib/dataCleanup');
 
 const APPLY = process.argv.includes('--apply');
 const FIX_TYPES = process.argv.includes('--fix-types');
+const ARCHIVE_OLD = process.argv.includes('--archive-old');
 const prisma = new PrismaClient();
 const tag = (change) => (APPLY && change ? '' : ' (dry run)');
 
 async function main() {
   console.log(`Data clean-up: ${APPLY ? 'APPLY' : 'report only'}${FIX_TYPES ? ' + property types' : ''}\n`);
 
-  const [properties, services, partnerTickets, userTickets, partners] = await Promise.all([
+  const [properties, services, partnerTickets, userTickets, partners, leads, heldEscrows] = await Promise.all([
     prisma.property.findMany({ select: { id: true, title: true, propertyType: true, listingType: true, monthlyRent: true, description: true, partnerId: true, publishStatus: true } }),
     prisma.service.findMany({ select: { id: true, name: true, price: true, isActive: true } }),
     prisma.partnerSupportTicket.findMany({ select: { id: true, ticketNo: true, subject: true, status: true } }),
     prisma.serviceTicket.findMany({ select: { id: true, subject: true, status: true } }),
     prisma.user.findMany({ select: { id: true } }),
+    prisma.lead.findMany({ select: { id: true, propertyId: true, status: true } }),
+    prisma.escrowTransaction.findMany({ where: { status: { in: ['HELD', 'HELD_PAYOUT_FAILED', 'PAYMENT_PENDING'] } }, select: { leadId: true } }),
   ]);
 
   const qa = plan.planQaServices(services);
@@ -64,6 +68,16 @@ async function main() {
   const placeholders = plan.findPlaceholderDescriptions(properties);
   console.log(`\nT5   listings whose description is the form's hint text: ${placeholders.length}`);
   for (const p of placeholders) console.log(`  ${p.id} "${p.title}"`);
+
+  const toArchive = plan.planArchiveListings(properties, partners.map((p) => p.id));
+  console.log(`\nOLD TEST LISTINGS to archive (hidden from the site, reversible)${ARCHIVE_OLD ? '' : '  (add --archive-old)'}: ${toArchive.length}`);
+  for (const a of toArchive) console.log(`  ${a.id} "${a.title}" [${a.publishStatus}]: ${a.reasons.join(', ')}`);
+  const { toDrop, skippedHeld } = plan.planLeadsOnArchived(leads, toArchive.map((a) => a.id), heldEscrows.map((e) => e.leadId));
+  console.log(`  open leads on them to close: ${toDrop.length}; left alone because a token is held or being paid: ${skippedHeld.length}`);
+  if (APPLY && ARCHIVE_OLD) {
+    for (const a of toArchive) await prisma.property.update({ where: { id: a.id }, data: { publishStatus: 'ARCHIVED', isSearchable: false } });
+    for (const id of toDrop) await prisma.lead.update({ where: { id }, data: { status: 'DROPPED', droppedAt: new Date(), droppedReason: 'Old test data cleanup' } });
+  }
 
   console.log(`\nNothing was deleted.${APPLY ? '' : ' Nothing was changed (report only).'}`);
 }

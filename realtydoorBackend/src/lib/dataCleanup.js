@@ -48,7 +48,38 @@ const findPlaceholderDescriptions = (properties) => properties
   .filter((p) => String(p.description || '').includes(PLACEHOLDER_TEXT))
   .map((p) => ({ id: p.id, title: p.title }));
 
+// Listings that are old test data, whatever else is wrong with them: named like a QA fixture, or one of the three report-only
+// problems above. They are ARCHIVED (hidden from the site, reversible), never deleted.
+const TEST_TITLE = /^\s*(mock qa|e2e qa|qa\b)|\b(mock qa|e2e qa|qa test)\b/i;
+const isTestListing = (p) => TEST_TITLE.test(String(p.title || ''));
+
+function planArchiveListings(properties, partnerIds) {
+  const orphan = new Set(findOrphanedProperties(properties, partnerIds).map((p) => p.id));
+  const rent = new Set(findSuspiciousRents(properties).map((p) => p.id));
+  const placeholder = new Set(findPlaceholderDescriptions(properties).map((p) => p.id));
+  return properties
+    .map((p) => ({
+      id: p.id, title: p.title, publishStatus: p.publishStatus,
+      reasons: [
+        isTestListing(p) && 'test name',
+        orphan.has(p.id) && 'partner no longer exists',
+        rent.has(p.id) && 'rent looks like a sale price',
+        placeholder.has(p.id) && 'description is the form hint',
+      ].filter(Boolean),
+    }))
+    .filter((x) => x.reasons.length && x.publishStatus !== 'ARCHIVED');
+}
+
+// Open leads on a listing that is being archived are closed with a note, unless real money is held on them.
+function planLeadsOnArchived(leads, archivedIds, heldLeadIds) {
+  const archived = new Set(archivedIds);
+  const held = new Set(heldLeadIds);
+  const onArchived = leads.filter((l) => archived.has(l.propertyId) && !['DROPPED', 'CLOSED'].includes(l.status));
+  return { toDrop: onArchived.filter((l) => !held.has(l.id)).map((l) => l.id), skippedHeld: onArchived.filter((l) => held.has(l.id)).map((l) => l.id) };
+}
+
 module.exports = {
+  isTestListing, planArchiveListings, planLeadsOnArchived,
   PLACEHOLDER_TEXT, JUNK_PARTNER_TICKETS, JUNK_USER_TICKET_SUBJECTS,
   guessPropertyType, planPropertyTypeFixes, isQaService, planQaServices, planJunkTickets,
   findOrphanedProperties, findSuspiciousRents, findPlaceholderDescriptions,
