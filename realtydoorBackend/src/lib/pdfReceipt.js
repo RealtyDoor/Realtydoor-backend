@@ -171,7 +171,91 @@ function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, proc
     doc.moveTo(left, footerY).lineTo(right, footerY).lineWidth(0.5).strokeColor(RULE).stroke();
     doc.font('Helvetica').fontSize(8).fillColor(MUTED)
       .text(`${legalName}${company.gstin ? `  |  GSTIN ${company.gstin}` : ''}`, left, footerY + 10, { width, align: 'center' })
-      .text('This is a payment receipt, not a GST tax invoice.', left, footerY + 24, { width, align: 'center' });
+      .text(company.gstin ? 'This is a payment receipt. The GST tax invoice for the processing fee is a separate document.' : 'This is a payment receipt, not a GST tax invoice.', left, footerY + 24, { width, align: 'center' });
+
+    doc.end();
+  });
+}
+
+// GST tax invoice for the buyer's processing fee (T62). Lines come from lib/gstInvoice.js's splitGstInclusive (all paise).
+// `rows` is pure data so a test can check the numbers without parsing a PDF.
+function feeTaxInvoiceRows({ split, gstPct, sacCode }) {
+  const rs = (paise) => rsPaise(paise, 2);
+  return [
+    { label: `Payment processing fee${sacCode ? ` (SAC ${sacCode})` : ''}, taxable value`, value: rs(split.taxablePaise) },
+    { label: `CGST @ ${gstPct / 2}%`, value: rs(split.cgstPaise) },
+    { label: `SGST @ ${gstPct / 2}%`, value: rs(split.sgstPaise) },
+    { label: 'Invoice total', value: rs(split.totalPaise), strong: true },
+  ];
+}
+
+function buildFeeTaxInvoicePdf({ company = {}, invoiceNo, invoiceDate, buyerName, refCode, razorpayPaymentId, split, gstPct = 18, sacCode }) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const left = 50;
+    const right = doc.page.width - 50;
+    const width = right - left;
+    const INK = '#111111'; const BODY = '#333333'; const MUTED = '#777777'; const RULE = '#DDDDDD'; const BRAND = '#2C2FEE';
+    const legalName = company.legalName || 'RealtyDoor';
+
+    doc.fontSize(20).fillColor(INK).font('Helvetica-Bold').text(legalName, left, 50, { width: width * 0.6 });
+    doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('TAX INVOICE', left, 56, { width, align: 'right' });
+    doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
+
+    const meta = [
+      ['Invoice no.', invoiceNo],
+      ['Invoice date', new Date(invoiceDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })],
+      ['Supplier', legalName],
+      ['Supplier GSTIN', company.gstin || 'N/A'],
+      ...(company.address ? [['Supplier address', company.address]] : []),
+      ['Billed to', buyerName || 'N/A'],
+      ['Deal reference', refCode || 'N/A'],
+      ['Payment reference', razorpayPaymentId || 'N/A'],
+      ['Place of supply', "Supplier's location (buyer address not recorded)"],
+    ];
+    let y = 108;
+    doc.font('Helvetica').fontSize(10);
+    for (const [label, value] of meta) {
+      doc.fillColor(MUTED).text(label, left, y, { width: 120 });
+      doc.fillColor(INK).text(value, left + 130, y, { width: width - 130 });
+      y += Math.max(18, doc.heightOfString(String(value), { width: width - 130 }) + 4);
+    }
+
+    y += 14;
+    doc.moveTo(left, y).lineTo(right, y).lineWidth(0.5).strokeColor(RULE).stroke();
+    for (const line of feeTaxInvoiceRows({ split, gstPct, sacCode })) {
+      if (line.strong) {
+        doc.moveTo(left, y).lineTo(right, y).lineWidth(1).strokeColor(INK).stroke();
+        doc.rect(left, y, width, 30).fill('#F3F4F8');
+        doc.fillColor(INK).font('Helvetica-Bold').fontSize(12)
+          .text(line.label, left + 10, y + 9, { width: width - 130 })
+          .text(line.value, left, y + 9, { width: width - 10, align: 'right' });
+        y += 30;
+      } else {
+        doc.fillColor(BODY).font('Helvetica').fontSize(11)
+          .text(line.label, left + 10, y + 9, { width: width - 130 })
+          .text(line.value, left, y + 9, { width: width - 10, align: 'right' });
+        y += 30;
+        doc.moveTo(left, y).lineTo(right, y).lineWidth(0.5).strokeColor(RULE).stroke();
+      }
+    }
+
+    y += 22;
+    doc.font('Helvetica').fontSize(9).fillColor(BODY).text(
+      'This invoice is for the payment processing fee only. The token advance is held in escrow for the seller and is covered by the token advance receipt.',
+      left, y, { width },
+    );
+
+    const footerY = doc.page.height - 90;
+    doc.moveTo(left, footerY).lineTo(right, footerY).lineWidth(0.5).strokeColor(RULE).stroke();
+    doc.font('Helvetica').fontSize(8).fillColor(MUTED)
+      .text(`${legalName}${company.gstin ? `  |  GSTIN ${company.gstin}` : ''}`, left, footerY + 10, { width, align: 'center' })
+      .text('This is a computer-generated invoice and needs no signature.', left, footerY + 24, { width, align: 'center' });
 
     doc.end();
   });
@@ -210,4 +294,4 @@ function buildPartnerStatementPdf(st) {
   });
 }
 
-module.exports = { escrowReceiptLines, buildPartnerStatementPdf, buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf };
+module.exports = { feeTaxInvoiceRows, buildFeeTaxInvoicePdf, escrowReceiptLines, buildPartnerStatementPdf, buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf };

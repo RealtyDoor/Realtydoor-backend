@@ -3931,6 +3931,12 @@ ever configured non-zero.
 
 ---
 
+### GET /api/escrow/:id/fee-invoice
+
+Buyer (JWT), for their own escrow only. The GST **tax invoice for the processing fee** as a PDF (the token itself is not on it; it has its own receipt). The invoice takes the next number in the financial-year series (`RD/26-27/00001`) the first time it is asked for and keeps it, so repeat downloads show the same number. The fee is shown as taxable value plus CGST and SGST (the place of supply is the supplier's location while the buyer's address is not recorded).
+
+**Errors:** `400` payment not captured yet; `400` `NO_PROCESSING_FEE` when no fee was charged; `409` `FEE_INVOICE_UNAVAILABLE` until the setting `company_gstin` is filled in; `404` for someone else's escrow. Settings used: `company_gstin`, `company_legal_name`, `company_address`, `processing_fee_sac_code` (printed only when set) and `processing_fee_gst_pct`.
+
 ### GET /api/escrow/:id/receipt
 
 **Added 2026-10-08** — the buyer's token-advance payment receipt. Previously there was no backend endpoint at all; the frontend's "receipt" was a browser print of the on-screen summary.

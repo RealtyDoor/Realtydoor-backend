@@ -7,7 +7,8 @@ const { notifyUser } = require('../../lib/wati');
 const { sendEscrowRefunded, sendEscrowHeld } = require('../../lib/email');
 const { getConfigNumber } = require('../config/config.service');
 const { isEscrowLeadUniqueViolation } = require('../../lib/escrowUtils');
-const { buildEscrowReceiptPdf } = require('../../lib/pdfReceipt');
+const { buildEscrowReceiptPdf, buildFeeTaxInvoicePdf } = require('../../lib/pdfReceipt');
+const { splitGstInclusive, financialYear, formatInvoiceNo } = require('../../lib/gstInvoice');
 const logger = require('../../lib/logger');
 const money = require('../../lib/moneyModel');
 const { getMoneySettings } = require('../money/moneyConfig');
@@ -79,6 +80,63 @@ async function getReceipt(escrowId, buyerId) {
     chargedPaise: escrow.chargedPaise,
     razorpayPaymentId: escrow.razorpayPaymentId,
     paidAt: escrow.heldAt,
+  });
+}
+
+// T62 — the GST tax invoice for the processing fee. The token is not our supply, so it is not on this invoice; only the fee is.
+// It takes the next number in its financial-year series the first time it is asked for and keeps it (so the number never
+// changes and is never reused), and it needs the company GSTIN to be set: without one there is no tax invoice to issue.
+async function getFeeInvoice(escrowId, buyerId) {
+  const escrow = await prisma.escrowTransaction.findFirst({
+    where: { id: escrowId, buyerId },
+    include: { lead: { select: { refCode: true, buyerName: true } } },
+  });
+  if (!escrow) throw new ApiError(404, 'Escrow not found');
+  if (!['HELD', 'HELD_PAYOUT_FAILED', 'RELEASED', 'REFUNDED', 'FROZEN'].includes(escrow.status)) {
+    throw new ApiError(400, 'No invoice yet: payment has not been captured for this escrow');
+  }
+  const feePaise = escrow.processingFeePaise > 0 ? escrow.processingFeePaise : 0;
+  if (!feePaise) throw new ApiError(400, 'No processing fee was charged on this payment', { code: 'NO_PROCESSING_FEE' });
+
+  const settings = await getMoneySettings();
+  if (!settings.company.gstin) {
+    throw new ApiError(409, 'The tax invoice for the processing fee is not available yet', { code: 'FEE_INVOICE_UNAVAILABLE' });
+  }
+
+  let { feeInvoiceNo, feeInvoiceAt } = escrow;
+  if (!feeInvoiceNo) {
+    const at = new Date();
+    const fy = financialYear(at);
+    const counter = await prisma.counter.upsert({
+      where: { id: `feeInvoice-${fy}` },
+      update: { seq: { increment: 1 } },
+      create: { id: `feeInvoice-${fy}`, seq: 1 },
+    });
+    const no = formatInvoiceNo(fy, counter.seq);
+    // Only the request that finds the field still empty keeps its number; a second one at the same moment re-reads the winner's.
+    const won = await prisma.escrowTransaction.updateMany({
+      where: { id: escrowId, OR: [{ feeInvoiceNo: null }, { feeInvoiceNo: { isSet: false } }] },
+      data: { feeInvoiceNo: no, feeInvoiceAt: at },
+    });
+    if (won.count === 1) {
+      feeInvoiceNo = no; feeInvoiceAt = at;
+    } else {
+      const again = await prisma.escrowTransaction.findUnique({ where: { id: escrowId }, select: { feeInvoiceNo: true, feeInvoiceAt: true } });
+      feeInvoiceNo = again.feeInvoiceNo; feeInvoiceAt = again.feeInvoiceAt;
+    }
+  }
+
+  const gstPct = settings.processingFee.feeGstPct;
+  return buildFeeTaxInvoicePdf({
+    company: settings.company,
+    invoiceNo: feeInvoiceNo,
+    invoiceDate: feeInvoiceAt,
+    buyerName: escrow.lead?.buyerName,
+    refCode: escrow.lead?.refCode,
+    razorpayPaymentId: escrow.razorpayPaymentId,
+    split: splitGstInclusive(feePaise, gstPct),
+    gstPct,
+    sacCode: settings.processingFee.sacCode,
   });
 }
 
@@ -1292,6 +1350,6 @@ async function unfreeze(escrowId, adminId, ip) {
 }
 
 module.exports = {
-  createOrder, getCheckoutQuote, checkoutBreakdown, getById, getReceipt, getReleasePlan, confirmPayment, release, refund, getAllEscrow, getEscrowStats,
+  createOrder, getCheckoutQuote, checkoutBreakdown, getById, getReceipt, getFeeInvoice, getReleasePlan, confirmPayment, release, refund, getAllEscrow, getEscrowStats,
   freeze, unfreeze, payDeferredPartnerCommission, recordPartnerCredit,
 };

@@ -39,6 +39,15 @@ async function getEscrowById(req, res, next) {
 // Dev feedback, 2026-10-08 — the buyer's token-payment receipt, as a
 // direct PDF download rather than the JSON envelope — same pattern as
 // locality.controller.js's downloadReport.
+async function getFeeInvoice(req, res, next) {
+  try {
+    const pdfBuffer = await service.getFeeInvoice(req.params.id, req.user.id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="processing-fee-tax-invoice-${req.params.id}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (err) { next(err); }
+}
+
 async function getReceipt(req, res, next) {
   try {
     const pdfBuffer = await service.getReceipt(req.params.id, req.user.id);
@@ -169,6 +178,6 @@ async function refundRemaining(req, res, next) {
 }
 
 module.exports = {
-  payPartnerCommission, getCheckoutQuote, createOrder, getEscrowById, getReceipt, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
+  payPartnerCommission, getCheckoutQuote, createOrder, getEscrowById, getReceipt, getFeeInvoice, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
   freezeEscrow, unfreezeEscrow, getPayouts, retryPayout, resolvePayout, refundRemaining,
 };

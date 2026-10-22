@@ -40,6 +40,8 @@ const DEFINITIONS = {
   tds_missing_pan_action:    ['DEDUCT_HIGHER', 'Partner without a valid PAN: "DEDUCT_HIGHER" (withhold the no-PAN rate) or "BLOCK" (refuse the payout).'],
   // Company details printed on documents and checked on partner tax invoices.
   company_gstin:             ['', 'Realtydoor GSTIN. A partner tax invoice must be addressed to it. Empty = not checked yet.'],
+  company_address:           ['', 'Registered address printed on the processing-fee tax invoice.'],
+  processing_fee_sac_code:   ['', 'SAC code printed on the processing-fee tax invoice. [OPEN: CA] Empty = not printed.'],
   company_legal_name:        ['Realtydoor', 'Legal name printed on statements and vouchers.'],
   commission_sac_code:       ['', 'SAC code expected on a partner commission tax invoice. [OPEN: CA] Empty = not checked.'],
   tds_section_label:         ['194H', 'Section printed on TDS records and statements. [OPEN: CA, Income-tax Act 2025 numbering]'],
@@ -65,6 +67,7 @@ function parseSettings(rows) {
       gatewayPct: num('processing_fee_gateway_pct'),
       gatewayGstPct: num('processing_fee_gateway_gst_pct'),
       feeGstPct: num('processing_fee_gst_pct'),
+      sacCode: str('processing_fee_sac_code').trim(),
     },
     refund: {
       freeWindowHours: num('escrow_refund_window_hours'),
@@ -79,6 +82,7 @@ function parseSettings(rows) {
       gstin: str('company_gstin').trim().toUpperCase(),
       legalName: str('company_legal_name'),
       sacCode: str('commission_sac_code').trim(),
+      address: str('company_address').trim(),
     },
     tds: {
       ratePct: num('tds_rate_pct'),
@@ -97,7 +101,7 @@ async function getMoneySettings() {
 
 // Keys whose change must carry a reason and be audited with old and new value:
 // everything above plus the older money keys still in the table.
-const MONEY_KEY_PATTERN = /^(default_fee_pct|default_partner_share_pct|platform_commission_pct|commission_[a-z_]+|escrow_[a-z_]+|processing_fee_[a-z_]+|cancellation_charge_[a-z_]+|tds_[a-z_]+|company_gstin|company_legal_name|default_builder_brokerage_pct)$/;
+const MONEY_KEY_PATTERN = /^(default_fee_pct|default_partner_share_pct|platform_commission_pct|commission_[a-z_]+|escrow_[a-z_]+|processing_fee_[a-z_]+|cancellation_charge_[a-z_]+|tds_[a-z_]+|company_gstin|company_address|company_legal_name|default_builder_brokerage_pct)$/;
 const isMoneyKey = (key) => KEYS.includes(key) || MONEY_KEY_PATTERN.test(key);
 
 module.exports = { DEFINITIONS, KEYS, MONEY_KEY_PATTERN, isMoneyKey, parseSettings, getMoneySettings };

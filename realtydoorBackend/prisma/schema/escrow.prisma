@@ -123,6 +123,10 @@ model EscrowTransaction {
   frozenReason    String?
   frozenByAdminId String?   @db.ObjectId
   unfrozenAt      DateTime?
+  // T62 — the GST tax invoice for the processing fee takes the next number in its financial-year series the first time the
+  // buyer asks for it, and keeps it, so the number never changes and is never reused.
+  feeInvoiceNo      String?
+  feeInvoiceAt      DateTime?
   holdLimitAlertedAt DateTime? // set once the 30-day hold-limit alert has fired, so the daily job alerts once per escrow
   autoEscalatedAt   DateTime? // set once an overdue-HELD notification has fired, so the daily job doesn't re-notify
   createdAt         DateTime @default(now())
