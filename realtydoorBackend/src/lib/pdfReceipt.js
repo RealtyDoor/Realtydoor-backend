@@ -76,7 +76,21 @@ function buildTicketChargeReceiptPdf({ ticketSubject, userName, visitCharge, par
 // backend endpoint at all; the frontend's "receipt" was a browser print of
 // the on-screen summary. Same "simple receipt, not a GST tax invoice"
 // scope as the other two.
-function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, razorpayPaymentId, paidAt }) {
+// The money lines of the token receipt, in rupees with paise where there are some. The buyer paid the token PLUS the
+// payment processing fee (money model Rev 3), so the receipt shows both and the total, not just the token.
+function escrowReceiptLines({ amount, processingFeePaise, chargedPaise }) {
+  const rs = (paise) => `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: paise % 100 ? 2 : 0, maximumFractionDigits: 2 })}`;
+  const tokenPaise = Math.round((amount || 0) * 100);
+  const feePaise = processingFeePaise > 0 ? processingFeePaise : 0;
+  const totalPaise = chargedPaise > 0 ? chargedPaise : tokenPaise + feePaise;
+  return [
+    { label: 'Token advance', value: rs(tokenPaise) },
+    ...(feePaise ? [{ label: 'Payment processing fee (GST included)', value: rs(feePaise) }] : []),
+    { label: 'Total paid', value: rs(totalPaise), strong: true },
+  ];
+}
+
+function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, processingFeePaise, chargedPaise, razorpayPaymentId, paidAt }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50 });
     const chunks = [];
@@ -92,12 +106,16 @@ function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, razo
     doc.moveDown(1).fontSize(11).fillColor('#333');
     doc.text(`Paid by: ${buyerName || 'N/A'}`);
     doc.text(`Property: ${propertyTitle || 'N/A'}`);
-    doc.moveDown(0.3).fontSize(14).fillColor('#111').text(`Amount paid: ${formatRupees(amount)}`);
+    doc.moveDown(0.3).fontSize(11).fillColor('#333');
+    for (const line of escrowReceiptLines({ amount, processingFeePaise, chargedPaise })) {
+      doc.fontSize(line.strong ? 14 : 11).fillColor(line.strong ? '#111' : '#333').text(`${line.label}: ${line.value}`);
+    }
     doc.moveDown(0.3).fontSize(11).fillColor('#333');
     doc.text(`Payment reference: ${razorpayPaymentId || 'N/A'}`);
     doc.text(`Paid on: ${paidAt ? new Date(paidAt).toLocaleDateString('en-IN') : 'N/A'}`);
 
     doc.moveDown(1.5).fontSize(8).fillColor('#999')
+      .text('The token is held in escrow with our payment partner until the allocation letter is verified. The payment processing fee is not returned if you cancel.', { align: 'center' })
       .text('This is a payment receipt, not a GST tax invoice.', { align: 'center' });
 
     doc.end();
@@ -137,4 +155,4 @@ function buildPartnerStatementPdf(st) {
   });
 }
 
-module.exports = { buildPartnerStatementPdf, buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf };
+module.exports = { escrowReceiptLines, buildPartnerStatementPdf, buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf };

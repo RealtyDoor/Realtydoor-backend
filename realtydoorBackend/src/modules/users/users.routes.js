@@ -65,6 +65,7 @@ router.get('/leads/:id', validateObjectId('id'), ctrl.getMyLead);
 router.post('/leads/:leadId/rating', ctrl.rateLead);
 router.get('/leads/:id/cancel-quote', ctrl.getCancelQuote);
 router.post('/leads/:id/cancel', ctrl.cancelLead);
+router.post('/leads/:id/confirm-deal', validateObjectId('id'), ctrl.confirmDeal);
 
 // Favorites (phone required — PRD §2.5)
 router.get('/favorites',  ctrl.getFavorites);

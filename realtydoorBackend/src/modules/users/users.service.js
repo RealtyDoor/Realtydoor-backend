@@ -250,6 +250,27 @@ async function cancelLead(userId, leadId, { reason, reasonLabel, acceptCancellat
   return { refund };
 }
 
+// B29 — the buyer confirms in the app that the deal is done. This is the same answer the WhatsApp "yes" reply gives
+// (buyerFeedbackStatus VERIFIED_CLOSED), which the admin sees as the advisory "Buyer confirmed the deal" release condition.
+// Only a buyer who has actually paid the token can say it, and only on their own lead. Idempotent.
+async function confirmDeal(userId, leadId) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId: userId }, select: { id: true, refCode: true, status: true, buyerFeedbackStatus: true } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.status === 'DROPPED') throw new ApiError(400, 'This inquiry is closed', { code: 'LEAD_DROPPED' });
+  const paid = await prisma.escrowTransaction.findFirst({ where: { leadId, status: { in: ['HELD', 'HELD_PAYOUT_FAILED', 'RELEASED'] } }, select: { id: true } });
+  if (!paid) throw new ApiError(400, 'You can confirm the deal once your token has been paid', { code: 'TOKEN_NOT_PAID' });
+  if (lead.buyerFeedbackStatus === 'VERIFIED_CLOSED') return { confirmed: true, alreadyConfirmed: true };
+
+  await prisma.lead.update({ where: { id: leadId }, data: { buyerFeedbackStatus: 'VERIFIED_CLOSED', feedbackReceivedAt: new Date() } });
+  await notifyAdmins({
+    title: 'Buyer confirmed the deal',
+    message: `${lead.refCode || 'A buyer'} confirmed in the app that the deal is done.`,
+    type: 'BUYER_CONFIRMED_DEAL',
+    linkUrl: `/admin/leads/${leadId}`,
+  });
+  return { confirmed: true, alreadyConfirmed: false };
+}
+
 async function toggleFavorite(userId, propertyId) {
   const property = await prisma.property.findUnique({ where: { id: propertyId }, select: { id: true } });
   if (!property) throw new ApiError(404, 'Property not found');
@@ -927,7 +948,7 @@ const disputeService = require('../disputes/disputes.service');
 
 module.exports = {
   getCancelQuote,
-  requestPhoneOtp, verifyPhoneOtp, getClaimableLeads, claimLead, getMyLeads, getMyLead, rateLead, cancelLead, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getClaimableLeads, claimLead, getMyLeads, getMyLead, rateLead, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
   formatProfileSettings,
   updateConsent,
   getConsentState, getPrivacyState, withdrawConsent, requestAccountDeletion, cancelAccountDeletion,

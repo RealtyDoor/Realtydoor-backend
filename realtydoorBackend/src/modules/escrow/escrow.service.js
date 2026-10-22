@@ -73,6 +73,8 @@ async function getReceipt(escrowId, buyerId) {
     propertyTitle: escrow.lead?.property?.title || escrow.lead?.propertyInterest,
     buyerName: escrow.lead?.buyerName,
     amount: escrow.amount,
+    processingFeePaise: escrow.processingFeePaise,
+    chargedPaise: escrow.chargedPaise,
     razorpayPaymentId: escrow.razorpayPaymentId,
     paidAt: escrow.heldAt,
   });
@@ -331,7 +333,7 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
       payment_id: updated.razorpayPaymentId || updated.razorpayOrderId,
     });
     const buyer = await prisma.user.findUnique({ where: { id: updated.buyerId }, select: { email: true } });
-    if (buyer) await sendEscrowHeld(buyer.email, updated.amount);
+    if (buyer) await sendEscrowHeld(buyer.email, updated.amount, updated.processingFeePaise);
   })().catch((err) => logger.warn('[Escrow] Post-confirmation notification/email failed', { escrowId: updated.id, error: err.message }));
 
   return updated;

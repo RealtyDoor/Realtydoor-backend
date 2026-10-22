@@ -63,6 +63,10 @@ async function getCancelQuote(req, res, next) {
   try { success(res, await service.getCancelQuote(req.user.id, req.params.id)); } catch (err) { next(err); }
 }
 
+async function confirmDeal(req, res, next) {
+  try { success(res, await service.confirmDeal(req.user.id, req.params.id), 'Thanks for confirming'); } catch (err) { next(err); }
+}
+
 async function cancelLead(req, res, next) {
   try {
     const data = cancelLeadSchema.parse(req.body);
@@ -321,7 +325,7 @@ async function getMyDisputes(req, res, next) {
 }
 
 module.exports = {
-  requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyLead, rateLead, getCancelQuote, cancelLead, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyLead, rateLead, getCancelQuote, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
   updateConsent,
   getConsentState, getPrivacyState,
   withdrawConsent, withdrawConsentLegacy,

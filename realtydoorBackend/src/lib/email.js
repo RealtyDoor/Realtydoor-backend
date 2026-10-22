@@ -98,11 +98,14 @@ async function sendKycRejected(email, note, user) {
 
 // Receipts — always sent regardless of the notifEmail toggle (spec: "Receipts,
 // OTPs and security or legal notices always go out").
-async function sendEscrowHeld(email, amount) {
+async function sendEscrowHeld(email, amount, processingFeePaise = 0) {
+  const fee = processingFeePaise > 0
+    ? ` You also paid a payment processing fee of ₹${(processingFeePaise / 100).toLocaleString('en-IN')} (GST included), which is not returned if you cancel.`
+    : '';
   return send({
     to: email,
     subject: 'Token Advance Received',
-    html: `<p>Your token advance of <strong>₹${Number(amount).toLocaleString('en-IN')}</strong> has been received and is held securely until your deal closes.</p>`,
+    html: `<p>Your token advance of <strong>₹${Number(amount).toLocaleString('en-IN')}</strong> has been received and is held in escrow with our payment partner until your allocation letter is verified.${fee}</p>`,
     category: CATEGORIES.TRANSACTIONAL,
   });
 }

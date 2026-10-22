@@ -3624,6 +3624,22 @@ A partner follows up on their own ticket. An `ANSWERED`, `RESOLVED` or `IN_PROGR
 
 ---
 
+### POST /api/user/leads/:id/confirm-deal
+
+The buyer confirms in the app that the deal is done. Same effect as the WhatsApp "yes" reply: `buyerFeedbackStatus` becomes `VERIFIED_CLOSED`, which the admin sees as the advisory "Buyer confirmed the deal" release condition. Admins are notified. Idempotent.
+
+**Auth:** USER (own lead only). **Errors:** `404` not your lead, `400` `TOKEN_NOT_PAID` (the token must be held or released), `400` `LEAD_DROPPED`.
+
+---
+
+### PUT /api/admin/leads/:id/commission/deal-rate
+
+Sets the partner % and platform % of the deal price for one deal (`{ partnerRatePct, platformFeePct?, reason? }`). A rate different from the platform default needs a `reason` (5+ characters). Written through the commission terms, so it is audited and versioned; a partner who had seen a locked rate is notified.
+
+**Auth:** ADMIN with COMMISSION permission. **Errors:** `400` `NO_ASSIGNED_PARTNER` / `RATE_REASON_REQUIRED`, `409` `DEAL_RATE_FROZEN` (the token is released or the brokerage invoiced).
+
+---
+
 ### PATCH /api/admin/leads/:id/allocation-letter/verify
 
 Admin marks the partner's uploaded allocation letter as verified. Until then the buyer can still cancel for a refund (minus the cancellation charge after the free window); after it the token can only be released or disputed. Idempotent, audited (`ALLOCATION_LETTER_VERIFIED`), notifies the buyer.
