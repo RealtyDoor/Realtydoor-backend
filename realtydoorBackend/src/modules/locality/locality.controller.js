@@ -2,7 +2,7 @@ const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const ApiError = require('../../utils/ApiError');
 const service = require('./locality.service');
-const { upsertLocalitySchema } = require('./locality.validator');
+const { upsertLocalitySchema, suggestLocalitySchema } = require('./locality.validator');
 
 async function getLocality(req, res, next) {
   try {
@@ -11,6 +11,22 @@ async function getLocality(req, res, next) {
     const insight = await service.getLocality(city, locality);
     success(res, insight);
   } catch (err) { next(err); }
+}
+
+async function listOptions(req, res, next) {
+  try { success(res, await service.listLocalityOptions(req.query.city)); } catch (err) { next(err); }
+}
+
+async function suggest(req, res, next) {
+  try {
+    const data = suggestLocalitySchema.parse(req.body);
+    const out = await service.suggestLocality(data, req.user);
+    return out.created ? created(res, out) : success(res, out);
+  } catch (err) { next(err); }
+}
+
+async function listSuggestions(req, res, next) {
+  try { success(res, await service.listPendingSuggestions()); } catch (err) { next(err); }
 }
 
 async function getLocalityPage(req, res, next) {
@@ -82,5 +98,5 @@ async function getLocalitiesList(req, res, next) {
 
 module.exports = {
   getLocality, getLocalityPage, listLocalities, getLocalityById, upsertLocality, deleteLocality,
-  getCitiesSummary, downloadReport, getLocalitiesList,
+  getCitiesSummary, downloadReport, getLocalitiesList, listOptions, suggest, listSuggestions,
 };

@@ -138,4 +138,10 @@ const upsertLocalitySchema = z.object({
   lastReviewedBy:          z.string().max(100).optional(),
 });
 
-module.exports = { upsertLocalitySchema, MARKET_STAGES, DEMAND_LEVELS, INFRA_STRENGTHS };
+const suggestLocalitySchema = z.object({
+  city: z.string().trim().min(2).max(80),
+  locality: z.string().trim().min(2, 'Enter a valid locality').max(80),
+});
+
+module.exports = {
+  suggestLocalitySchema, upsertLocalitySchema, MARKET_STAGES, DEMAND_LEVELS, INFRA_STRENGTHS };

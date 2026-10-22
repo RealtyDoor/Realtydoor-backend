@@ -4,10 +4,55 @@ const { withCache, cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 const { buildLocalityReportPdf } = require('../../lib/pdfReport');
 const { canonicalizeCity, cityAliasQueryGroup } = require('../../lib/cityAlias');
+const { notifyAdmins } = require('../../lib/notifications');
 
 // Backend gaps handoff, 2026-10-10 (#7C) — same alias-group safety net as
 // properties.service.js's search, applied here too ("apply the same to
 // locality-insights and city counts").
+const suggestionKey = (city, locality) => `${canonicalizeCity(city).trim().toLowerCase()}|${String(locality).trim().toLowerCase()}`;
+
+// What the listing form offers in its Locality dropdown: every curated locality for the city plus the ones partners have
+// added since, once each, A to Z. `pending` marks the ones the admin has not filled in yet.
+async function listLocalityOptions(city) {
+  if (!city) throw new ApiError(400, 'city is required');
+  const cityMatch = cityAliasQueryGroup(city).map((v) => ({ city: { equals: v, mode: 'insensitive' } }));
+  const [insights, suggestions] = await Promise.all([
+    prisma.localityInsight.findMany({ where: { OR: cityMatch }, select: { locality: true } }),
+    prisma.localitySuggestion.findMany({ where: { OR: cityMatch }, select: { locality: true, status: true } }),
+  ]);
+  const byName = new Map();
+  for (const i of insights) byName.set(i.locality.trim().toLowerCase(), { name: i.locality.trim(), pending: false });
+  for (const sg of suggestions) {
+    const k = sg.locality.trim().toLowerCase();
+    if (!byName.has(k)) byName.set(k, { name: sg.locality.trim(), pending: sg.status === 'PENDING' });
+  }
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// A partner or admin adds a locality that is not in the list. It is usable at once; the admins are told to fill in its
+// CMS details. A name that already exists (in either list, any letter case) is returned as it is, with no second alert.
+async function suggestLocality({ city: rawCity, locality: rawLocality }, user) {
+  const city = canonicalizeCity(rawCity).trim();
+  const locality = String(rawLocality).trim().replace(/\s+/g, ' ');
+  const existing = (await listLocalityOptions(city)).find((o) => o.name.toLowerCase() === locality.toLowerCase());
+  if (existing) return { city, locality: existing.name, created: false };
+
+  await prisma.localitySuggestion.create({
+    data: { key: suggestionKey(city, locality), city, locality, addedByUserId: user.id },
+  });
+  await notifyAdmins({
+    title: 'New locality added',
+    message: `${locality}, ${city} was added by ${user.role === 'ADMIN' ? 'an admin' : 'a partner'} while listing a property. Please fill in its details in the CMS.`,
+    type: 'LOCALITY_NEW',
+    linkUrl: `/admin/cms/locality-insights/new?city=${encodeURIComponent(city)}&locality=${encodeURIComponent(locality)}`,
+  });
+  return { city, locality, created: true };
+}
+
+async function listPendingSuggestions() {
+  return prisma.localitySuggestion.findMany({ where: { status: 'PENDING' }, orderBy: { createdAt: 'desc' }, take: 200 });
+}
+
 async function getLocality(city, locality) {
   const insight = await prisma.localityInsight.findFirst({
     where: {
@@ -29,6 +74,11 @@ async function upsertLocality(data, adminId) {
     create: { city, locality, ...rest, dataAsOfDate: resolvedDataAsOfDate, updatedByAdminId: adminId },
   });
   cacheDel(CACHE_KEYS.CITIES_SUMMARY, CACHE_KEYS.LOCALITIES_LIST, CACHE_KEYS.localityPage(city, locality));
+  // The admin has now filled this locality in, so a partner's suggestion for it is done.
+  await prisma.localitySuggestion.updateMany({
+    where: { key: suggestionKey(city, locality), status: 'PENDING' },
+    data: { status: 'RESOLVED', resolvedAt: new Date() },
+  }).catch(() => null);
   return saved;
 }
 
@@ -244,6 +294,7 @@ async function buildCitiesSummary() {
 }
 
 module.exports = {
+  listLocalityOptions, suggestLocality, listPendingSuggestions,
   getLocality, getLocalityPage, listLocalities, getLocalityById, upsertLocality, deleteLocality,
   getCitiesSummary, getLocalityReportPdf, getLocalitiesList,
 };

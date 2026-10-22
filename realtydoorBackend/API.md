@@ -4568,6 +4568,24 @@ on the page only renders if its field is non-null. No per-locality
 
 ---
 
+### GET /api/locality-insights/options?city=
+
+Partner or admin (JWT). The Locality dropdown on the listing form: every curated locality for the city plus the ones partners added since, once each, A to Z.
+
+**Response `200`:** `[{ "name": "Whitefield", "pending": false }]`. `pending: true` means a partner added it and the admin has not filled in its CMS details yet. `400` when `city` is missing.
+
+### POST /api/locality-insights/suggest
+
+Partner or admin (JWT). Adds a locality that is not in the list. It is usable at once, and the admins get a `LOCALITY_NEW` notification linking to `/admin/cms/locality-insights/new?city=&locality=`.
+
+**Body:** `{ "city": "Bangalore", "locality": "Kogilu Cross" }` (2 to 80 characters each).
+
+**Response:** `201 { city, locality, created: true }` for a new name. `200 { city, locality, created: false }` when the name already exists in either list in any letter case (the stored spelling is returned and no second alert is sent). When an admin later saves the full locality in the CMS, the suggestion is marked `RESOLVED`.
+
+### GET /api/locality-insights/suggestions
+
+Admin only. Localities partners added that still need their CMS details (`status: PENDING`, newest first, up to 200).
+
 ### GET /api/locality-insights/report
 
 Public — downloadable PDF report built from the same data as `/page` (structured text, no charts/AI). Streamed as `Content-Type: application/pdf` with `Content-Disposition: attachment`.

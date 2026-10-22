@@ -58,3 +58,21 @@ model LocalityInsight {
   @@index([city])
   @@index([citySlug, localitySlug])
 }
+
+// ─── LOCALITY SUGGESTION ──────────────────────────────────────────────────────
+// A locality a partner or admin typed because it was not in the list when adding a listing. It shows in the dropdown
+// straight away; admins are notified to fill in the full LocalityInsight in the CMS, and the row is RESOLVED then.
+// `key` is the lower-cased "city|locality", so the same place typed two ways is one row.
+model LocalitySuggestion {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  key           String   @unique
+  city          String
+  locality      String
+  status        String   @default("PENDING") // PENDING | RESOLVED
+  addedByUserId String   @db.ObjectId
+  resolvedAt    DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([status])
+  @@index([city])
+}
