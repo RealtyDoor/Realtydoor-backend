@@ -164,7 +164,6 @@ const dispatchTicketSchema = z.object({
 // 7.5
 const resolveTicketSchema = z.object({
   resolutionUrls: z.array(z.string().url()).max(10).optional(),
-  visitCharge: z.number().min(0).optional(),
   partsCharge: z.number().min(0).optional(),
   note: z.string().max(1000).optional(),
 });
