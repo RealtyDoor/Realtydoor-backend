@@ -27,6 +27,7 @@ const addManual = wrap(async (req, res) => {
   created(res, entry, 'Ledger line added');
 });
 const payables = wrap(async (req, res) => success(res, await ledger.payablesReceivables()));
+const profit = wrap(async (req, res) => success(res, await ledger.profitView({ from: req.query.from, to: req.query.to })));
 const reconcile = wrap(async (req, res) => success(res, await ledger.reconcile()));
 
 // Every export is itself audited, success or not of the download.
@@ -94,7 +95,7 @@ const myStatementPdf = wrap(async (req, res) => {
 });
 
 module.exports = {
-  listLedger, dealCard, addManual, payables, reconcile, exportCsv, verifyAudit,
+  listLedger, dealCard, addManual, payables, profit, reconcile, exportCsv, verifyAudit,
   listTds, tdsSummary, tdsDeposit, tdsReturn, tdsForm16a,
   listInvoices, acceptInvoice, rejectInvoice, matchInvoice,
   uploadInvoice, myInvoices, myVouchers, voucherOtp, voucherAccept, myStatements, myStatement, myStatementPdf,

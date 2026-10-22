@@ -248,6 +248,31 @@ describe('ledger', () => {
   });
 });
 
+describe('profit view and audit export', () => {
+  test('income and costs from the ledger; a reversed line does not count', async () => {
+    const mk = (o) => ({ id: o.id || Math.random().toString(), relatedEntryId: null, direction: 'NONE', grossPaise: 0, netPaise: 0, entryDate: new Date(), ...o });
+    prisma.moneyLedgerEntry.findMany.mockResolvedValue([
+      mk({ type: 'BROKERAGE_RECEIVED', grossPaise: 15000000, netPaise: 17700000 }),
+      mk({ type: 'PARTNER_COMMISSION', grossPaise: 7500000 }),
+      mk({ type: 'PROCESSING_FEE_IN', grossPaise: 120900, netPaise: 102458 }),
+      mk({ id: 'g1', type: 'GATEWAY_FEE', grossPaise: 120900 }),
+      mk({ type: 'ADJUSTMENT', reversesEntryId: 'g1', direction: 'IN', grossPaise: 120900, netPaise: 120900 }),
+    ]);
+    const p = await ledger.profitView({});
+    expect(p.income).toMatchObject({ brokerageExGstPaise: 15000000, processingFeeExGstPaise: 102458 });
+    expect(p.costs).toMatchObject({ partnerCommissionPaise: 7500000, gatewayFeePaise: 0 });
+    expect(p.totalIncomePaise).toBe(15102458);
+    expect(p.profitPaise).toBe(15102458 - 7500000 + 120900);
+    expect(p.notes.length).toBe(2);
+  });
+  test('the audit CSV has the reason and hash columns', async () => {
+    prisma.auditLog.findMany.mockResolvedValue([{ createdAt: new Date('2026-10-22T05:00:00Z'), id: 'a1', adminId: 'x', actorRole: 'ADMIN', action: 'MONEY_SETTING_CHANGED', targetType: 'PlatformConfig', targetId: 'tds_rate_pct', reason: 'rate', before: '{"value":"5"}', after: '{"value":"2"}', ipAddress: null, hash: 'h' }]);
+    const csv = await ledger.monthlyCsv('audit', '2026-10');
+    expect(csv.split('\r\n')[0]).toContain('Reason');
+    expect(csv).toContain('MONEY_SETTING_CHANGED');
+  });
+});
+
 // ─── Tax invoice (GST-registered partner) ────────────────────────────────────
 describe('tax invoice validation', () => {
   const good = { supplierGstin: GSTIN, recipientGstin: OURS, invoiceNumber: 'INV-7', invoiceDate: '2026-10-20', sacCode: '997221', placeOfSupply: 'Karnataka', taxableValuePaise: rs(75000), cgstPaise: rs(6750), sgstPaise: rs(6750), igstPaise: 0, totalPaise: rs(88500) };

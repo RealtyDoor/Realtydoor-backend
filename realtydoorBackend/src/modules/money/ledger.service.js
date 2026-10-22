@@ -429,6 +429,49 @@ async function reconcile() {
   };
 }
 
+// Income against costs from the ledger for a period (money model Rev 3, ledger
+// spec section 2.7). Only what the ledger knows: lines nobody has entered (for
+// example gateway fees, which come from Razorpay settlements) are zero here, and
+// the response says so. Amounts in paise, GST excluded from income.
+async function profitView({ from, to }) {
+  const where = { entryDate: {} };
+  if (from) where.entryDate.gte = new Date(from);
+  if (to) where.entryDate.lte = new Date(to);
+  const rows = await prisma.moneyLedgerEntry.findMany({ where: Object.keys(where.entryDate).length ? where : {} });
+  const base = rows.filter((r) => !r.relatedEntryId);
+  const sum = (types, pick = 'grossPaise') => base.filter((r) => types.includes(r.type)).reduce((s, r) => s + r[pick], 0);
+  const reversed = new Set(base.filter((r) => r.reversesEntryId).map((r) => r.reversesEntryId));
+  const net = (types, pick = 'grossPaise') => base.filter((r) => types.includes(r.type) && !reversed.has(r.id)).reduce((s, r) => s + r[pick], 0);
+
+  const brokerageExGst = net(['BROKERAGE_RECEIVED']);
+  const partnerCommission = net(['PARTNER_COMMISSION', 'COMMISSION_VOUCHER']);
+  const income = {
+    brokerageExGstPaise: brokerageExGst,
+    processingFeeExGstPaise: net(['PROCESSING_FEE_IN'], 'netPaise'),
+    cancellationChargeExGstPaise: net(['CANCELLATION_CHARGE'], 'netPaise'),
+    serviceRevenuePaise: net(['SERVICE_REVENUE'], 'netPaise'),
+  };
+  const costs = {
+    partnerCommissionPaise: partnerCommission,
+    gatewayFeePaise: net(['GATEWAY_FEE']),
+    payoutFeePaise: net(['PAYOUT_FEE']),
+    vendorPaymentPaise: net(['VENDOR_PAYMENT']),
+  };
+  const adjustments = base.filter((r) => r.type === 'ADJUSTMENT').reduce((s, r) => s + (r.direction === 'IN' ? r.netPaise : r.direction === 'OUT' ? -r.netPaise : 0), 0);
+  const totalIncome = Object.values(income).reduce((a, b) => a + b, 0);
+  const totalCosts = Object.values(costs).reduce((a, b) => a + b, 0);
+  void sum;
+  return {
+    from: from || null, to: to || null, income, costs, adjustmentsPaise: adjustments,
+    totalIncomePaise: totalIncome, totalCostsPaise: totalCosts, profitPaise: totalIncome - totalCosts + adjustments,
+    entries: base.length,
+    notes: [
+      'Income excludes GST. Tokens held in escrow are a liability, not income.',
+      'Gateway and payout fees appear only once they are entered or imported; until then profit is overstated by that amount.',
+    ],
+  };
+}
+
 // ─── CSV (Tally-ready columns) ───────────────────────────────────────────────
 
 // Cells that start with = + - @ would be run as a formula by a spreadsheet.
@@ -493,7 +536,14 @@ async function monthlyCsv(kind, month) {
     ];
     return csv(['Side', 'Item', 'Count', 'Amount'], items.map((i) => [i[0], i[1], i[2], rupees(i[3])]));
   }
-  throw new ApiError(400, 'kind must be ledger, tds, gst or payables');
+  if (kind === 'audit') {
+    const rows = await prisma.auditLog.findMany({ where: { createdAt: dateWhere }, orderBy: { createdAt: 'asc' } });
+    return csv(
+      ['Time', 'Id', 'Actor id', 'Actor role', 'Action', 'Target type', 'Target id', 'Reason', 'Before', 'After', 'IP', 'Hash'],
+      rows.map((r) => [new Date(r.createdAt).toISOString(), r.id, r.adminId, r.actorRole, r.action, r.targetType, r.targetId, r.reason, r.before, r.after, r.ipAddress, r.hash]),
+    );
+  }
+  throw new ApiError(400, 'kind must be ledger, tds, gst, payables or audit');
 }
 
 module.exports = {
@@ -501,5 +551,5 @@ module.exports = {
   onPaymentCaptured, onRefund, onSellerPayout, onPartnerCredit, onPayoutStatus,
   onBrokerageInvoiced, onBrokerageReceived, onTdsDeposited, onInvoiceMatched,
   listEntries, withCurrentStatus, dealMoneyCard, payablesReceivables, reconcile,
-  monthlyCsv, csvCell, monthRange, buildWhere,
+  profitView, monthlyCsv, csvCell, monthRange, buildWhere,
 };

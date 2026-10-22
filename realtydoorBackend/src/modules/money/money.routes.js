@@ -12,6 +12,7 @@ router.get('/ledger',                 ctrl.listLedger);
 router.post('/ledger/manual',         ctrl.addManual);
 router.get('/deals/:leadId',          validateObjectId('leadId'), ctrl.dealCard);
 router.get('/payables',               ctrl.payables);
+router.get('/profit',                 ctrl.profit);
 router.get('/reconcile',              ctrl.reconcile);
 router.get('/export',                 ctrl.exportCsv);
 router.get('/audit-chain',            ctrl.verifyAudit);
