@@ -33,6 +33,31 @@ const GATED = [
   ['post', '/escrow/:id/repair-bookkeeping', 'FINANCE'],
 ];
 
+// Staff-scoped areas, by the meaning each scope has in utils/adminPermissions.js.
+const BY_SCOPE = {
+  USERS: [['patch', '/users/:id/role'], ['patch', '/users/:id/suspend']],
+  CONTENT: [['post', '/content'], ['patch', '/content/:id'], ['delete', '/content/:id'], ['post', '/content/upload-image'],
+    ['post', '/services'], ['patch', '/services/:id'], ['delete', '/services/:id'],
+    ['post', '/team'], ['patch', '/team/:id'], ['delete', '/team/:id'], ['post', '/notifications/broadcast'],
+    ['post', '/wati/templates'], ['patch', '/wati/templates/:id'], ['delete', '/wati/templates/:id'],
+    ['post', '/wati/templates/:id/submit'], ['patch', '/wati/templates/:id/status'], ['post', '/wati/templates/:id/test-send']],
+  TICKETS: [['patch', '/tickets/:id'], ['patch', '/tickets/:id/dispatch'], ['patch', '/tickets/:id/resolve'], ['patch', '/tickets/:id/link-deal'],
+    ['post', '/tickets/:id/comments'], ['post', '/tickets/:id/auto-dispatch'],
+    ['post', '/vendors'], ['patch', '/vendors/:id'], ['delete', '/vendors/:id'], ['post', '/vendors/:id/availability'], ['delete', '/vendors/:id/availability/:slotId']],
+  FINANCE: [['put', '/config/:key'], ['delete', '/config/:key']],
+  LEADS: [['post', '/leads'], ['post', '/leads/auto-assign'], ['post', '/routing-rules'], ['patch', '/routing-rules/:id'], ['delete', '/routing-rules/:id'],
+    ['patch', '/leads/:id/assign'], ['post', '/leads/:id/auto-assign'], ['patch', '/leads/:id/confirm'], ['patch', '/leads/:id/reject'], ['patch', '/leads/:id/note'],
+    ['patch', '/leads/:id/otp-override'], ['patch', '/leads/:id/approve-drop'], ['patch', '/leads/:id/reject-drop']],
+  LISTINGS: [['patch', '/properties/change-requests/:id/approve'], ['patch', '/properties/change-requests/:id/reject'], ['patch', '/properties/mandates/:id/revoke'],
+    ['patch', '/properties/conflicts/:id/resolve'], ['post', '/properties/:id/mandates'], ['post', '/properties/:id/detect-conflicts'], ['patch', '/properties/:id/location'],
+    ['patch', '/properties/checklist-documents/:docId/verify'], ['patch', '/properties/checklist-documents/:docId/reject'],
+    ['post', '/properties/:id/mandates/:mandateId/owner-confirmation/request'], ['patch', '/properties/owner-confirmation/:confirmationId'],
+    ['patch', '/properties/:id/approve'], ['patch', '/properties/:id/reject'], ['patch', '/properties/:id/request-changes'], ['patch', '/properties/:id'],
+    ['patch', '/projects/:id/approve'], ['patch', '/projects/:id/reject'], ['patch', '/projects/:id/request-changes'], ['patch', '/projects/:id/approvals/:item']],
+  KYC: [['post', '/kyc/:userId/request-documents'], ['patch', '/documents/:id/verify']],
+};
+for (const [scope, routes] of Object.entries(BY_SCOPE)) for (const [verb, p] of routes) GATED.push([verb, p, scope]);
+
 const routeLine = (verb, p) => routesSource.split('\n').find((l) => l.replace(/\s+/g, ' ').startsWith(`router.${verb}('${p}',`));
 
 describe('admin money routes carry their permission', () => {
@@ -68,6 +93,18 @@ describe('what each staff role can do with those permissions', () => {
     expect(verdict('COMMISSION', 'FINANCE_STAFF')).toBe('allowed');
     expect(verdict('FINANCE', 'SUPER_ADMIN')).toBe('allowed');
     expect(verdict('COMMISSION', 'SUPER_ADMIN')).toBe('allowed');
+  });
+  test('each staff role keeps exactly the areas its preset names', () => {
+    expect(verdict('LEADS', 'SUPPORT')).toBe('allowed');
+    expect(verdict('LISTINGS', 'SUPPORT')).toBe('allowed');
+    expect(verdict('KYC', 'SUPPORT')).toBe('allowed');
+    expect(verdict('TICKETS', 'SUPPORT')).toBe('allowed');
+    expect(verdict('USERS', 'SUPPORT')).toBe(403);
+    expect(verdict('CONTENT', 'SUPPORT')).toBe(403);
+    expect(verdict('CONTENT', 'CONTENT_MANAGER')).toBe('allowed');
+    expect(verdict('LEADS', 'CONTENT_MANAGER')).toBe(403);
+    expect(verdict('LEADS', 'FINANCE_STAFF')).toBe(403);
+    expect(verdict('TICKETS', 'FINANCE_STAFF')).toBe(403);
   });
   test('an older admin with no staff role keeps full access (unchanged on purpose)', () => {
     expect(verdict('FINANCE', null)).toBe('allowed');

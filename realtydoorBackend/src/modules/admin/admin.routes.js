@@ -55,28 +55,28 @@ router.use(authenticate, requireAdmin, perUserLimiter);
 
 // Lead management
 router.get('/leads',        ctrl.getLeads);
-router.post('/leads',       ctrl.createLead);          // 6.4a — admin logs an off-platform lead
+router.post('/leads',       requirePermission('LEADS'), ctrl.createLead);          // 6.4a — admin logs an off-platform lead
 // Auto-assign: static path, registered above /leads/:id so it is never
 // swallowed as a lead id.
-router.post('/leads/auto-assign', ctrl.autoAssignUnassignedLeads);
+router.post('/leads/auto-assign', requirePermission('LEADS'), ctrl.autoAssignUnassignedLeads);
 // backend-work-still-open.md #7 — admin-named partner/vendor overrides,
 // consulted by leads' auto-assign above and tickets' auto-dispatch below.
 router.get('/routing-rules',      ctrl.listRoutingRules);
-router.post('/routing-rules',     ctrl.createRoutingRule);
-router.patch('/routing-rules/:id', ctrl.updateRoutingRule);
-router.delete('/routing-rules/:id', ctrl.deleteRoutingRule);
+router.post('/routing-rules',     requirePermission('LEADS'), ctrl.createRoutingRule);
+router.patch('/routing-rules/:id', requirePermission('LEADS'), ctrl.updateRoutingRule);
+router.delete('/routing-rules/:id', requirePermission('LEADS'), ctrl.deleteRoutingRule);
 router.get('/leads/:id',    ctrl.getLeadById);
-router.patch('/leads/:id/assign',        ctrl.assignLead);
-router.post('/leads/:id/auto-assign',    ctrl.autoAssignLead);
+router.patch('/leads/:id/assign',        requirePermission('LEADS'), ctrl.assignLead);
+router.post('/leads/:id/auto-assign',    requirePermission('LEADS'), ctrl.autoAssignLead);
 // 6.3 — vet a partner-added (AWAITING_ADMIN) lead. Confirm optionally assigns
 // in one step; passing a different partnerId is the reassign case.
-router.patch('/leads/:id/confirm',       ctrl.confirmLead);
-router.patch('/leads/:id/reject',        ctrl.rejectLead);
-router.patch('/leads/:id/note',          validateObjectId('id'), ctrl.setLeadNote);
+router.patch('/leads/:id/confirm',       requirePermission('LEADS'), ctrl.confirmLead);
+router.patch('/leads/:id/reject',        requirePermission('LEADS'), ctrl.rejectLead);
+router.patch('/leads/:id/note',          requirePermission('LEADS'), validateObjectId('id'), ctrl.setLeadNote);
 // 6.6 — clear a locked site-visit OTP and issue a fresh code to the buyer.
-router.patch('/leads/:id/otp-override',  ctrl.overrideLeadOtp);
-router.patch('/leads/:id/approve-drop',  leadsCtrl.approveDrop);
-router.patch('/leads/:id/reject-drop',   leadsCtrl.rejectDrop);
+router.patch('/leads/:id/otp-override',  requirePermission('LEADS'), ctrl.overrideLeadOtp);
+router.patch('/leads/:id/approve-drop',  requirePermission('LEADS'), leadsCtrl.approveDrop);
+router.patch('/leads/:id/reject-drop',   requirePermission('LEADS'), leadsCtrl.rejectDrop);
 router.patch('/leads/:id/allocation-letter/verify', validateObjectId('id'), requirePermission('FINANCE'), leadsCtrl.verifyAllocationLetter);
 
 // Property approval + admin edit
@@ -86,41 +86,41 @@ router.get('/properties',              ctrl.getPendingProperties);
 // make :id swallow "change-requests" and "edit-logs" as property ids.
 router.get('/properties/change-requests',            listingCtrl.listChangeRequests);
 router.get('/properties/change-requests/:id',        listingCtrl.getChangeRequest);
-router.patch('/properties/change-requests/:id/approve', listingCtrl.approveChangeRequest);
-router.patch('/properties/change-requests/:id/reject',  listingCtrl.rejectChangeRequest);
+router.patch('/properties/change-requests/:id/approve', requirePermission('LISTINGS'), listingCtrl.approveChangeRequest);
+router.patch('/properties/change-requests/:id/reject',  requirePermission('LISTINGS'), listingCtrl.rejectChangeRequest);
 router.get('/properties/edit-logs',                  listingCtrl.listEditLogs);
 // 4.3 / 4.4 — mandates and conflict detection. Static segments stay above the
 // /properties/:id param route for the same reason as the change-request ones.
 router.get('/properties/mandates',                   integrityCtrl.listMandates);
 router.get('/properties/mandates/:id',               integrityCtrl.getMandate);
-router.patch('/properties/mandates/:id/revoke',      integrityCtrl.revokeMandate);
+router.patch('/properties/mandates/:id/revoke',      requirePermission('LISTINGS'), integrityCtrl.revokeMandate);
 router.get('/properties/conflicts',                  integrityCtrl.listConflicts);
-router.patch('/properties/conflicts/:id/resolve',    integrityCtrl.resolveConflict);
-router.post('/properties/:id/mandates',              integrityCtrl.createMandate);
-router.post('/properties/:id/detect-conflicts',      integrityCtrl.detectConflicts);
+router.patch('/properties/conflicts/:id/resolve',    requirePermission('LISTINGS'), integrityCtrl.resolveConflict);
+router.post('/properties/:id/mandates',              requirePermission('LISTINGS'), integrityCtrl.createMandate);
+router.post('/properties/:id/detect-conflicts',      requirePermission('LISTINGS'), integrityCtrl.detectConflicts);
 // 4.6 / 4.7 — location check and admin location edit.
 router.get('/properties/:id/location-check',          locationCtrl.locationCheck);
-router.patch('/properties/:id/location',              locationCtrl.updateLocation);
+router.patch('/properties/:id/location',              requirePermission('LISTINGS'), locationCtrl.updateLocation);
 // 4.1 / 4.2 — persona document checklist and owner-confirmation review.
 router.get('/properties/:id/checklist',                checklistCtrl.getChecklist);
-router.patch('/properties/checklist-documents/:docId/verify', checklistCtrl.verifyChecklistDocument);
-router.patch('/properties/checklist-documents/:docId/reject', checklistCtrl.rejectChecklistDocument);
-router.post('/properties/:id/mandates/:mandateId/owner-confirmation/request', checklistCtrl.requestOwnerConfirmation);
-router.patch('/properties/owner-confirmation/:confirmationId', checklistCtrl.recordOwnerConfirmation);
+router.patch('/properties/checklist-documents/:docId/verify', requirePermission('LISTINGS'), checklistCtrl.verifyChecklistDocument);
+router.patch('/properties/checklist-documents/:docId/reject', requirePermission('LISTINGS'), checklistCtrl.rejectChecklistDocument);
+router.post('/properties/:id/mandates/:mandateId/owner-confirmation/request', requirePermission('LISTINGS'), checklistCtrl.requestOwnerConfirmation);
+router.patch('/properties/owner-confirmation/:confirmationId', requirePermission('LISTINGS'), checklistCtrl.recordOwnerConfirmation);
 router.get('/properties/:id',          ctrl.getPropertyById);
-router.patch('/properties/:id/approve', ctrl.approveProperty);
-router.patch('/properties/:id/reject',  ctrl.rejectProperty);
+router.patch('/properties/:id/approve', requirePermission('LISTINGS'), ctrl.approveProperty);
+router.patch('/properties/:id/reject',  requirePermission('LISTINGS'), ctrl.rejectProperty);
 // 4.15 — ask for fixes without refusing the listing.
-router.patch('/properties/:id/request-changes', ctrl.requestPropertyChanges);
-router.patch('/properties/:id',         ctrl.editProperty);
+router.patch('/properties/:id/request-changes', requirePermission('LISTINGS'), ctrl.requestPropertyChanges);
+router.patch('/properties/:id',         requirePermission('LISTINGS'), ctrl.editProperty);
 
 // 4.10 / 4.11 — builder projects. Static segments stay above /projects/:id.
 router.get('/projects',                      projectCtrl.listAdmin);
 router.get('/projects/:id',                  projectCtrl.getAdmin);
-router.patch('/projects/:id/approve',        projectCtrl.approve);
-router.patch('/projects/:id/reject',         projectCtrl.reject);
-router.patch('/projects/:id/request-changes', projectCtrl.requestChanges);
-router.patch('/projects/:id/approvals/:item', projectCtrl.setApprovalItem);
+router.patch('/projects/:id/approve',        requirePermission('LISTINGS'), projectCtrl.approve);
+router.patch('/projects/:id/reject',         requirePermission('LISTINGS'), projectCtrl.reject);
+router.patch('/projects/:id/request-changes', requirePermission('LISTINGS'), projectCtrl.requestChanges);
+router.patch('/projects/:id/approvals/:item', requirePermission('LISTINGS'), projectCtrl.setApprovalItem);
 // R28 — admin-only; a builder cannot set their own brokerage rate.
 router.patch('/projects/:id/brokerage',       projectCtrl.setBrokerage);
 
@@ -142,7 +142,7 @@ router.patch('/kyc/:userId/verify', requirePermission('KYC'), ctrl.verifyKyc);
 // 5.x — re-run the automated PAN/GSTIN/RERA check on demand.
 router.post('/kyc/:userId/auto-verify', requirePermission('KYC'), ctrl.autoVerifyKyc);
 // R9 — ask for specific documents instead of a flat reject.
-router.post('/kyc/:userId/request-documents', ctrl.requestKycDocuments);
+router.post('/kyc/:userId/request-documents', requirePermission('KYC'), ctrl.requestKycDocuments);
 
 // Revenue
 router.get('/revenue', ctrl.getRevenue);
@@ -194,12 +194,12 @@ router.post('/escrow/:id/payouts/refund-remaining', requirePermission('FINANCE')
 // CMS
 router.get('/content',        cmsCtrl.getAllForAdmin);
 router.get('/content/:id',    cmsCtrl.getByIdForAdmin);
-router.post('/content',       auditAction('CMS_CONTENT_CREATED', 'Content'), cmsCtrl.create);
-router.patch('/content/:id',  auditAction('CMS_CONTENT_UPDATED', 'Content'), cmsCtrl.update);
-router.delete('/content/:id', auditAction('CMS_CONTENT_DELETED', 'Content'), cmsCtrl.remove);
+router.post('/content',       requirePermission('CONTENT'), auditAction('CMS_CONTENT_CREATED', 'Content'), cmsCtrl.create);
+router.patch('/content/:id',  requirePermission('CONTENT'), auditAction('CMS_CONTENT_UPDATED', 'Content'), cmsCtrl.update);
+router.delete('/content/:id', requirePermission('CONTENT'), auditAction('CMS_CONTENT_DELETED', 'Content'), cmsCtrl.remove);
 // Not tied to a post id — works for an unsaved post; the editor PATCHes
 // imageUrl onto the post separately once it has one.
-router.post('/content/upload-image', uploadContentImageMiddleware, cmsCtrl.uploadImage);
+router.post('/content/upload-image', requirePermission('CONTENT'), uploadContentImageMiddleware, cmsCtrl.uploadImage);
 
 // Microsites — standalone public property pages (/m/<slug>). Writes are
 // gated the same as properties (LISTINGS), since a microsite is an
@@ -211,27 +211,27 @@ router.patch('/microsites/:id',    requirePermission('LISTINGS'), validateObject
 router.delete('/microsites/:id',   requirePermission('LISTINGS'), validateObjectId('id'), micrositeCtrl.remove);
 
 // Notifications
-router.post('/notifications/broadcast', notifCtrl.broadcast);
+router.post('/notifications/broadcast', requirePermission('CONTENT'), notifCtrl.broadcast);
 
 // Ticket management
 router.get('/tickets',            ctrl.getTickets);
 router.get('/tickets/stats',      ctrl.getTicketStats);
 router.get('/ratings/summary',    ctrl.getRatingsSummary);
 router.get('/tickets/:id',        ctrl.getTicket);
-router.patch('/tickets/:id',      ctrl.updateTicket);
+router.patch('/tickets/:id',      requirePermission('TICKETS'), ctrl.updateTicket);
 // 7.2 / 7.9 — real vendor dispatch; calling again with a different vendorId reassigns.
-router.patch('/tickets/:id/dispatch',   ctrl.dispatchTicket);
+router.patch('/tickets/:id/dispatch',   requirePermission('TICKETS'), ctrl.dispatchTicket);
 // 7.4 / 7.5 — resolve with charge breakdown + before/after evidence.
-router.patch('/tickets/:id/resolve',    ctrl.resolveTicket);
+router.patch('/tickets/:id/resolve',    requirePermission('TICKETS'), ctrl.resolveTicket);
 // 7.8
-router.patch('/tickets/:id/link-deal',  ctrl.linkTicketToDeal);
+router.patch('/tickets/:id/link-deal',  requirePermission('TICKETS'), ctrl.linkTicketToDeal);
 // backend-work-still-open.md #9 — same thread the user sees; admin can
 // read/reply on any ticket, not scoped to one raised by them.
 router.get('/tickets/:id/comments',     ctrl.getTicketComments);
-router.post('/tickets/:id/comments',    ctrl.addTicketComment);
+router.post('/tickets/:id/comments',    requirePermission('TICKETS'), ctrl.addTicketComment);
 // backend-work-still-open.md #7 — rule-driven dispatch, an alternative to
 // manually naming a vendor via PATCH .../dispatch above.
-router.post('/tickets/:id/auto-dispatch', ctrl.dispatchTicketAutomatically);
+router.post('/tickets/:id/auto-dispatch', requirePermission('TICKETS'), ctrl.dispatchTicketAutomatically);
 
 // Loan management
 router.get('/loan',               ctrl.getLoans);
@@ -244,8 +244,8 @@ router.get('/users',                   ctrl.getUsers);
 router.get('/users/:id',               ctrl.getUserById);
 router.get('/users/:id/inquiries',     validateObjectId('id'), ctrl.getUserInquiries);
 router.get('/users/:id/subscriptions', validateObjectId('id'), ctrl.getUserSubscriptions);
-router.patch('/users/:id/role',        ctrl.changeUserRole);
-router.patch('/users/:id/suspend',     ctrl.suspendUser);
+router.patch('/users/:id/role',        requirePermission('USERS'), ctrl.changeUserRole);
+router.patch('/users/:id/suspend',     requirePermission('USERS'), ctrl.suspendUser);
 // Backend gaps handoff, 2026-10-10 (#3) — a user's own privacy/consent
 // audit trail. Gated by its own PRIVACY permission (see
 // utils/adminPermissions.js), not bundled into the general requireAdmin
@@ -264,13 +264,13 @@ router.delete('/staff/:id',        requirePermission('STAFF'), ctrl.removeStaffM
 
 // Service catalog management
 router.get('/services',         ctrl.listServices);
-router.post('/services',        auditAction('SERVICE_CREATED', 'Service', { idParam: 'id' }), ctrl.createService);
-router.patch('/services/:id',   auditAction('SERVICE_UPDATED', 'Service'), ctrl.updateService);
-router.delete('/services/:id',  auditAction('SERVICE_DELETED', 'Service'), ctrl.deleteService);
+router.post('/services',        requirePermission('CONTENT'), auditAction('SERVICE_CREATED', 'Service', { idParam: 'id' }), ctrl.createService);
+router.patch('/services/:id',   requirePermission('CONTENT'), auditAction('SERVICE_UPDATED', 'Service'), ctrl.updateService);
+router.delete('/services/:id',  requirePermission('CONTENT'), auditAction('SERVICE_DELETED', 'Service'), ctrl.deleteService);
 
 // User document vault review (Pattern 12)
 router.get('/documents',               ctrl.listDocuments);
-router.patch('/documents/:id/verify',  auditAction('DOCUMENT_REVIEWED', 'UserDocument'), ctrl.verifyDocument);
+router.patch('/documents/:id/verify',  requirePermission('KYC'), auditAction('DOCUMENT_REVIEWED', 'UserDocument'), ctrl.verifyDocument);
 
 // Contact inbox (docs 11.1-11.5)
 router.get('/contact',                  ctrl.listContactMessages);
@@ -300,9 +300,9 @@ router.patch('/nri-leads/:id/read',  auditAction('NRI_LEAD_MARKED_READ', 'NriLea
 
 // Team roster
 router.get('/team',          ctrl.listTeam);
-router.post('/team',         auditAction('TEAM_MEMBER_CREATED', 'TeamMember', { idParam: 'id' }), ctrl.createTeamMember);
-router.patch('/team/:id',    auditAction('TEAM_MEMBER_UPDATED', 'TeamMember'), ctrl.updateTeamMember);
-router.delete('/team/:id',   auditAction('TEAM_MEMBER_DELETED', 'TeamMember'), ctrl.deleteTeamMember);
+router.post('/team',         requirePermission('CONTENT'), auditAction('TEAM_MEMBER_CREATED', 'TeamMember', { idParam: 'id' }), ctrl.createTeamMember);
+router.patch('/team/:id',    requirePermission('CONTENT'), auditAction('TEAM_MEMBER_UPDATED', 'TeamMember'), ctrl.updateTeamMember);
+router.delete('/team/:id',   requirePermission('CONTENT'), auditAction('TEAM_MEMBER_DELETED', 'TeamMember'), ctrl.deleteTeamMember);
 
 // Video tour requests
 router.get('/video-tours',                                                   ctrl.listVideoTours);
@@ -311,14 +311,14 @@ router.post('/video-tours/:id/upload', videoTourUploader.single('video'),   ctrl
 
 // Vendor catalog
 router.get('/vendors',         ctrl.listVendors);
-router.post('/vendors',        auditAction('VENDOR_CREATED', 'Vendor', { idParam: 'id' }), ctrl.createVendor);
+router.post('/vendors',        requirePermission('TICKETS'), auditAction('VENDOR_CREATED', 'Vendor', { idParam: 'id' }), ctrl.createVendor);
 router.get('/vendors/:id',     ctrl.getVendor);
-router.patch('/vendors/:id',   auditAction(vendorPatchAction, 'Vendor'), ctrl.updateVendor);
-router.delete('/vendors/:id',  auditAction('VENDOR_DEACTIVATED', 'Vendor'), ctrl.deleteVendor);
+router.patch('/vendors/:id',   requirePermission('TICKETS'), auditAction(vendorPatchAction, 'Vendor'), ctrl.updateVendor);
+router.delete('/vendors/:id',  requirePermission('TICKETS'), auditAction('VENDOR_DEACTIVATED', 'Vendor'), ctrl.deleteVendor);
 // 7.1 — recurring weekly availability.
 router.get('/vendors/:id/availability',             ctrl.listVendorAvailability);
-router.post('/vendors/:id/availability',            ctrl.addVendorAvailability);
-router.delete('/vendors/:id/availability/:slotId',  ctrl.deleteVendorAvailability);
+router.post('/vendors/:id/availability',            requirePermission('TICKETS'), ctrl.addVendorAvailability);
+router.delete('/vendors/:id/availability/:slotId',  requirePermission('TICKETS'), ctrl.deleteVendorAvailability);
 
 // Platform analytics (funnel + cohorts)
 router.get('/analytics', ctrl.getAnalytics);
@@ -343,13 +343,13 @@ router.patch('/reviews/:id/moderate', ctrl.moderateReview);
 router.get('/wati/stats',                  watiCtrl.getStats);
 router.get('/wati/messages',               watiCtrl.listMessages);
 router.get('/wati/templates',              watiCtrl.listTemplates);
-router.post('/wati/templates',             watiCtrl.createTemplate);
+router.post('/wati/templates',             requirePermission('CONTENT'), watiCtrl.createTemplate);
 router.get('/wati/templates/:id',          watiCtrl.getTemplate);
-router.patch('/wati/templates/:id',        watiCtrl.updateTemplate);
-router.delete('/wati/templates/:id',       watiCtrl.deleteTemplate);
-router.post('/wati/templates/:id/submit',  watiCtrl.submitTemplate);
-router.patch('/wati/templates/:id/status', watiCtrl.syncStatus);
-router.post('/wati/templates/:id/test-send', watiCtrl.testSend);
+router.patch('/wati/templates/:id',        requirePermission('CONTENT'), watiCtrl.updateTemplate);
+router.delete('/wati/templates/:id',       requirePermission('CONTENT'), watiCtrl.deleteTemplate);
+router.post('/wati/templates/:id/submit',  requirePermission('CONTENT'), watiCtrl.submitTemplate);
+router.patch('/wati/templates/:id/status', requirePermission('CONTENT'), watiCtrl.syncStatus);
+router.post('/wati/templates/:id/test-send', requirePermission('CONTENT'), watiCtrl.testSend);
 
 // B2B network oversight (B5.10) — admin watches these connections to catch
 // offline bypass, so unlike the partner views this one does include contacts.
@@ -396,7 +396,7 @@ router.patch('/advisor-referrals/:id/revoke', referralCtrl.revokeAdmin);
 
 // Platform config
 router.get('/config',         ctrl.listConfig);
-router.put('/config/:key',    auditAction('PLATFORM_CONFIG_SET', 'PlatformConfig', { idParam: 'key' }), ctrl.upsertConfig);
-router.delete('/config/:key', auditAction('PLATFORM_CONFIG_DELETED', 'PlatformConfig', { idParam: 'key' }), ctrl.deleteConfig);
+router.put('/config/:key',    requirePermission('FINANCE'), auditAction('PLATFORM_CONFIG_SET', 'PlatformConfig', { idParam: 'key' }), ctrl.upsertConfig);
+router.delete('/config/:key', requirePermission('FINANCE'), auditAction('PLATFORM_CONFIG_DELETED', 'PlatformConfig', { idParam: 'key' }), ctrl.deleteConfig);
 
 module.exports = router;
