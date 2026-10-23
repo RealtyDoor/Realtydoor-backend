@@ -1001,6 +1001,14 @@ async function disputeLeadCommission(leadId, reason, adminId, ip) {
 // not anything on EscrowTransaction — the admin route path is
 // GET /admin/escrow/fees-due per the spec, but what it actually reads is
 // this module's own data.
+// Fee and GST due from the seller for one deal, in paise; null amounts when the deal carries no price or fee percentage (older success-fee rows).
+function feeDueAmounts(row, gstPct) {
+  if (!row.dealPriceAtLock || !row.feePct) return { feeDuePaise: null, gstDuePaise: null, amountDuePaise: null };
+  const feeDuePaise = money.toPaise(round2((row.dealPriceAtLock * row.feePct) / 100));
+  const gstDuePaise = money.pctOf(feeDuePaise, gstPct);
+  return { feeDuePaise, gstDuePaise, amountDuePaise: feeDuePaise + gstDuePaise };
+}
+
 async function listFeesDue(skip, limit) {
   const where = { commissionStatus: 'INVOICED' };
   const [rows, total] = await Promise.all([
@@ -1029,8 +1037,12 @@ async function listFeesDue(skip, limit) {
     : [];
   const partnerById = new Map(partners.map((p) => [p.id, p]));
 
+  // What the seller actually owes: the whole fee on the deal price (partner share + platform fee) plus GST, in paise.
+  // commissionAmountPaise is only the platform's retained part, which is 0 on a custom-rate deal, so it is not the amount due.
+  const { commission } = await getMoneySettings();
   const data = rows.map((r) => ({
     ...r,
+    ...feeDueAmounts(r, commission.gstPct),
     property: r.property ? { ...r.property, partner: partnerById.get(r.property.partnerId) || null } : null,
   }));
 
@@ -1379,6 +1391,7 @@ async function clearProjectRate(projectId, adminId, ip) {
 }
 
 module.exports = {
+  feeDueAmounts,
   assertTdsWithinInvoice,
   listProjectRates, getProjectRate, setProjectRate, clearProjectRate, buildPartnerQuote, rateFromCard,
   listRateCards, createRateCard, updateRateCard, deleteRateCard,
