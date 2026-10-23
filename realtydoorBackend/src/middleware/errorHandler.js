@@ -95,7 +95,9 @@ function errorHandler(err, req, res, next) {
     success: false,
     message,
     data,
-    ...(process.env.NODE_ENV === 'development' ? { stack: err.stack } : {}),
+    // The stack (file paths, the failing query) goes to the log, never to the client, whatever NODE_ENV is: the test site is public
+    // and runs in development mode. A developer can switch it on explicitly on their own machine with EXPOSE_ERROR_STACK=true.
+    ...(process.env.EXPOSE_ERROR_STACK === 'true' && process.env.NODE_ENV !== 'production' ? { stack: err.stack } : {}),
   });
 }
 

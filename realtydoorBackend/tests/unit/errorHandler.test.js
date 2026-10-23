@@ -46,3 +46,30 @@ describe('body parser failures are the client\'s mistake', () => {
   });
 });
 
+
+describe('the stack trace never reaches the client by default (BUG-006)', () => {
+  const OLD = { NODE_ENV: process.env.NODE_ENV, EXPOSE: process.env.EXPOSE_ERROR_STACK };
+  afterEach(() => { process.env.NODE_ENV = OLD.NODE_ENV; if (OLD.EXPOSE === undefined) delete process.env.EXPOSE_ERROR_STACK; else process.env.EXPOSE_ERROR_STACK = OLD.EXPOSE; });
+  const body = () => run(new Error('boom /Users/x/secret/file.js:12')).json.mock.calls[0][0];
+
+  test.each(['development', 'test', 'production', undefined])('NODE_ENV=%s: no stack, no file path, only the generic message', (env) => {
+    if (env === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = env;
+    delete process.env.EXPOSE_ERROR_STACK;
+    const b = body();
+    expect(b.stack).toBeUndefined();
+    expect(JSON.stringify(b)).not.toMatch(/\/Users\/|secret|file\.js/);
+    expect(b.message).toBe('Internal Server Error');
+  });
+  test('a client error (404, 400) has no stack either', () => {
+    process.env.NODE_ENV = 'development';
+    const ApiError = require('../../src/utils/ApiError');
+    expect(run(new ApiError(404, 'Property not found')).json.mock.calls[0][0].stack).toBeUndefined();
+  });
+  test('a developer can switch it on explicitly on their own machine, but never in production', () => {
+    process.env.EXPOSE_ERROR_STACK = 'true';
+    process.env.NODE_ENV = 'development';
+    expect(body().stack).toContain('boom');
+    process.env.NODE_ENV = 'production';
+    expect(body().stack).toBeUndefined();
+  });
+});

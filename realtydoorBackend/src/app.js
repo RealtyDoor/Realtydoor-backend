@@ -4,6 +4,7 @@ const cors = require('cors');
 const compression = require('compression');
 
 const { errorHandler, notFound } = require('./middleware/errorHandler');
+const { rejectNullBytes } = require('./middleware/rejectNullBytes');
 const { requestLogger } = require('./middleware/requestLogger');
 const { defaultLimiter } = require('./middleware/rateLimiter');
 
@@ -62,6 +63,7 @@ app.use('/api/webhooks', webhookRoutes);
 // raises it if a feature ever needs more.
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use(rejectNullBytes);
 
 // ── Centralised request/response logger ───────────────────────────────────────
 if (process.env.NODE_ENV !== 'test') {
