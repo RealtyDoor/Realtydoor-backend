@@ -64,3 +64,14 @@ describe('requirePermission', () => {
     expect(err.statusCode).toBe(403);
   });
 });
+
+describe('requirePermission with a list of scopes (any one is enough)', () => {
+  test('passes with either scope, refuses with neither, and names the first scope', () => {
+    expect(run(['FINANCE', 'FINANCE_VIEW'], { role: 'ADMIN', staffRole: 'CRM_MANAGER', adminPermissions: ['FINANCE_VIEW'] })).toBeNull();
+    expect(run(['FINANCE', 'FINANCE_VIEW'], { role: 'ADMIN', staffRole: 'FINANCE_STAFF', adminPermissions: ['FINANCE'] })).toBeNull();
+    const err = run(['FINANCE', 'FINANCE_VIEW'], { role: 'ADMIN', staffRole: 'SUPPORT', adminPermissions: ['LEADS'] });
+    expect(err.statusCode).toBe(403);
+    expect(err.message).toBe('Missing the FINANCE permission');
+  });
+});
+

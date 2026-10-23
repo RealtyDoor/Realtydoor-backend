@@ -5,7 +5,9 @@ const ApiError = require('../utils/ApiError');
 // (escrow release, commission lock/collect, KYC verify) rather than
 // retrofitted onto every admin route in the app — most routes stay on the
 // existing requireAdmin check unchanged.
+// `scope` is one permission, or a list where holding ANY of them is enough (a read-only scope next to the full one).
 function requirePermission(scope) {
+  const scopes = [].concat(scope);
   return (req, res, next) => {
     if (!req.user) return next(new ApiError(401, 'Not authenticated'));
     if (req.user.role !== 'ADMIN') return next(new ApiError(403, 'Insufficient permissions'));
@@ -14,8 +16,9 @@ function requirePermission(scope) {
     // assigned, adminPermissions is the real gate; SUPER_ADMIN bypasses it.
     if (req.user.staffRole == null) return next();
     if (req.user.staffRole === 'SUPER_ADMIN') return next();
-    if ((req.user.adminPermissions || []).includes(scope)) return next();
-    return next(new ApiError(403, `Missing the ${scope} permission`));
+    const held = req.user.adminPermissions || [];
+    if (scopes.some((s) => held.includes(s))) return next();
+    return next(new ApiError(403, `Missing the ${scopes[0]} permission`));
   };
 }
 

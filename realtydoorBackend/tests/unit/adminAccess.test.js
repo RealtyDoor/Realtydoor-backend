@@ -22,3 +22,13 @@ describe('adminAccessOf (what the admin menu may show)', () => {
     expect(ADMIN_PERMISSION_SCOPES).not.toContain('X');
   });
 });
+
+describe('the CRM manager preset', () => {
+  test('is Support plus read-only money, and has no way to move money', () => {
+    const access = adminAccessOf({ role: 'ADMIN', staffRole: 'CRM_MANAGER', adminPermissions: DEFAULT_PERMISSIONS_BY_STAFF_ROLE.CRM_MANAGER });
+    expect(access.permissions).toEqual(['LEADS', 'LISTINGS', 'KYC', 'TICKETS', 'FINANCE_VIEW']);
+    expect(access.permissions).not.toContain('FINANCE');
+    expect(access.permissions).not.toContain('COMMISSION');
+    expect(ADMIN_PERMISSION_SCOPES).toContain('FINANCE_VIEW');
+  });
+});

@@ -67,8 +67,10 @@ describe('admin money routes carry their permission', () => {
     expect(line).toContain(`requirePermission('${scope}')`);
   });
 
-  test('the whole /admin/money router is gated on FINANCE', () => {
-    expect(moneySource).toContain("router.use(requirePermission('FINANCE'))");
+  test('the whole /admin/money router is gated: FINANCE for everything, FINANCE_VIEW for reads only (see moneyViewOnly.test.js)', () => {
+    expect(moneySource).toContain("requirePermission('FINANCE')");
+    expect(moneySource).toContain("requirePermission(['FINANCE', 'FINANCE_VIEW'])");
+    expect(moneySource).toMatch(/router\.use\(/);
   });
 });
 

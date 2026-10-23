@@ -1,4 +1,4 @@
-// Mounted at /api/admin/money (FINANCE permission): ledger, deal money card,
+// Mounted at /api/admin/money (FINANCE permission; FINANCE_VIEW for reads): ledger, deal money card,
 // payables and receivables, reconciliation, TDS ledger, partner tax invoices,
 // accountant CSV, audit-chain check.
 const router = require('express').Router();
@@ -6,7 +6,14 @@ const ctrl = require('./money.controller');
 const { requirePermission } = require('../../middleware/requirePermission');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 
-router.use(requirePermission('FINANCE'));
+// FINANCE can do everything here. FINANCE_VIEW (the CRM manager) may only READ, and not the accountant CSV export, so it can
+// explain a deal's money to a buyer or partner but never move, invoice or download it.
+const full = requirePermission('FINANCE');
+const readOnly = requirePermission(['FINANCE', 'FINANCE_VIEW']);
+router.use((req, res, next) => {
+  const isRead = req.method === 'GET' || req.method === 'HEAD';
+  return (isRead && !req.path.startsWith('/export') ? readOnly : full)(req, res, next);
+});
 
 router.get('/ledger',                 ctrl.listLedger);
 router.post('/ledger/manual',         ctrl.addManual);

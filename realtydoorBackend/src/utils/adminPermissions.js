@@ -7,6 +7,7 @@ const ADMIN_PERMISSION_SCOPES = [
   'LISTINGS',    // properties, projects, mandates/conflicts
   'KYC',         // partner KYC review
   'FINANCE',     // escrow release/refund, payouts, builder invoices
+  'FINANCE_VIEW', // read-only money: the deal money card, ledger, TDS and partner tax invoices (no release, refund, invoice or export)
   'COMMISSION',  // rate cards, overrides, per-lead commission terms
   'TICKETS',     // service tickets, vendors
   'USERS',       // user/partner management, role changes, suspensions
@@ -23,11 +24,13 @@ const ADMIN_PERMISSION_SCOPES = [
 
 // A named staffRole is just a convenient preset — adminPermissions is what
 // actually gets checked (SUPER_ADMIN bypasses it and always passes).
-const ADMIN_STAFF_ROLES = ['SUPER_ADMIN', 'SUPPORT', 'FINANCE_STAFF', 'CONTENT_MANAGER'];
+const ADMIN_STAFF_ROLES = ['SUPER_ADMIN', 'SUPPORT', 'CRM_MANAGER', 'FINANCE_STAFF', 'CONTENT_MANAGER'];
 
 const DEFAULT_PERMISSIONS_BY_STAFF_ROLE = {
   SUPER_ADMIN: ADMIN_PERMISSION_SCOPES, // unused in practice — SUPER_ADMIN bypasses the check — kept for directory display consistency.
   SUPPORT: ['LEADS', 'LISTINGS', 'KYC', 'TICKETS'],
+  // Answers buyers and partners all day, so it can SEE a deal's money (to explain a commission, TDS or payout) but cannot move any.
+  CRM_MANAGER: ['LEADS', 'LISTINGS', 'KYC', 'TICKETS', 'FINANCE_VIEW'],
   FINANCE_STAFF: ['FINANCE', 'COMMISSION'],
   CONTENT_MANAGER: ['CONTENT'],
 };
