@@ -385,6 +385,28 @@ describe('registered-partner payout is blocked without an accepted tax invoice',
   };
   const releaseBody = { manualTransferConfirmed: true, note: 'seller paid by NEFT' };
 
+  test('the partner who owns the listing (a different partner) is told the token was released; the assigned partner and an owner who is the same partner are not told twice', async () => {
+    setupRelease({ gstin: GSTIN, invoiceStatus: 'ACCEPTED' });
+    const lead = await prisma.lead.findUnique();
+    prisma.lead.findUnique.mockResolvedValue({ ...lead, property: { ...lead.property, id: 'prop1', partnerId: 'owner9' } });
+    createNotification.mockClear();
+    await escrow.release('esc1', 'admin1', releaseBody, '::1');
+    await new Promise((r) => setImmediate(r));
+    const notices = createNotification.mock.calls.map((c) => c[0]);
+    const owner = notices.filter((n) => n.userId === 'owner9');
+    expect(owner).toHaveLength(1);
+    expect(owner[0]).toMatchObject({ title: 'Token released on your listing', type: 'ESCROW_RELEASED', linkUrl: '/partners/listings/prop1' });
+    expect(notices.filter((n) => n.userId === 'p1' && n.title === 'Escrow Released')).toHaveLength(1);
+
+    setupRelease({ gstin: GSTIN, invoiceStatus: 'ACCEPTED' });
+    const same = await prisma.lead.findUnique();
+    prisma.lead.findUnique.mockResolvedValue({ ...same, property: { ...same.property, id: 'prop1', partnerId: 'p1' } });
+    createNotification.mockClear();
+    await escrow.release('esc1', 'admin1', releaseBody, '::1');
+    await new Promise((r) => setImmediate(r));
+    expect(createNotification.mock.calls.map((c) => c[0]).filter((n) => n.title === 'Token released on your listing')).toHaveLength(0);
+  });
+
   test('NO invoice: seller is released, partner leg is NOT paid, nothing credited, claim is marked deferred', async () => {
     setupRelease({ gstin: GSTIN, invoiceStatus: null });
     const out = await escrow.release('esc1', 'admin1', releaseBody, '::1');

@@ -407,7 +407,18 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
       type: 'ESCROW_HELD',
       linkUrl: `/user/inquiries/${updated.leadId}`,
     });
-    const heldLead = await prisma.lead.findUnique({ where: { id: updated.leadId }, select: { property: { select: { title: true } }, propertyInterest: true } });
+    const heldLead = await prisma.lead.findUnique({ where: { id: updated.leadId }, select: { assignedPartnerId: true, property: { select: { id: true, title: true, partnerId: true } }, propertyInterest: true } });
+    // The partner who owns the listing is told too (no buyer details): a token in escrow on their listing is news to them.
+    const ownerId = heldLead?.property?.partnerId;
+    if (ownerId && ownerId !== heldLead?.assignedPartnerId) {
+      await createNotification({
+        userId: ownerId,
+        title: 'Token received on your listing',
+        message: `A buyer's token advance of ₹${updated.amount.toLocaleString('en-IN')} was received for ${heldLead.property.title || 'your listing'}. It stays in escrow until admin releases it.`,
+        type: 'ESCROW_HELD',
+        linkUrl: `/partners/listings/${heldLead.property.id}`,
+      });
+    }
     notifyUser(updated.buyerId, 'escrow_token_received', {
       name: '$userName', amount: updated.amount.toLocaleString('en-IN'),
       property_title: heldLead?.property?.title || heldLead?.propertyInterest || 'your property',
@@ -1040,7 +1051,7 @@ async function release(escrowId, adminId, releaseData, ip) {
   (async () => {
     const lead = await prisma.lead.findUnique({
       where: { id: escrow.leadId },
-      select: { refCode: true, assignedPartnerId: true, property: { select: { title: true } } },
+      select: { refCode: true, assignedPartnerId: true, property: { select: { id: true, title: true, partnerId: true } } },
     });
     const dealLabel = lead?.property?.title || lead?.refCode || 'your deal';
     await createNotification({
@@ -1057,6 +1068,17 @@ async function release(escrowId, adminId, releaseData, ip) {
         message: `The escrow for ${lead.refCode || dealLabel} has been released by admin.`,
         type: 'ESCROW_RELEASED',
         linkUrl: `/partners/leads/${escrow.leadId}`,
+      });
+    }
+    // The listing's owner, when that is a different partner, is told the token was released.
+    const ownerId = lead?.property?.partnerId;
+    if (ownerId && ownerId !== lead?.assignedPartnerId) {
+      await createNotification({
+        userId: ownerId,
+        title: 'Token released on your listing',
+        message: `The token advance for ${dealLabel} was released to the seller by admin. The deal is complete.`,
+        type: 'ESCROW_RELEASED',
+        linkUrl: `/partners/listings/${lead.property.id}`,
       });
     }
   })().catch((err) => logger.warn('[Escrow] Post-release notification failed', { escrowId, error: err.message }));
