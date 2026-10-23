@@ -127,9 +127,9 @@ router.patch('/projects/:id/brokerage',       projectCtrl.setBrokerage);
 // R28 — builder brokerage invoices. Static segments stay above
 // /builder-invoices/:id for the same reason as /projects/:id above.
 router.get('/builder-invoices',                builderInvoiceCtrl.listAdmin);
-router.post('/builder-invoices',                builderInvoiceCtrl.createInvoice);
-router.post('/builder-invoices/:id/collect',    builderInvoiceCtrl.collectInvoice);
-router.post('/builder-invoices/:id/dispute',    builderInvoiceCtrl.disputeInvoice);
+router.post('/builder-invoices',                requirePermission('FINANCE'), builderInvoiceCtrl.createInvoice);
+router.post('/builder-invoices/:id/collect',    requirePermission('FINANCE'), builderInvoiceCtrl.collectInvoice);
+router.post('/builder-invoices/:id/dispute',    requirePermission('FINANCE'), builderInvoiceCtrl.disputeInvoice);
 
 // KYC
 router.get('/kyc',                ctrl.getPendingKyc);
@@ -358,9 +358,9 @@ router.patch('/b2b/:id',   b2bCtrl.adminUpdate);
 
 // Commission rate cards, overrides and per-lead negotiated terms (3.12-3.17)
 router.get('/rate-cards',            commissionCtrl.listRateCards);
-router.post('/rate-cards',           commissionCtrl.createRateCard);
-router.patch('/rate-cards/:id',      commissionCtrl.updateRateCard);
-router.delete('/rate-cards/:id',     commissionCtrl.deleteRateCard);
+router.post('/rate-cards',           requirePermission('COMMISSION'), commissionCtrl.createRateCard);
+router.patch('/rate-cards/:id',      requirePermission('COMMISSION'), commissionCtrl.updateRateCard);
+router.delete('/rate-cards/:id',     requirePermission('COMMISSION'), commissionCtrl.deleteRateCard);
 // Money model phase 2 — ledger, TDS ledger, tax invoices, exports.
 router.use('/money', require('../money/money.routes'));
 
@@ -371,8 +371,8 @@ router.get('/projects/:id/commission-rate',  commissionCtrl.getProjectRate);
 router.put('/projects/:id/commission-rate',  requirePermission('COMMISSION'), commissionCtrl.setProjectRate);
 router.delete('/projects/:id/commission-rate', requirePermission('COMMISSION'), commissionCtrl.clearProjectRate);
 router.get('/commission-overrides',        commissionCtrl.listOverrides);
-router.post('/commission-overrides',       commissionCtrl.createOverride);
-router.delete('/commission-overrides/:id', commissionCtrl.revokeOverride);
+router.post('/commission-overrides',       requirePermission('COMMISSION'), commissionCtrl.createOverride);
+router.delete('/commission-overrides/:id', requirePermission('COMMISSION'), commissionCtrl.revokeOverride);
 // A lead's own terms are the money record; the card only pre-fills them.
 router.get('/leads/:id/commission',          commissionCtrl.getLeadTerms);
 router.get('/leads/:id/commission/preview',  commissionCtrl.previewLeadTerms);
@@ -387,7 +387,7 @@ router.post('/leads/:id/commission/lock',    requirePermission('COMMISSION'), co
 // R26 — owner success-fee payment record + receipt.
 router.post('/leads/:id/commission/invoice', requirePermission('FINANCE'), commissionCtrl.invoiceLeadCommission);
 router.post('/leads/:id/commission/collect', requirePermission('FINANCE'), commissionCtrl.collectLeadCommission);
-router.post('/leads/:id/commission/dispute', commissionCtrl.disputeLeadCommission);
+router.post('/leads/:id/commission/dispute', requirePermission('FINANCE'), commissionCtrl.disputeLeadCommission);
 
 // R29 — advisor referrals (oversight; creation is self-service, see
 // POST /api/partner/referrals).
