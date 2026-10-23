@@ -1,6 +1,7 @@
 const prisma = require('../../lib/prisma');
 const { setUserRole } = require('../../lib/clerkAdmin');
 const ApiError = require('../../utils/ApiError');
+const { adminAccessOf } = require('../../utils/adminPermissions');
 const { success, created } = require('../../utils/ApiResponse');
 const logger = require('../../lib/logger');
 const authService = require('./auth.service');
@@ -60,6 +61,7 @@ async function getMe(req, res, next) {
 
     success(res, {
       ...userProfile(user),
+      adminAccess: adminAccessOf(user),
       onboardingComplete: req.user.onboardingComplete,
       unreadNotifications: unreadCount,
       activeSubscription: activeSub,

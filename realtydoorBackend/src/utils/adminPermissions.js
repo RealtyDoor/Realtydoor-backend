@@ -32,4 +32,13 @@ const DEFAULT_PERMISSIONS_BY_STAFF_ROLE = {
   CONTENT_MANAGER: ['CONTENT'],
 };
 
-module.exports = { ADMIN_PERMISSION_SCOPES, ADMIN_STAFF_ROLES, DEFAULT_PERMISSIONS_BY_STAFF_ROLE };
+// What the admin app needs to show only the screens and buttons this admin may use. `full` mirrors requirePermission:
+// no staff role (an older admin) or SUPER_ADMIN passes every check; otherwise only the listed permissions count.
+// The server still enforces every route; this is for the menu, not for security. Null for anyone who is not an admin.
+function adminAccessOf(user) {
+  if (!user || user.role !== 'ADMIN') return null;
+  const full = user.staffRole == null || user.staffRole === 'SUPER_ADMIN';
+  return { staffRole: user.staffRole ?? null, full, permissions: full ? [...ADMIN_PERMISSION_SCOPES] : [...(user.adminPermissions || [])] };
+}
+
+module.exports = { ADMIN_PERMISSION_SCOPES, ADMIN_STAFF_ROLES, DEFAULT_PERMISSIONS_BY_STAFF_ROLE, adminAccessOf };
