@@ -51,10 +51,13 @@ const perUserLimiter = rateLimit({
   message: rateLimitMessage('Too many requests, please try again later.'),
 });
 
+// Keyed by the signed-in user (every route that uses it runs `authenticate` first), falling back to the IP,
+// so two people on one network (an office, or the website's own server) do not use up each other's 5 tries.
 const otpLimiter = rateLimit({
   ...BASE,
   windowMs: 60 * 60 * 1000,
   max: 5,
+  keyGenerator: (req) => req.user?.id || req.ip,
   message: rateLimitMessage('Too many OTP requests. Try again in 1 hour.'),
 });
 

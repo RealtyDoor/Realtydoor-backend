@@ -115,12 +115,23 @@ async function onRefund(escrow, quote, { refundId, actor }) {
 
 // Seller leg of a release.
 async function onSellerPayout(escrow, { sellerAmountPaise, payoutId, status }) {
-  return recordSafe({
+  const due = await recordSafe({
     leadId: escrow.leadId, escrowId: escrow.id, type: 'SELLER_PAYOUT', direction: 'OUT', status: 'DUE',
     partyType: 'SELLER', grossPaise: sellerAmountPaise, netPaise: sellerAmountPaise, razorpayPayoutId: payoutId || null,
     note: payoutId ? `Payout ${status || ''}`.trim() : 'Paid outside Razorpay (manual transfer)',
     idempotencyKey: `sellerPayout:${escrow.id}`, ...sys,
   });
+  // A RazorpayX payout is settled later by its webhook (onPayoutStatus). A transfer the admin confirms as already
+  // made outside Razorpay has no webhook, so settle it here: otherwise "Seller payouts due" keeps showing it forever.
+  if (!payoutId && due) {
+    await recordSafe({
+      leadId: escrow.leadId, escrowId: escrow.id, type: 'SELLER_PAYOUT', direction: 'OUT', status: 'PAID',
+      partyType: 'SELLER', grossPaise: sellerAmountPaise, netPaise: sellerAmountPaise, relatedEntryId: due.id,
+      note: 'Paid outside Razorpay (manual transfer), confirmed by admin',
+      idempotencyKey: `sellerPayoutManual:${escrow.id}`, ...sys,
+    });
+  }
+  return due;
 }
 
 // The partner's commission was credited (and normally paid). Registered

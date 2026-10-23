@@ -105,6 +105,12 @@ async function payPartnerCommission(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function repairBookkeeping(req, res, next) {
+  try {
+    success(res, await service.repairReleaseBookkeeping(req.params.id, req.user.id, req.ip), 'Release bookkeeping repaired');
+  } catch (err) { next(err); }
+}
+
 async function getAllEscrow(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
@@ -176,6 +182,6 @@ async function refundRemaining(req, res, next) {
 }
 
 module.exports = {
-  payPartnerCommission, getCheckoutQuote, createOrder, getEscrowById, getReceipt, getFeeInvoice, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
+  payPartnerCommission, repairBookkeeping, getCheckoutQuote, createOrder, getEscrowById, getReceipt, getFeeInvoice, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
   freezeEscrow, unfreezeEscrow, getPayouts, retryPayout, resolvePayout, refundRemaining,
 };

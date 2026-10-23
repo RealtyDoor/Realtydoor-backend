@@ -123,9 +123,10 @@ async function sendPhoneVerificationOtp(phone, otp, context = {}) {
 // is created and approved in WATI (add it to WATI_LIVE_TEMPLATES) the send is
 // logged as FAILED and the partner can ask admin for help. [needs a WATI template]
 async function sendVoucherOtp(phone, otp, voucherNumber, context = {}) {
-  return sendTemplateMessage(phone, 'commission_voucher_otp', [
+  // Meta rejected the Utility template "commission_voucher_otp" (a code must go in an
+  // Authentication template, which carries only the code), so the voucher number is not sent.
+  return sendTemplateMessage(phone, 'commission_voucher_code', [
     { name: '1', value: String(otp) },
-    { name: '2', value: String(voucherNumber) },
   ], context, null, CATEGORIES.TRANSACTIONAL);
 }
 

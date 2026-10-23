@@ -108,9 +108,14 @@ async function razorpay(req, res) {
         if (escrow.status !== 'PAYMENT_PENDING') {
           logger.warn('[RazorpayWebhook] payment.failed for a non-pending escrow — ignoring', { escrowId: escrow.id, status: escrow.status });
         } else {
+          // A failed attempt is an event on the order, not the end of it: Razorpay Checkout lets the buyer retry on
+          // the same order, and a later attempt can capture. So the escrow stays PAYMENT_PENDING (the buyer's "Try
+          // again" resumes this same order, and a capture is confirmed by payment.captured, verify-payment or the
+          // reconcile job). Marking it FAILED here made a successful retry get ignored. We only remember the attempt.
+          logger.info('[RazorpayWebhook] payment attempt failed — order stays open for a retry', { escrowId: escrow.id, orderId });
           await prisma.escrowTransaction.update({
             where: { razorpayOrderId: orderId },
-            data: { status: 'FAILED', failedAt: new Date() },
+            data: { failedAt: new Date() },
           });
 
           await createNotification({

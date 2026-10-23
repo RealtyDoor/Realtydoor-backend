@@ -166,6 +166,8 @@ router.patch('/escrow/:id/release', requirePermission('FINANCE'), escrowCtrl.rel
 router.post('/escrow/:id/refund', requirePermission('FINANCE'), escrowCtrl.refundEscrow);
 // Money model phase 2 — pay a partner commission that release held back (needs an accepted tax invoice for a GST-registered partner).
 router.post('/escrow/:id/partner-payout', requirePermission('FINANCE'), validateObjectId('id'), escrowCtrl.payPartnerCommission);
+// A release whose payouts went out but whose books (seller payout line, commission, TDS) were not written: re-run them.
+router.post('/escrow/:id/repair-bookkeeping', requirePermission('FINANCE'), validateObjectId('id'), escrowCtrl.repairBookkeeping);
 // R10 — freeze / unfreeze for dispute. BE-4 — FINANCE-gated, same as
 // release/refund: freezing/unfreezing changes what release()/refund() will
 // accept, so it's a money-moving-adjacent action, not a plain status flag.

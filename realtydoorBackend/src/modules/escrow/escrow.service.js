@@ -319,12 +319,18 @@ async function createOrder(leadId, buyerId, amountInRupees) {
 async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null) {
   const escrow = await prisma.escrowTransaction.findUnique({ where: { razorpayOrderId } });
   if (!escrow || (buyerId && escrow.buyerId !== buyerId)) throw new ApiError(404, 'Escrow order not found');
-  // Only ever transition out of PAYMENT_PENDING — covers both the already-HELD
-  // idempotent case and any other terminal status (FAILED/CANCELLED/etc.):
-  // a captured-payment event for an escrow that isn't awaiting payment is
-  // either a redelivered webhook or a stale/out-of-order one, and must never
-  // blindly flip a resolved escrow back to HELD.
-  if (escrow.status !== 'PAYMENT_PENDING') return escrow;
+  // Only ever transition out of PAYMENT_PENDING (or FAILED, see below) — covers
+  // both the already-HELD idempotent case and any other terminal status
+  // (CANCELLED/etc.): a captured-payment event for an escrow that isn't awaiting
+  // payment is either a redelivered webhook or a stale/out-of-order one, and
+  // must never blindly flip a resolved escrow back to HELD.
+  //
+  // FAILED is recoverable: Razorpay Checkout lets the buyer retry on the SAME
+  // order after a failed attempt, so an order marked FAILED by an earlier
+  // payment.failed (older rows, or a failure notice that raced the retry) can
+  // still be paid. A payment that is verified as captured, for this order and
+  // the right amount, is real money and must be recorded — never ignored.
+  if (!['PAYMENT_PENDING', 'FAILED'].includes(escrow.status)) return escrow;
 
   // BE-10 — verify path only (buyerId is only ever passed by the
   // buyer-facing controller, never by the webhook — see the comment above
@@ -361,10 +367,21 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
   // order at nearly the same time — only the winner transitions the row and
   // sends the one-time notification below; the loser just returns the
   // already-updated escrow instead of re-confirming (and re-notifying).
-  const claim = await prisma.escrowTransaction.updateMany({
-    where: { razorpayOrderId, status: 'PAYMENT_PENDING' },
-    data: { razorpayPaymentId, status: 'HELD', heldAt: new Date() },
-  });
+  let claim;
+  try {
+    claim = await prisma.escrowTransaction.updateMany({
+      where: { razorpayOrderId, status: { in: ['PAYMENT_PENDING', 'FAILED'] } },
+      data: { razorpayPaymentId, status: 'HELD', heldAt: new Date(), failedAt: null },
+    });
+  } catch (err) {
+    // A newer order for the same lead is already active, so this older one can't also become HELD.
+    // The buyer has paid, so surface it loudly for the admin to resolve by hand instead of losing it.
+    if (isEscrowLeadUniqueViolation(err)) {
+      logger.error('[Escrow] Captured payment for an old order but the lead already has an active escrow — needs manual review', { razorpayOrderId, razorpayPaymentId });
+      throw new ApiError(409, 'Your payment was received, but another payment order is already active for this deal. Our team will sort it out — please contact support.', { code: 'ESCROW_DUPLICATE_PAYMENT' });
+    }
+    throw err;
+  }
   if (claim.count === 0) {
     return prisma.escrowTransaction.findUnique({ where: { razorpayOrderId } });
   }
@@ -401,6 +418,43 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
   })().catch((err) => logger.warn('[Escrow] Post-confirmation notification/email failed', { escrowId: updated.id, error: err.message }));
 
   return updated;
+}
+
+// A release creates its RazorpayX payouts first and writes the books (seller payout line, partner commission, TDS entry,
+// voucher) afterwards. If that second step failed, the escrow is RELEASED and the money is out, but the books are missing.
+// This re-runs the missing steps (all of them are idempotent: ledger rows by key, TdsEntry and voucher by escrow) and
+// returns the real error if it fails again, so the cause is visible instead of silent. Admin, FINANCE permission.
+async function repairReleaseBookkeeping(escrowId, adminId, ip) {
+  const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
+  if (!escrow) throw new ApiError(404, 'Escrow not found');
+  if (!['RELEASED', 'HELD_PAYOUT_FAILED'].includes(escrow.status)) {
+    throw new ApiError(400, `Nothing to repair: the escrow is ${escrow.status}, not released`, { code: 'NOTHING_TO_REPAIR' });
+  }
+  const plan = await getReleasePlan(escrowId);
+  const c = plan.partnerPayout;
+  const sellerAmountPaise = escrow.netAmountPaise ?? Math.round((escrow.netAmount ?? escrow.amount) * 100);
+  const done = [];
+  try {
+    await ledger.onSellerPayout(escrow, { sellerAmountPaise, payoutId: escrow.razorpayPayoutId, status: escrow.sellerPayoutStatus });
+    done.push('seller payout line');
+    if (escrow.partnerPaidFromCompany && escrow.partnerGrossPaise && escrow.partnerPayoutStatus !== 'deferred') {
+      if (!c) throw new Error('the partner commission can no longer be worked out from the locked terms');
+      if (c.commissionPaise !== escrow.partnerGrossPaise) {
+        throw new ApiError(409, `The commission now works out to ₹${money.toRupees(c.commissionPaise)}, but ₹${money.toRupees(escrow.partnerGrossPaise)} was paid; fix the terms or book it by hand.`, { code: 'COMMISSION_MISMATCH' });
+      }
+      await recordPartnerCredit(escrow, c, { payoutId: escrow.razorpayPartnerPayoutId, payoutStatus: escrow.partnerPayoutStatus, adminId });
+      done.push('partner commission, TDS entry and voucher');
+    }
+  } catch (err) {
+    logger.error('[Escrow] Repair of the release bookkeeping failed', { escrowId, error: err.message, stack: err.stack });
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(500, `Bookkeeping repair failed: ${err.message}`, { code: 'REPAIR_FAILED' });
+  }
+  if (!escrow.adminNote) {
+    await prisma.escrowTransaction.update({ where: { id: escrowId }, data: { adminNote: 'Release bookkeeping repaired after an earlier failure' } });
+  }
+  await createAuditLog({ adminId, action: 'ESCROW_BOOKKEEPING_REPAIRED', targetType: 'EscrowTransaction', targetId: escrowId, after: { done }, ipAddress: ip });
+  return { escrowId, repaired: done };
 }
 
 // ─── 2.8 / 2.9 — release plan and release conditions ─────────────────────────
@@ -879,6 +933,18 @@ async function release(escrowId, adminId, releaseData, ip) {
     if (!newModel || partnerDeferred) return;
     await recordPartnerCredit(escrow, commissionPayout, { payoutId: partnerPayoutId, payoutStatus: partnerPayoutStatusVal, adminId });
   };
+  // The payouts are already created at this point, so a failure while writing the books must never abort the rest
+  // of the release (release note, audit, notifications) — that left a RELEASED escrow with payouts out and no TDS or
+  // commission records. Remember the failure instead; the admin can re-run it with repairReleaseBookkeeping().
+  let bookkeepingError = null;
+  const recordBooks = async () => {
+    try {
+      await recordTds();
+    } catch (err) {
+      bookkeepingError = err;
+      logger.error('[Escrow] Release bookkeeping failed after the payouts were created — needs repair', { escrowId, error: err.message, stack: err.stack });
+    }
+  };
 
   if (sellerError || partnerError) {
     // BE-16 — RazorpayX throws a plain {statusCode, error} object (or a bare
@@ -896,7 +962,7 @@ async function release(escrowId, adminId, releaseData, ip) {
     // which leg succeeded.
     const anyLegPaidOut = !!(sellerPayoutId || partnerPayoutId);
     if (anyLegPaidOut) {
-      await recordTds();
+      await recordBooks();
       const failedLeg = sellerError ? 'seller' : 'partner';
       await prisma.escrowTransaction.update({
         where: { id: escrowId },
@@ -914,9 +980,10 @@ async function release(escrowId, adminId, releaseData, ip) {
     throw new ApiError(502, `RazorpayX error: ${providerMessage}`, { code: 'RAZORPAYX_ERROR' });
   }
 
-  await recordTds();
+  await recordBooks();
 
   const parts = [];
+  if (bookkeepingError) parts.push(`BOOKKEEPING INCOMPLETE (${String(bookkeepingError.message).slice(0, 120)}): payouts were created; run "Repair bookkeeping" on this escrow`);
   if (sellerPayoutId)  parts.push(`Seller payout ${sellerPayoutId}: ₹${sellerAmount.toLocaleString('en-IN')}`);
   if (partnerPayoutId) parts.push(`Partner payout ${partnerPayoutId}: ₹${partnerShare.toLocaleString('en-IN')}`);
   if (partnerDeferred) {
@@ -963,6 +1030,7 @@ async function release(escrowId, adminId, releaseData, ip) {
       }),
       sellerPayoutId, partnerPayoutId,
       manualTransferConfirmed: !!manualTransferConfirmed && !sellerDetails,
+      ...(bookkeepingError && { bookkeepingIncomplete: true, bookkeepingError: String(bookkeepingError.message).slice(0, 300) }),
     },
     ipAddress: ip,
   });
@@ -994,7 +1062,7 @@ async function release(escrowId, adminId, releaseData, ip) {
   })().catch((err) => logger.warn('[Escrow] Post-release notification failed', { escrowId, error: err.message }));
 
   return {
-    ...updated, platformFeePct: plan.platformFeePct, platformFeeAmount: platformFee, partnerShareAmount: partnerShare,
+    ...updated, bookkeepingIncomplete: !!bookkeepingError, platformFeePct: plan.platformFeePct, platformFeeAmount: platformFee, partnerShareAmount: partnerShare,
     partnerPayoutDeferred: partnerDeferred ? (invoiceBlocked ? 'TAX_INVOICE_REQUIRED' : 'ADMIN') : null,
   };
 }
@@ -1007,19 +1075,26 @@ async function recordPartnerCredit(escrow, c, { payoutId, payoutStatus, adminId 
   const deductedAt = new Date();
   const { financialYear, quarter } = money.financialYearOf(deductedAt);
   const partner = await prisma.user.findUnique({ where: { id: c.partnerId }, select: { panNumber: true, name: true } });
-  const tdsEntry = await prisma.tdsEntry.upsert({
-    where: { escrowId: escrow.id },
-    create: {
-      partnerId: c.partnerId, escrowId: escrow.id, leadId: escrow.leadId, financialYear, quarter,
-      panAtDeduction: c.panOnFile ? partner.panNumber.trim().toUpperCase() : null,
-      section: c.tdsSection, ratePct: c.tdsRatePct ?? 0, rateReason: c.tdsPaise > 0 ? c.tdsRateReason : 'BELOW_THRESHOLD',
-      commissionBasePaise: c.commissionPaise, ytdBeforePaise: c.ytdBeforePaise, thresholdPaise: c.thresholdPaise,
-      thresholdReached: c.thresholdReached, taxedBasePaise: c.taxedBasePaise, tdsPaise: c.tdsPaise,
-      netPaise: c.commissionPaise - c.tdsPaise, deductedAt,
-      depositDueDate: c.tdsPaise > 0 ? money.tdsDepositDueDate(deductedAt) : null,
-    },
-    update: {},
-  });
+  // TdsEntry is append-only (the Prisma guard refuses upsert/update/delete), so "once per escrow" is a lookup and,
+  // only if missing, a create. A second call, or a race on the unique escrowId, returns the existing row.
+  const tdsData = {
+    partnerId: c.partnerId, escrowId: escrow.id, leadId: escrow.leadId, financialYear, quarter,
+    panAtDeduction: c.panOnFile ? partner.panNumber.trim().toUpperCase() : null,
+    section: c.tdsSection, ratePct: c.tdsRatePct ?? 0, rateReason: c.tdsPaise > 0 ? c.tdsRateReason : 'BELOW_THRESHOLD',
+    commissionBasePaise: c.commissionPaise, ytdBeforePaise: c.ytdBeforePaise, thresholdPaise: c.thresholdPaise,
+    thresholdReached: c.thresholdReached, taxedBasePaise: c.taxedBasePaise, tdsPaise: c.tdsPaise,
+    netPaise: c.commissionPaise - c.tdsPaise, deductedAt,
+    depositDueDate: c.tdsPaise > 0 ? money.tdsDepositDueDate(deductedAt) : null,
+  };
+  let tdsEntry = await prisma.tdsEntry.findUnique({ where: { escrowId: escrow.id } });
+  if (!tdsEntry) {
+    try {
+      tdsEntry = await prisma.tdsEntry.create({ data: tdsData });
+    } catch (err) {
+      if (err?.code !== 'P2002') throw err;
+      tdsEntry = await prisma.tdsEntry.findUnique({ where: { escrowId: escrow.id } });
+    }
+  }
   let voucher = null; let invoice = null;
   try {
     if (c.gstRegistered) invoice = await partnerTax.getAcceptedInvoice(escrow.leadId, c.partnerId);
@@ -1355,5 +1430,5 @@ async function unfreeze(escrowId, adminId, ip) {
 
 module.exports = {
   createOrder, getCheckoutQuote, checkoutBreakdown, getById, getReceipt, getFeeInvoice, getReleasePlan, confirmPayment, release, refund, getAllEscrow, getEscrowStats,
-  freeze, unfreeze, payDeferredPartnerCommission, recordPartnerCredit,
+  freeze, unfreeze, payDeferredPartnerCommission, recordPartnerCredit, repairReleaseBookkeeping,
 };

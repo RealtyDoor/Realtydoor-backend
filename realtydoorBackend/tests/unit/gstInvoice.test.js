@@ -22,10 +22,19 @@ describe('splitGstInclusive', () => {
 
 describe('financialYear', () => {
   test('April starts a new year, March ends the old one', () => {
-    expect(financialYear(new Date(2026, 3, 1))).toBe('26-27');
-    expect(financialYear(new Date(2026, 9, 22))).toBe('26-27');
-    expect(financialYear(new Date(2027, 2, 31))).toBe('26-27');
-    expect(financialYear(new Date(2026, 2, 31))).toBe('25-26');
+    expect(financialYear(new Date('2026-04-01T12:00:00+05:30'))).toBe('26-27');
+    expect(financialYear(new Date('2026-10-22T12:00:00+05:30'))).toBe('26-27');
+    expect(financialYear(new Date('2027-03-31T12:00:00+05:30'))).toBe('26-27');
+    expect(financialYear(new Date('2026-03-31T12:00:00+05:30'))).toBe('25-26');
+  });
+  test('is read in India time whatever zone the server runs in', () => {
+    // 00:30 IST on 1 April is still 31 March in UTC: it must be the new year.
+    expect(financialYear(new Date('2026-04-01T00:30:00+05:30'))).toBe('26-27');
+    expect(financialYear(new Date('2026-03-31T18:29:00Z'))).toBe('25-26');
+    expect(financialYear(new Date('2026-03-31T18:30:00Z'))).toBe('26-27');
+    // 23:45 IST on 31 March is 18:15 UTC the same day: still the old year.
+    expect(financialYear(new Date('2027-03-31T23:45:00+05:30'))).toBe('26-27');
+    expect(financialYear(new Date('2027-04-01T00:05:00+05:30'))).toBe('27-28');
   });
 });
 
@@ -58,11 +67,11 @@ describe('splitGstInclusive: odd inputs', () => {
 
 describe('financialYear and invoice numbers: edges', () => {
   test('the last second of March and the first of April', () => {
-    expect(financialYear(new Date(2027, 2, 31, 23, 59, 59))).toBe('26-27');
-    expect(financialYear(new Date(2027, 3, 1, 0, 0, 0))).toBe('27-28');
+    expect(financialYear(new Date('2027-03-31T23:59:59+05:30'))).toBe('26-27');
+    expect(financialYear(new Date('2027-04-01T00:00:00+05:30'))).toBe('27-28');
   });
   test('a century boundary keeps two digits', () => {
-    expect(financialYear(new Date(2099, 5, 1))).toBe('99-00');
+    expect(financialYear(new Date('2099-06-01T12:00:00+05:30'))).toBe('99-00');
   });
   test('the sequence pads to five digits and grows past it without breaking the 16-character limit until 99,999 invoices', () => {
     expect(formatInvoiceNo('26-27', 99999)).toBe('RD/26-27/99999');

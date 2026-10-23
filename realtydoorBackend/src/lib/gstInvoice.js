@@ -16,9 +16,11 @@ function splitGstInclusive(inclusivePaise, gstPct = 18) {
 }
 
 // Indian financial year runs 1 April to 31 March: 12 Oct 2026 is "26-27", 5 Feb 2027 is also "26-27".
+// Read in India time (UTC+5:30, no DST), not the server's own zone: a UTC server would otherwise number an
+// invoice raised at 1 April 2026 00:30 IST as FY "25-26" and put it in the wrong series.
 function financialYear(date = new Date()) {
-  const d = new Date(date);
-  const startYear = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
+  const ist = new Date(new Date(date).getTime() + 5.5 * 3600 * 1000);
+  const startYear = ist.getUTCMonth() >= 3 ? ist.getUTCFullYear() : ist.getUTCFullYear() - 1;
   return `${String(startYear).slice(-2)}-${String(startYear + 1).slice(-2)}`;
 }
 

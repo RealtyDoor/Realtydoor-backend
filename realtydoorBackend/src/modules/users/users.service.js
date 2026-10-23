@@ -222,10 +222,14 @@ async function rateLead(userId, leadId, { rating, comment }) {
 // What a buyer would get back if they cancelled now, for the confirm screen
 // (money model Rev 3, 2.2). Moves nothing.
 async function getCancelQuote(userId, leadId) {
-  const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId: userId }, select: { id: true } });
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId: userId }, select: { id: true, status: true } });
   if (!lead) throw new ApiError(404, 'Lead not found');
   const escrow = await prisma.escrowTransaction.findFirst({ where: { leadId, status: 'HELD' } });
   if (!escrow) return { hasEscrow: false };
+  // cancelLead refuses a closed or dropped inquiry, so the quote must not promise a refund for one.
+  if (['CLOSED', 'DROPPED'].includes(lead.status)) {
+    return { hasEscrow: true, escrowId: escrow.id, stage: 'CLOSED', refundable: false };
+  }
   const quote = await escrowService.refund(escrow.id, userId, null, { reason: 'BUYER_CANCEL', dryRun: true });
   return { hasEscrow: true, escrowId: escrow.id, ...quote };
 }

@@ -225,7 +225,17 @@ async function requestVoucherOtp(partnerId, voucherId, ip) {
     where: { id: v.id },
     data: { otpHash: hashCode(code), otpExpiresAt: new Date(Date.now() + VOUCHER_OTP_MINUTES * 60e3), otpAttempts: 0, otpSentAt: new Date() },
   });
-  await sendVoucherOtp(partner.phone, code, v.voucherNumber, { userId: partnerId });
+  let delivered = null;
+  try {
+    delivered = await sendVoucherOtp(partner.phone, code, v.voucherNumber, { userId: partnerId });
+  } catch (err) {
+    logger.error(`[voucher] OTP send failed for voucher ${v.id}: ${err.message}`);
+  }
+  if (!delivered) {
+    // Nothing reached the partner: drop the code and the resend lock so they can try again at once.
+    await prisma.commissionVoucher.update({ where: { id: v.id }, data: { otpHash: null, otpExpiresAt: null, otpAttempts: 0, otpSentAt: null } });
+    throw new ApiError(503, 'We could not send the code to your WhatsApp. Please try again in a few minutes, or ask Realtydoor support.', { code: 'OTP_SEND_FAILED' });
+  }
   await createAuditLog({
     adminId: partnerId, actorRole: 'PARTNER', action: 'COMMISSION_VOUCHER_OTP_SENT', targetType: 'CommissionVoucher', targetId: v.id,
     after: { voucherNumber: v.voucherNumber }, ipAddress: ip,

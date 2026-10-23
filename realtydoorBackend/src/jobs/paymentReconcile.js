@@ -36,7 +36,8 @@ async function reconcilePendingEscrows() {
   const cutoff = new Date(Date.now() - STALE_PENDING_MS);
   const maxAgeCutoff = new Date(Date.now() - RECONCILE_MAX_AGE_MS);
   const stale = await prisma.escrowTransaction.findMany({
-    where: { status: 'PAYMENT_PENDING', createdAt: { lte: cutoff, gte: maxAgeCutoff } },
+    // FAILED too: earlier failure notices closed orders that could still be paid on a retry (see confirmPayment).
+    where: { status: { in: ['PAYMENT_PENDING', 'FAILED'] }, createdAt: { lte: cutoff, gte: maxAgeCutoff } },
     select: { id: true, razorpayOrderId: true },
   });
 

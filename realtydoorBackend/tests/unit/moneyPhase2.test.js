@@ -374,7 +374,9 @@ describe('registered-partner payout is blocked without an accepted tax invoice',
     prisma.leadCommissionLine.findMany.mockResolvedValue([{ payeeRole: 'CLOSING_AGENT', payeeUserId: 'p1', pct: 50 }]);
     prisma.user.findUnique.mockResolvedValue({ id: 'p1', name: 'Asha', panNumber: pan, gstin, razorpayFundAccountId: account ? 'fa_1' : null, payoutAccountStatus: account ? 'ACTIVE' : null, billingAddress: 'x' });
     prisma.tdsEntry.findMany.mockResolvedValue([]);
-    prisma.tdsEntry.upsert.mockImplementation(async ({ create }) => ({ id: 't1', ...create }));
+    // TdsEntry is append-only (upsert is refused by the Prisma guard): the code looks the row up and creates it only if missing.
+    prisma.tdsEntry.findUnique.mockResolvedValue(null);
+    prisma.tdsEntry.create.mockImplementation(async ({ data }) => ({ id: 't1', ...data }));
     prisma.partnerTaxInvoice.findFirst.mockResolvedValue(invoiceStatus ? { id: 'inv1', status: invoiceStatus, invoiceNumber: 'INV-7' } : null);
     prisma.counter.upsert.mockResolvedValue({ seq: 12 });
     prisma.commissionVoucher.findUnique.mockResolvedValue(null);
@@ -391,8 +393,8 @@ describe('registered-partner payout is blocked without an accepted tax invoice',
     const claim = prisma.escrowTransaction.updateMany.mock.calls[0][0].data;
     expect(claim).toMatchObject({ status: 'RELEASED', partnerPayoutStatus: 'deferred', netAmount: 50000 });
     expect(claim.partnerSharePaise).toBeUndefined();
-    expect(prisma.tdsEntry.upsert).not.toHaveBeenCalled();
-    expect(prisma.moneyLedgerEntry.create.mock.calls.map((c) => c[0].data.type)).toEqual(['SELLER_PAYOUT']);
+    expect(prisma.tdsEntry.create).not.toHaveBeenCalled();
+    expect(prisma.moneyLedgerEntry.create.mock.calls.map((c) => c[0].data.type)).toEqual(['SELLER_PAYOUT', 'SELLER_PAYOUT']); // the DUE line, then the PAID line for a transfer made outside Razorpay
   });
   test('invoice only UPLOADED (not accepted) is still blocked; REJECTED is as good as none', async () => {
     setupRelease({ gstin: GSTIN, invoiceStatus: 'UPLOADED' });
@@ -411,9 +413,10 @@ describe('registered-partner payout is blocked without an accepted tax invoice',
     expect(out.partnerPayoutDeferred).toBeNull();
     expect(razorpay.createPayout).toHaveBeenCalledTimes(1);
     expect(razorpay.createPayout.mock.calls[0][1]).toBe(7350000);
-    expect(prisma.tdsEntry.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.tdsEntry.create).toHaveBeenCalledTimes(1);
+    expect(prisma.tdsEntry.upsert).not.toHaveBeenCalled();
     expect(prisma.commissionVoucher.create).not.toHaveBeenCalled();
-    expect(prisma.moneyLedgerEntry.create.mock.calls.map((c) => c[0].data.type)).toEqual(['SELLER_PAYOUT', 'PARTNER_COMMISSION', 'TDS_WITHHELD', 'GST_INPUT_PENDING']);
+    expect(prisma.moneyLedgerEntry.create.mock.calls.map((c) => c[0].data.type)).toEqual(['SELLER_PAYOUT', 'SELLER_PAYOUT', 'PARTNER_COMMISSION', 'TDS_WITHHELD', 'GST_INPUT_PENDING']);
     expect(auditActions()).toEqual(expect.arrayContaining(['PARTNER_COMMISSION_CREDITED', 'ESCROW_RELEASED']));
   });
   test('unregistered partner: no invoice needed; paid, voucher issued, COMMISSION_VOUCHER line', async () => {
@@ -421,7 +424,7 @@ describe('registered-partner payout is blocked without an accepted tax invoice',
     await escrow.release('esc1', 'admin1', releaseBody, '::1');
     expect(razorpay.createPayout.mock.calls[0][1]).toBe(7350000);
     expect(prisma.commissionVoucher.create.mock.calls[0][0].data).toMatchObject({ voucherNumber: expect.stringMatching(/^CV\/\d{4}-\d{2}\/000012$/), commissionPaise: 7500000, tdsPaise: 150000, netPaise: 7350000, partnerPan: 'ABCDE1234F' });
-    expect(prisma.moneyLedgerEntry.create.mock.calls.map((c) => c[0].data.type)).toEqual(['SELLER_PAYOUT', 'COMMISSION_VOUCHER', 'TDS_WITHHELD']);
+    expect(prisma.moneyLedgerEntry.create.mock.calls.map((c) => c[0].data.type)).toEqual(['SELLER_PAYOUT', 'SELLER_PAYOUT', 'COMMISSION_VOUCHER', 'TDS_WITHHELD']);
   });
 
   describe('paying a held commission later', () => {
@@ -444,7 +447,7 @@ describe('registered-partner payout is blocked without an accepted tax invoice',
       await escrow.payDeferredPartnerCommission('esc1', 'admin1', '::1');
       expect(razorpay.createPayout).toHaveBeenCalledTimes(1);
       expect(razorpay.createPayout.mock.calls[0][1]).toBe(7350000);
-      expect(prisma.tdsEntry.upsert).toHaveBeenCalled();
+      expect(prisma.tdsEntry.create).toHaveBeenCalled();
       expect(auditActions()).toContain('PARTNER_PAYOUT_RELEASED');
     });
     test('a failed payout puts it back to deferred and records nothing', async () => {
@@ -453,7 +456,7 @@ describe('registered-partner payout is blocked without an accepted tax invoice',
       razorpay.createPayout.mockRejectedValue({ statusCode: 400, error: { description: 'insufficient balance' } });
       await expect(escrow.payDeferredPartnerCommission('esc1', 'admin1', '::1')).rejects.toMatchObject({ statusCode: 502 });
       expect(prisma.escrowTransaction.update.mock.calls.at(-1)[0].data).toEqual({ partnerPayoutStatus: 'deferred' });
-      expect(prisma.tdsEntry.upsert).not.toHaveBeenCalled();
+      expect(prisma.tdsEntry.create).not.toHaveBeenCalled();
     });
     test('nothing held: refused', async () => {
       setupRelease({ gstin: GSTIN, invoiceStatus: 'ACCEPTED' });
@@ -470,6 +473,7 @@ describe('commission voucher OTP', () => {
     prisma.commissionVoucher.findFirst.mockResolvedValue(voucher());
     prisma.user.findUnique.mockResolvedValue({ phone: '+919800000000', phoneVerified: true });
     const { sendVoucherOtp } = require('../../src/lib/wati');
+    sendVoucherOtp.mockResolvedValueOnce({});
     await tax.requestVoucherOtp('p1', 'v1', '::1');
     const code = sendVoucherOtp.mock.calls[0][1];
     expect(code).toMatch(/^\d{6}$/);
@@ -477,6 +481,19 @@ describe('commission voucher OTP', () => {
     expect(stored.otpHash).toBeDefined();
     expect(JSON.stringify(stored)).not.toContain(code);
     expect(auditActions()).toContain('COMMISSION_VOUCHER_OTP_SENT');
+  });
+  test('send failure or blocked send: clear 503, code and resend lock cleared', async () => {
+    const { sendVoucherOtp } = require('../../src/lib/wati');
+    prisma.commissionVoucher.findFirst.mockResolvedValue(voucher());
+    prisma.user.findUnique.mockResolvedValue({ phone: '+919800000000', phoneVerified: true });
+    prisma.commissionVoucher.update.mockClear();
+    sendVoucherOtp.mockRejectedValueOnce(new Error('HTTP 404 template not found'));
+    await expect(tax.requestVoucherOtp('p1', 'v1', 'ip')).rejects.toMatchObject({ statusCode: 503, data: { code: 'OTP_SEND_FAILED' } });
+    expect(prisma.commissionVoucher.update.mock.calls.pop()[0].data).toMatchObject({ otpHash: null, otpSentAt: null });
+    prisma.commissionVoucher.update.mockClear();
+    sendVoucherOtp.mockResolvedValueOnce(null);
+    await expect(tax.requestVoucherOtp('p1', 'v1', 'ip')).rejects.toMatchObject({ data: { code: 'OTP_SEND_FAILED' } });
+    expect(prisma.commissionVoucher.update.mock.calls.pop()[0].data).toMatchObject({ otpHash: null, otpSentAt: null });
   });
   test('needs a verified phone; resend is rate limited', async () => {
     prisma.commissionVoucher.findFirst.mockResolvedValue(voucher());
