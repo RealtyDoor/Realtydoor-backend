@@ -367,7 +367,7 @@ describe('registered-partner payout is blocked without an accepted tax invoice',
     prisma.escrowTransaction.updateMany.mockResolvedValue({ count: 1 });
     prisma.escrowTransaction.update.mockImplementation(async ({ data }) => ({ id: 'esc1', leadId: 'lead1', amount: 50000, ...data }));
     prisma.lead.findUnique.mockResolvedValue({
-      id: 'lead1', refCode: 'RD1', feePct: 2, dealPriceAtLock: 7500000, commissionLockedAt: new Date(), commissionVersion: 1, allocationLetterUrl: 'x', buyerFeedbackStatus: 'VERIFIED_CLOSED',
+      id: 'lead1', refCode: 'RD1', feePct: 2, dealPriceAtLock: 7500000, commissionLockedAt: new Date(), commissionVersion: 1, allocationLetterUrl: 'x', allocationLetterVerifiedAt: new Date(), buyerFeedbackStatus: 'VERIFIED_CLOSED',
       status: 'SITE_VISIT_DONE', assignedPartnerId: 'p1', property: { price: 7500000, title: 'Plot' }, dealPriceAtLock2: null,
       assignedPartner: { id: 'p1', name: 'Asha', payoutAccountStatus: account ? 'ACTIVE' : null, razorpayFundAccountId: account ? 'fa_1' : null },
     });

@@ -183,6 +183,35 @@ describe('escrow release plan: partner commission with TDS', () => {
   });
 });
 
+describe('BUG-049: release readiness needs the allocation letter VERIFIED, not only on file', () => {
+  const planWith = async (letter) => {
+    prisma.platformConfig.findMany.mockResolvedValue([]);
+    prisma.escrowTransaction.findUnique.mockResolvedValue({ id: 'esc1', leadId: 'lead1', amount: 50000, status: 'HELD', razorpayPaymentId: 'pay_1' });
+    prisma.lead.findUnique.mockResolvedValue({
+      id: 'lead1', refCode: 'RD1', feePct: 2, dealPriceAtLock: 7500000, commissionLockedAt: new Date(), commissionVersion: 1,
+      buyerFeedbackStatus: 'VERIFIED_CLOSED', status: 'SITE_VISIT_DONE', assignedPartnerId: 'p1', property: { price: 7500000 },
+      assignedPartner: { id: 'p1', name: 'Asha', payoutAccountStatus: 'ACTIVE', razorpayFundAccountId: 'fa_1' }, ...letter,
+    });
+    prisma.leadCommissionLine.findMany.mockResolvedValue([]);
+    prisma.user.findUnique.mockResolvedValue({ id: 'p1', name: 'Asha', panNumber: 'ABCDE1234F', gstin: null });
+    prisma.tdsEntry.findMany.mockResolvedValue([]);
+    return escrow.getReleasePlan('esc1');
+  };
+  test('uploaded but not verified: not ready, and the letter is the blocker', async () => {
+    const plan = await planWith({ allocationLetterUrl: 'https://x/letter.pdf', allocationLetterVerifiedAt: null });
+    expect(plan.readyToRelease).toBe(false);
+    expect(plan.unmetBlocking).toContain('ALLOCATION_LETTER');
+  });
+  test('uploaded and verified: the letter no longer blocks', async () => {
+    const plan = await planWith({ allocationLetterUrl: 'https://x/letter.pdf', allocationLetterVerifiedAt: new Date() });
+    expect(plan.unmetBlocking).not.toContain('ALLOCATION_LETTER');
+  });
+  test('not uploaded: blocks', async () => {
+    const plan = await planWith({ allocationLetterUrl: null, allocationLetterVerifiedAt: null });
+    expect(plan.unmetBlocking).toContain('ALLOCATION_LETTER');
+  });
+});
+
 describe('checkout breakdown', () => {
   test('Rs 50,000 token: buyer pays 51,209, fee 1,209; refund terms from settings', async () => {
     const q = await escrow.getCheckoutQuote(50000);

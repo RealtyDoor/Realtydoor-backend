@@ -643,7 +643,8 @@ async function getReleasePlan(escrowId) {
     },
     {
       key: 'ALLOCATION_LETTER', blocking: true,
-      ok: !!lead.allocationLetterUrl,
+      // BUG-049: on file is not enough; the admin must have marked it verified before the token can be released.
+      ok: !!lead.allocationLetterUrl && !!lead.allocationLetterVerifiedAt,
       detail: !lead.allocationLetterUrl ? 'not uploaded' : lead.allocationLetterVerifiedAt ? 'on file and verified' : 'on file, not yet marked verified',
     },
     {
