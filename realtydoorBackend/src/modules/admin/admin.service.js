@@ -1605,12 +1605,40 @@ async function getAllUsers(filters, skip, limit) {
   };
 }
 
-async function changeUserRole(targetUserId, newRole, adminId, ip) {
+// An ADMIN with no staff role (or SUPER_ADMIN) holds every permission. Only such an admin may create, change or remove another
+// one: otherwise a limited staff member (for example one who may only manage users) could make themselves or a friend unrestricted.
+const isUnrestrictedAdmin = (u) => !!u && u.role === 'ADMIN' && (u.staffRole == null || u.staffRole === 'SUPER_ADMIN');
+
+function assertCanTouchAdmin(actor, target, what) {
+  if (actor && !isUnrestrictedAdmin(actor) && isUnrestrictedAdmin(target)) {
+    throw new ApiError(403, `Only an unrestricted admin can ${what} an unrestricted admin`, { code: 'ADMIN_OUTRANKS_YOU' });
+  }
+}
+
+// A limited admin who manages staff may hand out only what they hold themselves, and never the unrestricted levels.
+function assertCanGrant(actor, { staffRole, permissions }) {
+  if (!actor || isUnrestrictedAdmin(actor)) return;
+  if (staffRole === null || staffRole === 'SUPER_ADMIN') {
+    throw new ApiError(403, 'Only an unrestricted admin can give the SUPER_ADMIN level or remove a staff role', { code: 'CANNOT_GRANT_UNRESTRICTED' });
+  }
+  const held = new Set(actor.adminPermissions || []);
+  const beyond = (permissions || []).filter((p) => !held.has(p));
+  if (beyond.length) {
+    throw new ApiError(403, `You cannot grant permissions you do not hold yourself: ${beyond.join(', ')}`, { code: 'CANNOT_GRANT_BEYOND_OWN', permissions: beyond });
+  }
+}
+
+// `actor` is the signed-in admin making the request (req.user). It is left out only by trusted internal callers (createStaffMember
+// below, which has already checked the same rules), never by a route.
+async function changeUserRole(targetUserId, newRole, adminId, ip, actor = null) {
   if (targetUserId === adminId) throw new ApiError(400, 'Cannot change your own role');
   if (!ROLES.includes(newRole)) throw new ApiError(400, 'Invalid role');
 
   const user = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!user) throw new ApiError(404, 'User not found');
+  if (actor && !isUnrestrictedAdmin(actor) && (newRole === 'ADMIN' || user.role === 'ADMIN')) {
+    throw new ApiError(403, 'Only an unrestricted admin can make someone an admin or change an admin\'s role. Use the staff directory.', { code: 'ADMIN_OUTRANKS_YOU' });
+  }
 
   const updated = await prisma.user.update({
     where: { id: targetUserId },
@@ -1712,7 +1740,7 @@ async function listStaff(skip, limit) {
 // staffRole/permissions on top. staffRole is required here — unlike
 // updateStaffPermissions, a brand-new staff member should never land in the
 // "staffRole unset = full access" fail-open state by accident.
-async function createStaffMember(targetUserId, { staffRole, permissions }, adminId, ip) {
+async function createStaffMember(targetUserId, { staffRole, permissions }, adminId, ip, actor = null) {
   if (!ADMIN_STAFF_ROLES.includes(staffRole)) {
     throw new ApiError(400, `staffRole must be one of ${ADMIN_STAFF_ROLES.join(', ')}`);
   }
@@ -1722,9 +1750,11 @@ async function createStaffMember(targetUserId, { staffRole, permissions }, admin
 
   const target = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!target) throw new ApiError(404, 'User not found');
+  assertCanGrant(actor, { staffRole, permissions: grantedPermissions });
+  assertCanTouchAdmin(actor, target, 'change');
 
   if (target.role !== 'ADMIN') {
-    await changeUserRole(targetUserId, 'ADMIN', adminId, ip);
+    await changeUserRole(targetUserId, 'ADMIN', adminId, ip); // already checked above
   }
 
   const updated = await prisma.user.update({
@@ -1741,10 +1771,12 @@ async function createStaffMember(targetUserId, { staffRole, permissions }, admin
   return updated;
 }
 
-async function updateStaffPermissions(targetUserId, { staffRole, permissions }, adminId, ip) {
+async function updateStaffPermissions(targetUserId, { staffRole, permissions }, adminId, ip, actor = null) {
   const target = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!target) throw new ApiError(404, 'User not found');
   if (target.role !== 'ADMIN') throw new ApiError(400, 'This user is not a staff member');
+  assertCanTouchAdmin(actor, target, 'change');
+  assertCanGrant(actor, { staffRole, permissions });
 
   if (staffRole !== undefined && staffRole !== null && !ADMIN_STAFF_ROLES.includes(staffRole)) {
     throw new ApiError(400, `staffRole must be one of ${ADMIN_STAFF_ROLES.join(', ')}`);
@@ -1776,12 +1808,13 @@ async function updateStaffPermissions(targetUserId, { staffRole, permissions }, 
 // Offboards a staff member back to a plain USER account — distinct from
 // suspendUser above, which still refuses to touch an ADMIN account at all
 // (unrelated to this feature; left as-is).
-async function removeStaffMember(targetUserId, adminId, ip) {
+async function removeStaffMember(targetUserId, adminId, ip, actor = null) {
   const target = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!target) throw new ApiError(404, 'User not found');
   if (target.role !== 'ADMIN') throw new ApiError(400, 'This user is not a staff member');
+  assertCanTouchAdmin(actor, target, 'remove');
 
-  await changeUserRole(targetUserId, 'USER', adminId, ip);
+  await changeUserRole(targetUserId, 'USER', adminId, ip); // already checked above
   const updated = await prisma.user.update({
     where: { id: targetUserId },
     data: { staffRole: null, adminPermissions: [] },

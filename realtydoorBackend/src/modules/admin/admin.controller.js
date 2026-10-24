@@ -312,7 +312,7 @@ async function getUsers(req, res, next) {
 async function changeUserRole(req, res, next) {
   try {
     const { role } = changeUserRoleSchema.parse(req.body);
-    const updated = await service.changeUserRole(req.params.id, role, req.user.id, req.ip);
+    const updated = await service.changeUserRole(req.params.id, role, req.user.id, req.ip, req.user);
     success(res, updated, `Role updated to ${role}`);
   } catch (err) { next(err); }
 }
@@ -380,7 +380,7 @@ async function listStaff(req, res, next) {
 async function createStaffMember(req, res, next) {
   try {
     const data = createStaffMemberSchema.parse(req.body);
-    const staff = await service.createStaffMember(req.params.id, data, req.user.id, req.ip);
+    const staff = await service.createStaffMember(req.params.id, data, req.user.id, req.ip, req.user);
     created(res, staff, 'Staff member added');
   } catch (err) { next(err); }
 }
@@ -388,14 +388,14 @@ async function createStaffMember(req, res, next) {
 async function updateStaffPermissions(req, res, next) {
   try {
     const data = updateStaffPermissionsSchema.parse(req.body);
-    const staff = await service.updateStaffPermissions(req.params.id, data, req.user.id, req.ip);
+    const staff = await service.updateStaffPermissions(req.params.id, data, req.user.id, req.ip, req.user);
     success(res, staff, 'Permissions updated');
   } catch (err) { next(err); }
 }
 
 async function removeStaffMember(req, res, next) {
   try {
-    const removed = await service.removeStaffMember(req.params.id, req.user.id, req.ip);
+    const removed = await service.removeStaffMember(req.params.id, req.user.id, req.ip, req.user);
     success(res, removed, 'Staff member removed');
   } catch (err) { next(err); }
 }
