@@ -1,6 +1,7 @@
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
+const { buildCorsOptions } = require('./lib/corsOptions');
 const compression = require('compression');
 
 const { errorHandler, notFound } = require('./middleware/errorHandler');
@@ -41,14 +42,7 @@ app.use(helmet());
 const ALLOWED_ORIGINS = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '')
   .split(',').map(o => o.trim()).filter(Boolean);
 
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // Postman / curl / mobile
-    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-    cb(new Error(`CORS: origin ${origin} not allowed`));
-  },
-  credentials: true,
-}));
+app.use(cors(buildCorsOptions(ALLOWED_ORIGINS)));
 app.use(compression());
 
 // ── Webhook routes MUST be mounted before express.json() ─────────────────────
