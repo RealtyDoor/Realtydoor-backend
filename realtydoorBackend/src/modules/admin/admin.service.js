@@ -443,9 +443,14 @@ async function overrideLeadOtp(leadId, adminId, ip, note) {
 async function assignLead(leadId, partnerId, adminId, ip) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
-    include: { property: { select: { title: true } } },
+    include: { property: { select: { title: true, partnerId: true } } },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  // BUG-039: the listing's owner cannot earn commission on their own listing, so a lead for it must not be assigned to them
+  // (it used to be accepted here and only fail at release).
+  if (lead.property?.partnerId && String(lead.property.partnerId) === String(partnerId)) {
+    throw new ApiError(400, 'This partner owns the listing, so they cannot be assigned its lead (they cannot earn commission on their own listing). Choose another partner.', { code: 'PARTNER_OWNS_LISTING' });
+  }
   // Dev feedback, 2026-10-07 — admin can reassign an already-assigned lead
   // to a different partner (the original partner went unresponsive, the
   // area shifted, etc.); this was previously a hard 409 with no escape
