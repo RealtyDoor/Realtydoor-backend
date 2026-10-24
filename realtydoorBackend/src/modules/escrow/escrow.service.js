@@ -195,6 +195,13 @@ async function createOrder(leadId, buyerId, amountInRupees) {
     include: { property: { select: { price: true } } },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  // A cancelled or closed inquiry can never be paid again; say why and what to do, not the generic visit message.
+  if (lead.status === 'DROPPED') {
+    throw new ApiError(400, 'This inquiry was cancelled, so a token cannot be paid on it. Send a new inquiry for the property to continue.', { code: 'LEAD_DROPPED' });
+  }
+  if (lead.status === 'CLOSED') {
+    throw new ApiError(400, 'This deal is already complete, so there is nothing left to pay.', { code: 'LEAD_CLOSED' });
+  }
   if (lead.status !== 'SITE_VISIT_DONE') {
     throw new ApiError(400, 'Escrow can only be created after the site visit is done');
   }
