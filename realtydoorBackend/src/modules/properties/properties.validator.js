@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { tidyLocality } = require('../../lib/localityName');
 const { paginationSchema } = require('../../utils/validators');
 
 // T25 — a listing without a price cannot be approved or shown. SALE needs
@@ -35,7 +36,7 @@ const createPropertySchema = z.object({
   facing: z.string().optional(),
   possessionDate: z.string().datetime().optional(),
   address: z.string().min(5),
-  locality: z.string().min(2),
+  locality: z.string().min(2).transform(tidyLocality),
   city: z.string().min(2),
   state: z.string().min(2),
   pincode: z.string().regex(/^\d{6}$/),
