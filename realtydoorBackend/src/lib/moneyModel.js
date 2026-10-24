@@ -179,12 +179,13 @@ function refundQuote({ reason, tokenPaise, feePaise = 0, paidAt, now = new Date(
   }
   if (reason === 'ADMIN_TOKEN_ONLY') return { ...base, stage: 'ADMIN' };
 
+  // Once the admin has verified the allocation letter the deal is done, so a buyer cancel is refused even inside the free window
+  // (BUG-040: the window used to be checked first and the verified letter was ignored).
+  if (letterVerified) return { ...base, stage: 'AFTER_VERIFICATION', refundable: false, refundPaise: 0 };
+
   const heldMs = paidAt ? new Date(now).getTime() - new Date(paidAt).getTime() : 0;
   const withinWindow = paidAt != null && heldMs < settings.freeWindowHours * 3600 * 1000;
   if (withinWindow) return { ...base, stage: 'WITHIN_WINDOW' };
-  if (letterVerified) {
-    return { ...base, stage: 'AFTER_VERIFICATION', refundable: false, refundPaise: 0 };
-  }
   const split = splitCancellationCharge(Math.min(settings.cancellationChargePaise, tokenPaise), settings);
   return {
     ...base,

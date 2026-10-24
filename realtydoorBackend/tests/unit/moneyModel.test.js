@@ -221,6 +221,10 @@ describe('refundQuote (section 2.2)', () => {
     const q = m.refundQuote({ ...base, reason: 'BUYER_CANCEL', now: at(100), letterVerified: true });
     expect(q).toMatchObject({ refundable: false, refundPaise: 0, stage: 'AFTER_VERIFICATION' });
   });
+  test('BUG-040: a verified letter beats the free window (no refund even a minute after paying)', () => {
+    const q = m.refundQuote({ ...base, reason: 'BUYER_CANCEL', now: at(1), letterVerified: true });
+    expect(q).toMatchObject({ refundable: false, refundPaise: 0, stage: 'AFTER_VERIFICATION' });
+  });
   test.each(['SELLER_BACKOUT', 'LISTING_WRONG', 'OUR_FAULT'])('%s: token + fee, no charge, even after 48 h and after verification', (reason) => {
     const q = m.refundQuote({ ...base, reason, now: at(500), letterVerified: true });
     expect(q).toMatchObject({ refundPaise: rs(51209), feeReturned: true, cancellationChargePaise: 0, refundable: true });

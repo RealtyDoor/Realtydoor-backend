@@ -1,13 +1,14 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { formatContact, maskPhone, maskEmail } = require('../../lib/phoneUtils');
-const { generate, expiresAt, isExpired, isLocked, lockUntil, maxAttemptsReached } = require('../../lib/otp');
+const { generate, expiresAt, isExpired, isLocked, lockUntil, maxAttemptsReached, MAX_ATTEMPTS } = require('../../lib/otp');
 const { sendSiteVisitOtp } = require('../../lib/wati');
 const { createNotification, broadcastNotification, notifyAdmins } = require('../../lib/notifications');
 const logger = require('../../lib/logger');
 const { sendLeadAssigned } = require('../../lib/email');
 const { createAuditLog } = require('../../lib/auditLog');
 const { isVisitTooEarly, DEFAULT_EARLY_WINDOW_HOURS } = require('../../lib/visitWindow');
+const { withKeyLock } = require('../../lib/keyLock');
 const { getConfigNumber } = require('../config/config.service');
 const { nextRefCode } = require('../../lib/refCode');
 const { assertLeadNotPaused } = require('../../lib/accountDeletion');
@@ -195,7 +196,15 @@ async function evaluateBuyerOwnership(phone, partnerId, { excludeLeadId, before 
   });
 }
 
+// BUG-063: two identical requests at the same instant both passed the duplicate check below. Only one may run at a time per
+// buyer + property; the other is answered exactly as a repeat sent a moment later would be.
 async function partnerAddLead(partnerId, data) {
+  const out = await withKeyLock(`partnerLead:${data.propertyId}:${data.buyerPhone}`, () => addPartnerLeadLocked(partnerId, data));
+  if (out.busy) throw new ApiError(409, 'There is already an active lead for this buyer and property', { code: 'DUPLICATE_LEAD' });
+  return out.value;
+}
+
+async function addPartnerLeadLocked(partnerId, data) {
   // Scoped to the partner's own listings — they shouldn't be able to attach a
   // self-sourced buyer to someone else's property.
   const property = await prisma.property.findFirst({
@@ -493,7 +502,7 @@ async function verifyOtp(leadId, partnerId, inputOtp, ip) {
   }
 
   if (lead.siteVisitOTP !== inputOtp) {
-    const newAttempts = lead.otpAttempts + 1;
+    const newAttempts = (lead.otpAttempts || 0) + 1;
     const locked = maxAttemptsReached(newAttempts) ? lockUntil() : null;
     await prisma.lead.update({
       where: { id: leadId },

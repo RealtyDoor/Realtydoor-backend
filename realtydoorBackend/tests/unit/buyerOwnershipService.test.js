@@ -2,6 +2,8 @@ jest.mock('../../src/lib/prisma', () => ({
   lead: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
   property: { findFirst: jest.fn() },
   user: { findFirst: jest.fn(), findMany: jest.fn() },
+  // the per-buyer-and-property lock (lib/keyLock.js)
+  counter: { create: jest.fn().mockResolvedValue({}), deleteMany: jest.fn().mockResolvedValue({}), findUnique: jest.fn(), updateMany: jest.fn() },
 }));
 jest.mock('../../src/lib/notifications', () => ({ createNotification: jest.fn().mockResolvedValue({}), broadcastNotification: jest.fn(), notifyAdmins: jest.fn() }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn() }));
