@@ -74,7 +74,8 @@ const ticketCommentSchema = z.object({
 // different) sanctioned tenureMonths later via updateLoanStatusSchema and
 // the two must not collide.
 const createLoanSchema = z.object({
-  propertyId: objectId.optional(),
+  // Which property the loan is for: required (a loan is always for a property the buyer has an inquiry on).
+  propertyId: objectId,
   preferredBank: z.string().max(100).optional(),
   loanAmountRequestedPaise: z.number().int().positive().optional(),
   tenureMonths: z.number().int().positive().max(480).optional(),

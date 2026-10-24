@@ -896,6 +896,11 @@ async function addTicketComment(userId, ticketId, { text, photos }) {
 // transaction as the insert so nothing changes between the check and the
 // write.
 async function createLoanApplication(userId, { documentSharingConsent: _documentSharingConsent, documentSharingConsentVersion, submittedDocIds: _submittedDocIds, tenureMonths, ...data }) {
+  // The loan must be for a property this buyer has a live inquiry on (not someone else's, not a cancelled inquiry).
+  const ownInquiry = await prisma.lead.findFirst({ where: { buyerId: userId, propertyId: data.propertyId, status: { not: 'DROPPED' } }, select: { id: true } });
+  if (!ownInquiry) {
+    throw new ApiError(400, 'Choose a property you have an inquiry on. A loan application has to be for one of your properties.', { code: 'LOAN_PROPERTY_NOT_YOURS' });
+  }
   const application = await prisma.$transaction(async (tx) => {
     const eligibility = await getLoanEligibility(userId, tx);
     if (!eligibility.eligible) {
