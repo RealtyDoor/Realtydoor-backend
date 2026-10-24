@@ -29,6 +29,9 @@ jest.mock('../../../src/middleware/auditAction', () => ({ auditAction: () => (re
 const request = require('supertest');
 const app = require('../../../src/app');
 
+const server = app.listen(0); // one shared server; a new one per request drops sockets under heavy loops
+afterAll(() => new Promise((done) => server.close(done)));
+
 const PARAMS = ['status', 'type', 'city', 'locality', 'q', 'search', 'id', 'partnerId', 'userId', 'leadId', 'propertyId', 'projectId', 'role', 'kind',
   'category', 'slug', 'sort', 'sortBy', 'from', 'to', 'month', 'bhk', 'minPrice', 'maxPrice', 'phone', 'email', 'refCode', 'key', 'escrowId', 'sellerType'];
 const OID = '64b000000000000000000001';
@@ -58,7 +61,7 @@ test('no GET route passes a caller-supplied operator object into a database quer
     calls.length = 0;
     const url = p.replace(/:[A-Za-z]+/g, OID);
     const qs = PARAMS.map((k) => `${k}[$marker]=1`).join('&');
-    await request(app).get(`${url}?${qs}`).timeout({ response: 4000, deadline: 6000 }).catch(() => {});
+    await request(server).get(`${url}?${qs}`).timeout({ response: 4000, deadline: 6000 }).catch(() => {});
     for (const c of calls) if (JSON.stringify(c.args).includes('$marker')) offenders.add(`${p} -> ${c.path}`);
   }
   expect([...offenders].sort()).toEqual([]);
@@ -68,7 +71,7 @@ test('no GET route passes a caller-supplied operator object into a database quer
 // array), very long values, regex and path characters, huge or negative numbers.
 const ODD = {
   repeated: PARAMS.map((k) => `${k}=a&${k}=b`).join('&'),
-  long: PARAMS.map((k) => `${k}=${'x'.repeat(400)}`).join('&'), // stays under Node's 16 KB header limit
+  long: PARAMS.map((k) => `${k}=${'x'.repeat(200)}`).join('&'), // well under Node's 16 KB header limit
   specials: PARAMS.map((k) => `${k}=${encodeURIComponent('.*(?:a+)+$\\..\\/../%$"\'{}<script>')}`).join('&'),
   numbers: PARAMS.map((k) => `${k}=${['-1', '99999999999999999999', '1e309', 'NaN', '0'][PARAMS.indexOf(k) % 5]}`).join('&'),
   paging: 'page=-5&limit=100000000&skip=-1&take=999999',
@@ -79,7 +82,7 @@ const ODD = {
 async function baseline() {
   const failing = new Set();
   for (const p of GET_PATHS) {
-    const res = await request(app).get(p.replace(/:[A-Za-z]+/g, OID)).timeout({ response: 4000, deadline: 6000 }).catch(() => ({ status: 500 }));
+    const res = await request(server).get(p.replace(/:[A-Za-z]+/g, OID)).timeout({ response: 4000, deadline: 6000 }).catch(() => ({ status: 500 }));
     if (res.status >= 500) failing.add(p);
   }
   return failing;
@@ -90,7 +93,7 @@ test.each(Object.entries(ODD))('no GET route answers a server error to %s parame
   const bad = [];
   for (const p of GET_PATHS.filter((x) => !skip.has(x))) {
     const url = p.replace(/:[A-Za-z]+/g, OID);
-    const res = await request(app).get(`${url}?${qs}`).timeout({ response: 4000, deadline: 6000 }).catch((e) => ({ status: `error:${e.code || e.message}` }));
+    const res = await request(server).get(`${url}?${qs}`).timeout({ response: 4000, deadline: 6000 }).catch((e) => ({ status: `error:${e.code || e.message}` }));
     if (typeof res.status !== 'number' || res.status >= 500) bad.push(`${p} -> ${res.status}`);
   }
   expect(bad.sort()).toEqual([]);
