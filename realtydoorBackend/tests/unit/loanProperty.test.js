@@ -17,14 +17,17 @@ describe('loan application needs a property', () => {
     expect(createLoanSchema.safeParse({ ...body, propertyId: PID }).success).toBe(true);
   });
 
-  test('a property the buyer has no inquiry on is refused, and nothing is written', async () => {
+  test('a property without a paid, visited inquiry of the buyer is refused, and nothing is written', async () => {
     prisma.lead.findFirst.mockResolvedValue(null);
     await expect(users.createLoanApplication('u1', { ...body, propertyId: PID })).rejects.toMatchObject({ statusCode: 400, data: { code: 'LOAN_PROPERTY_NOT_YOURS' } });
-    expect(prisma.lead.findFirst.mock.calls[0][0].where).toMatchObject({ buyerId: 'u1', propertyId: PID, status: { not: 'DROPPED' } });
+    const where = prisma.lead.findFirst.mock.calls[0][0].where;
+    expect(where).toMatchObject({ buyerId: 'u1', propertyId: PID, status: { in: ['SITE_VISIT_DONE', 'CLOSED'] } });
+    expect(where.escrowTransactions.some.status.in).toEqual(expect.arrayContaining(['HELD', 'RELEASED']));
+    expect(where.escrowTransactions.some.status.in).not.toContain('REFUNDED');
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  test('a property the buyer has a live inquiry on goes on to the normal checks', async () => {
+  test('a visited, paid inquiry goes on to the normal checks', async () => {
     prisma.lead.findFirst.mockResolvedValue({ id: 'l1' });
     prisma.$transaction.mockResolvedValue({ id: 'loan1' });
     await expect(users.createLoanApplication('u1', { ...body, propertyId: PID })).resolves.toEqual({ id: 'loan1' });

@@ -896,10 +896,17 @@ async function addTicketComment(userId, ticketId, { text, photos }) {
 // transaction as the insert so nothing changes between the check and the
 // write.
 async function createLoanApplication(userId, { documentSharingConsent: _documentSharingConsent, documentSharingConsentVersion, submittedDocIds: _submittedDocIds, tenureMonths, ...data }) {
-  // The loan must be for a property this buyer has a live inquiry on (not someone else's, not a cancelled inquiry).
-  const ownInquiry = await prisma.lead.findFirst({ where: { buyerId: userId, propertyId: data.propertyId, status: { not: 'DROPPED' } }, select: { id: true } });
+  // The loan must be for one of this buyer's own inquiries where the visit is done and the token is paid (not someone else's, not a
+  // cancelled one, not one that has not reached the payment yet).
+  const ownInquiry = await prisma.lead.findFirst({
+    where: {
+      buyerId: userId, propertyId: data.propertyId, status: { in: ['SITE_VISIT_DONE', 'CLOSED'] },
+      escrowTransactions: { some: { status: { in: ['HELD', 'HELD_PAYOUT_FAILED', 'FROZEN', 'RELEASED'] } } },
+    },
+    select: { id: true },
+  });
   if (!ownInquiry) {
-    throw new ApiError(400, 'Choose a property you have an inquiry on. A loan application has to be for one of your properties.', { code: 'LOAN_PROPERTY_NOT_YOURS' });
+    throw new ApiError(400, 'Choose an inquiry where your site visit is done and your token is paid. A loan application has to be for one of those properties.', { code: 'LOAN_PROPERTY_NOT_YOURS' });
   }
   const application = await prisma.$transaction(async (tx) => {
     const eligibility = await getLoanEligibility(userId, tx);
