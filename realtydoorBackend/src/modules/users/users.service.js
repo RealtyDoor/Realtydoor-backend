@@ -900,7 +900,7 @@ async function createLoanApplication(userId, { documentSharingConsent: _document
   // cancelled one, not one that has not reached the payment yet).
   const ownInquiry = await prisma.lead.findFirst({
     where: {
-      buyerId: userId, propertyId: data.propertyId, status: { in: ['SITE_VISIT_DONE', 'CLOSED'] },
+      buyerId: userId, propertyId: data.propertyId, ...(data.leadId ? { id: data.leadId } : {}), status: { in: ['SITE_VISIT_DONE', 'CLOSED'] },
       escrowTransactions: { some: { status: { in: ['HELD', 'HELD_PAYOUT_FAILED', 'FROZEN', 'RELEASED'] } } },
     },
     select: { id: true },

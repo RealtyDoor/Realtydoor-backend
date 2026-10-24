@@ -76,6 +76,8 @@ const ticketCommentSchema = z.object({
 const createLoanSchema = z.object({
   // Which property the loan is for: required (a loan is always for a property the buyer has an inquiry on).
   propertyId: objectId,
+  // The inquiry the buyer applied from (optional: when absent, the buyer's matching visited, paid inquiry for that property is used).
+  leadId: objectId.optional(),
   preferredBank: z.string().max(100).optional(),
   loanAmountRequestedPaise: z.number().int().positive().optional(),
   tenureMonths: z.number().int().positive().max(480).optional(),

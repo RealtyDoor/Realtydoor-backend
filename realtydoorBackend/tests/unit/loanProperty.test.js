@@ -27,6 +27,15 @@ describe('loan application needs a property', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  test('a named inquiry must be the buyer\'s own, for that property, and visited and paid', async () => {
+    prisma.lead.findFirst.mockResolvedValue(null);
+    const LID = '6a44a67c287fb9ab18e3fc99';
+    await expect(users.createLoanApplication('u1', { ...body, propertyId: PID, leadId: LID })).rejects.toMatchObject({ data: { code: 'LOAN_PROPERTY_NOT_YOURS' } });
+    expect(prisma.lead.findFirst.mock.calls[0][0].where).toMatchObject({ id: LID, buyerId: 'u1', propertyId: PID });
+    expect(createLoanSchema.safeParse({ ...body, propertyId: PID, leadId: LID }).success).toBe(true);
+    expect(createLoanSchema.safeParse({ ...body, propertyId: PID, leadId: 'nope' }).success).toBe(false);
+  });
+
   test('a visited, paid inquiry goes on to the normal checks', async () => {
     prisma.lead.findFirst.mockResolvedValue({ id: 'l1' });
     prisma.$transaction.mockResolvedValue({ id: 'loan1' });
