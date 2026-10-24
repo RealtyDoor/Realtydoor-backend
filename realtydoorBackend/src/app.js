@@ -6,6 +6,7 @@ const compression = require('compression');
 
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 const { rejectNullBytes } = require('./middleware/rejectNullBytes');
+const { rejectNestedQuery } = require('./middleware/rejectNestedQuery');
 const { requestLogger } = require('./middleware/requestLogger');
 const { defaultLimiter } = require('./middleware/rateLimiter');
 
@@ -58,6 +59,7 @@ app.use('/api/webhooks', webhookRoutes);
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(rejectNullBytes);
+app.use(rejectNestedQuery);
 
 // ── Centralised request/response logger ───────────────────────────────────────
 if (process.env.NODE_ENV !== 'test') {

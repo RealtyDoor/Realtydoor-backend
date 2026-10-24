@@ -1,3 +1,4 @@
+const ApiError = require('../utils/ApiError');
 // Backend gaps handoff, 2026-10-10 (#7C) — live data holds Bengaluru,
 // bangalore, bangaluru and banglore as four distinct strings, which
 // fragmented search (city=Bangalore missed everything stored as Bengaluru),
@@ -19,6 +20,8 @@ for (const group of CITY_ALIAS_GROUPS) {
 
 function canonicalizeCity(city) {
   if (!city) return city;
+  // ?city=a&city=b arrives as an array; that is the caller's mistake (400), not a crash (500).
+  if (typeof city !== 'string') throw new ApiError(400, 'city must be a single value');
   return VARIANT_TO_CANONICAL.get(city.trim().toLowerCase()) ?? city;
 }
 
@@ -27,6 +30,7 @@ function canonicalizeCity(city) {
 // unchanged (so an unrelated city name isn't affected).
 function cityAliasQueryGroup(city) {
   if (!city) return [city];
+  if (typeof city !== 'string') throw new ApiError(400, 'city must be a single value');
   const canonical = canonicalizeCity(city);
   const group = CITY_ALIAS_GROUPS.find((g) => g.canonical === canonical);
   return group ? group.variants : [city];
