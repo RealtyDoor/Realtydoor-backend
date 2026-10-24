@@ -932,7 +932,7 @@ async function createLoanApplication(userId, { documentSharingConsent: _document
 
     return tx.loanApplication.create({
       data: {
-        ...data, userId,
+        ...data, userId, leadId: ownInquiry.id,
         // tenureMonthsRequested, not tenureMonths — that column is admin-set
         // at sanction time (updateLoanStatus) and must not be clobbered by
         // what the user originally asked for.

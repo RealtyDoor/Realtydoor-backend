@@ -8,6 +8,8 @@ model LoanApplication {
   user                     User       @relation(fields: [userId], references: [id])
   propertyId               String?    @db.ObjectId
   property                 Property?  @relation(fields: [propertyId], references: [id])
+  // The buyer's inquiry (Lead) this loan was applied from: so the admin knows which property and which inquiry it is for. Plain id, no relation.
+  leadId                   String?    @db.ObjectId
 
   preferredBank            String?
   // Dev feedback, 2026-10-08 (L6) — Int is 32-bit (max ~₹2.14 crore in

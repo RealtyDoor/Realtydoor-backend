@@ -1327,15 +1327,20 @@ async function getAllLoans(filters, skip, limit) {
   const propertyIds = [...new Set(rows.map((l) => l.propertyId).filter(Boolean))];
   const docIds = [...new Set(rows.flatMap((l) => l.submittedDocIds || []))];
 
-  const [users, properties, docs] = await Promise.all([
+  const leadIds = [...new Set(rows.map((l) => l.leadId).filter(Boolean))];
+  const [users, properties, docs, inquiries] = await Promise.all([
     prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true, phone: true } }),
     propertyIds.length
-      ? prisma.property.findMany({ where: { id: { in: propertyIds } }, select: { id: true, title: true, slug: true, city: true } })
+      ? prisma.property.findMany({ where: { id: { in: propertyIds } }, select: { id: true, title: true, slug: true, city: true, locality: true, propertyType: true, listingType: true, price: true } })
       : [],
     docIds.length
       ? prisma.userDocument.findMany({ where: { id: { in: docIds } }, select: { id: true, documentType: true, status: true } })
       : [],
+    leadIds.length
+      ? prisma.lead.findMany({ where: { id: { in: leadIds } }, select: { id: true, refCode: true, status: true } })
+      : [],
   ]);
+  const inquiriesById = new Map(inquiries.map((l) => [l.id, { id: l.id, refCode: l.refCode, status: l.status }]));
   const usersById = new Map(users.map((u) => [u.id, u]));
   const propertiesById = new Map(properties.map((p) => [p.id, p]));
   const docsById = new Map(docs.map((d) => [d.id, d]));
@@ -1344,6 +1349,7 @@ async function getAllLoans(filters, skip, limit) {
     ...loan,
     user: usersById.get(loan.userId) || null,
     property: loan.propertyId ? (propertiesById.get(loan.propertyId) || null) : null,
+    inquiry: loan.leadId ? (inquiriesById.get(loan.leadId) || null) : null,
     documents: (loan.submittedDocIds || []).map((id) => docsById.get(id)).filter(Boolean),
     documentCount: (loan.submittedDocIds || []).length,
   }));
@@ -1358,14 +1364,16 @@ async function getLoanById(loanId) {
   // Fetched separately, not via `include` — same reasoning as getAllLoans
   // above: a required relation that can't resolve (a hard-deleted user)
   // must degrade to null, not throw for the whole request.
-  const [user, property] = await Promise.all([
+  const [user, property, inquiry] = await Promise.all([
     prisma.user.findUnique({ where: { id: loan.userId }, select: { name: true, email: true, phone: true } }),
     loan.propertyId
-      ? prisma.property.findUnique({ where: { id: loan.propertyId }, select: { title: true, slug: true, city: true } })
+      ? prisma.property.findUnique({ where: { id: loan.propertyId }, select: { title: true, slug: true, city: true, locality: true, propertyType: true, listingType: true, price: true } })
       : null,
+    loan.leadId ? prisma.lead.findUnique({ where: { id: loan.leadId }, select: { id: true, refCode: true, status: true } }) : null,
   ]);
   loan.user = user || null;
   loan.property = property || null;
+  loan.inquiry = inquiry || null;
 
   const { documents } = await attachLoanDocuments(loan);
 
