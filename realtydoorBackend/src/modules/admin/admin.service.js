@@ -1,4 +1,5 @@
 const prisma = require('../../lib/prisma');
+const { canonicalizeCity } = require('../../lib/cityAlias');
 const ApiError = require('../../utils/ApiError');
 const { createNotification, markNotificationsRead } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
@@ -889,6 +890,18 @@ async function approveProperty(propertyId, adminId, ip, visibility = {}) {
   // have one, and the public page only claims "RERA Verified" when isVerified).
   if (!property.images?.length) {
     throw new ApiError(400, 'Cannot approve a listing with no photos', { code: 'LISTING_NO_PHOTOS' });
+  }
+
+  // A partner can list in a locality we have no details for yet (it was added from the listing form). Such a listing waits until
+  // an admin has filled the locality in or corrected its name, so the public page never shows a place with no market data.
+  const pendingLocality = await prisma.localitySuggestion.findFirst({
+    where: { status: 'PENDING', key: `${canonicalizeCity(property.city).trim().toLowerCase()}|${String(property.locality).trim().toLowerCase()}` },
+    select: { id: true, city: true, locality: true },
+  });
+  if (pendingLocality) {
+    throw new ApiError(409, `${pendingLocality.locality}, ${pendingLocality.city} is a new locality with no details yet. Fill it in, or correct its name, under CMS > Locality insights, then approve this listing.`, {
+      code: 'LOCALITY_NOT_SET_UP', city: pendingLocality.city, locality: pendingLocality.locality, suggestionId: pendingLocality.id,
+    });
   }
 
   const updated = await prisma.property.update({
