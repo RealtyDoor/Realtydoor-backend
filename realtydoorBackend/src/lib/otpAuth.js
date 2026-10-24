@@ -131,18 +131,28 @@ async function verifyOtp({ phone, purpose, code }) {
     throw new ApiError(429, 'Too many attempts. Try again later.', { code: 'OTP_LOCKED' });
   }
   if (row.expiresAt <= now) throw genericError();
+  // The code must be text (anything else cannot be a code, and would crash the hashing below as a 500).
+  if (typeof code !== 'string') throw genericError();
+
+  // Reserve one of the allowed attempts BEFORE looking at the code, in one atomic database step (updateMany, the same claim pattern
+  // used for payments) that only succeeds while attempts are left. Counting after the check (read, compare, write) let a burst of
+  // parallel guesses all read "0 attempts so far" and all be checked, so the limit of five held for one-at-a-time guesses only.
+  const reserved = await prisma.phoneOtp.updateMany({
+    where: { id: row.id, attempts: { lt: MAX_ATTEMPTS } },
+    data: { attempts: { increment: 1 } },
+  });
+  if (reserved.count === 0) throw new ApiError(429, 'Too many attempts. Try again later.', { code: 'OTP_LOCKED' });
 
   if (!codeMatches(code, row.codeHash)) {
-    const attempts = row.attempts + 1;
-    const locked = attempts >= MAX_ATTEMPTS;
-    const data = { attempts, lockedUntil: null };
-    if (locked) {
-      const { lockCount, lockMs } = nextLockDurationMs(row, now);
-      data.lockedUntil = new Date(now.getTime() + lockMs);
-      data.lockCount = lockCount;
-      data.lastLockedAt = now;
+    const after = await prisma.phoneOtp.findUnique({ where: { id: row.id } });
+    if (after && after.attempts >= MAX_ATTEMPTS) {
+      // Only the first request to see the limit reached sets the lock (and counts one escalation step).
+      const { lockCount, lockMs } = nextLockDurationMs(after, now);
+      await prisma.phoneOtp.updateMany({
+        where: { id: row.id, OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }] },
+        data: { lockedUntil: new Date(now.getTime() + lockMs), lockCount, lastLockedAt: now },
+      });
     }
-    await prisma.phoneOtp.update({ where: { id: row.id }, data });
     throw genericError();
   }
 
