@@ -1,6 +1,6 @@
 jest.mock('../../src/lib/prisma', () => ({
   escrowTransaction: { findFirst: jest.fn(), findUnique: jest.fn(), updateMany: jest.fn() },
-  counter: { upsert: jest.fn() },
+  counter: { upsert: jest.fn(), create: jest.fn().mockResolvedValue({}), deleteMany: jest.fn().mockResolvedValue({}), findUnique: jest.fn(), updateMany: jest.fn() },
   platformConfig: { findMany: jest.fn() },
 }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn() }));

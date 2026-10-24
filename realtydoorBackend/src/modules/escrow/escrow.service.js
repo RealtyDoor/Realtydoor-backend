@@ -10,6 +10,7 @@ const { isEscrowLeadUniqueViolation } = require('../../lib/escrowUtils');
 const { buildEscrowReceiptPdf, buildFeeTaxInvoicePdf } = require('../../lib/pdfReceipt');
 const { splitGstInclusive, financialYear, formatInvoiceNo } = require('../../lib/gstInvoice');
 const logger = require('../../lib/logger');
+const { withKeyLock } = require('../../lib/keyLock');
 const money = require('../../lib/moneyModel');
 const { getMoneySettings } = require('../money/moneyConfig');
 const ledger = require('../money/ledger.service');
@@ -86,6 +87,38 @@ async function getReceipt(escrowId, buyerId) {
 // T62 — the GST tax invoice for the processing fee. The token is not our supply, so it is not on this invoice; only the fee is.
 // It takes the next number in its financial-year series the first time it is asked for and keeps it (so the number never
 // changes and is never reused), and it needs the company GSTIN to be set: without one there is no tax invoice to issue.
+// BUG-033: tax invoice numbers must be consecutive. The next number is taken only by the one request that holds a lock on this
+// payment, and only after it has re-read the payment and found it still without a number; any other request waits and shows the
+// winner's number. (Before, every overlapping request took a number from the series and only one kept it, leaving gaps.)
+async function issueFeeInvoiceNumber(escrowId) {
+  const read = () => prisma.escrowTransaction.findUnique({ where: { id: escrowId }, select: { feeInvoiceNo: true, feeInvoiceAt: true } });
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const out = await withKeyLock(`feeInvoiceNo:${escrowId}`, async () => {
+      const fresh = await read();
+      if (fresh?.feeInvoiceNo) return { feeInvoiceNo: fresh.feeInvoiceNo, feeInvoiceAt: fresh.feeInvoiceAt };
+      const at = new Date();
+      const fy = financialYear(at);
+      const counter = await prisma.counter.upsert({
+        where: { id: `feeInvoice-${fy}` },
+        update: { seq: { increment: 1 } },
+        create: { id: `feeInvoice-${fy}`, seq: 1 },
+      });
+      const no = formatInvoiceNo(fy, counter.seq);
+      await prisma.escrowTransaction.updateMany({
+        where: { id: escrowId, OR: [{ feeInvoiceNo: null }, { feeInvoiceNo: { isSet: false } }] },
+        data: { feeInvoiceNo: no, feeInvoiceAt: at },
+      });
+      return { feeInvoiceNo: no, feeInvoiceAt: at };
+    });
+    if (!out.busy) return out.value;
+    // Someone else is issuing it right now: wait a moment, then use theirs.
+    await new Promise((r) => setTimeout(r, 50));
+    const again = await read();
+    if (again?.feeInvoiceNo) return { feeInvoiceNo: again.feeInvoiceNo, feeInvoiceAt: again.feeInvoiceAt };
+  }
+  throw new ApiError(503, 'The invoice is being prepared. Please try again in a moment.', { code: 'FEE_INVOICE_BUSY' });
+}
+
 async function getFeeInvoice(escrowId, buyerId) {
   const escrow = await prisma.escrowTransaction.findFirst({
     where: { id: escrowId, buyerId },
@@ -104,27 +137,7 @@ async function getFeeInvoice(escrowId, buyerId) {
   }
 
   let { feeInvoiceNo, feeInvoiceAt } = escrow;
-  if (!feeInvoiceNo) {
-    const at = new Date();
-    const fy = financialYear(at);
-    const counter = await prisma.counter.upsert({
-      where: { id: `feeInvoice-${fy}` },
-      update: { seq: { increment: 1 } },
-      create: { id: `feeInvoice-${fy}`, seq: 1 },
-    });
-    const no = formatInvoiceNo(fy, counter.seq);
-    // Only the request that finds the field still empty keeps its number; a second one at the same moment re-reads the winner's.
-    const won = await prisma.escrowTransaction.updateMany({
-      where: { id: escrowId, OR: [{ feeInvoiceNo: null }, { feeInvoiceNo: { isSet: false } }] },
-      data: { feeInvoiceNo: no, feeInvoiceAt: at },
-    });
-    if (won.count === 1) {
-      feeInvoiceNo = no; feeInvoiceAt = at;
-    } else {
-      const again = await prisma.escrowTransaction.findUnique({ where: { id: escrowId }, select: { feeInvoiceNo: true, feeInvoiceAt: true } });
-      feeInvoiceNo = again.feeInvoiceNo; feeInvoiceAt = again.feeInvoiceAt;
-    }
-  }
+  if (!feeInvoiceNo) ({ feeInvoiceNo, feeInvoiceAt } = await issueFeeInvoiceNumber(escrowId));
 
   const gstPct = settings.processingFee.feeGstPct;
   return buildFeeTaxInvoicePdf({
