@@ -2,6 +2,7 @@ const router = require('express').Router();
 const ctrl = require('./locality.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin, requirePartner } = require('../../middleware/requireRole');
+const { validateObjectId } = require('../../middleware/validateObjectId');
 const { searchLimiter, localitySuggestLimiter } = require('../../middleware/rateLimiter');
 
 // Public — property detail page fetches this (requires ?city=&locality=)
@@ -22,6 +23,7 @@ router.get('/options',     authenticate, requirePartner, ctrl.listOptions);
 router.post('/suggest',    authenticate, requirePartner, localitySuggestLimiter, ctrl.suggest);
 // Admin: localities added by partners that still need their CMS details.
 router.get('/suggestions', authenticate, requireAdmin, ctrl.listSuggestions);
+router.patch('/suggestions/:id', authenticate, requireAdmin, validateObjectId('id'), ctrl.correctSuggestion);
 
 // Admin-only management
 router.get('/',        authenticate, requireAdmin, ctrl.listLocalities);

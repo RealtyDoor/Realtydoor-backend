@@ -68,6 +68,38 @@ async function listPendingSuggestions() {
   return prisma.localitySuggestion.findMany({ where: { status: 'PENDING' }, orderBy: { createdAt: 'desc' }, take: 200 });
 }
 
+// An admin fixes a partner's new locality: "Kabban Park" is really "Cubbon Park". The name is changed on every listing and
+// project that used it. If the corrected name is a locality we already have (curated, or another pending one), the pending row
+// is merged into it and closed; otherwise the pending row keeps its place in the to-do list under the corrected spelling.
+async function correctSuggestion(id, rawLocality, adminId) {
+  const suggestion = await prisma.localitySuggestion.findUnique({ where: { id } });
+  if (!suggestion || suggestion.status !== 'PENDING') throw new ApiError(404, 'That new locality is not waiting for details any more');
+  const target = String(rawLocality || '').trim().replace(/\s+/g, ' ');
+  if (target.length < 2) throw new ApiError(400, 'Enter the correct locality name');
+  const { city } = suggestion;
+  const old = suggestion.locality;
+
+  const options = await listLocalityOptions(city);
+  const match = options.find((o) => o.name.toLowerCase() === target.toLowerCase() && o.name.toLowerCase() !== old.toLowerCase());
+  const finalName = match ? match.name : target;
+  if (finalName === old) throw new ApiError(400, 'That is already the name');
+
+  const cityMatch = cityAliasQueryGroup(city).map((v) => ({ city: { equals: v, mode: 'insensitive' } }));
+  const where = { AND: [{ OR: cityMatch }, { locality: { equals: old, mode: 'insensitive' } }] };
+  const [properties, projects] = await Promise.all([
+    prisma.property.updateMany({ where, data: { locality: finalName } }),
+    prisma.project.updateMany({ where, data: { locality: finalName } }),
+  ]);
+
+  if (match) {
+    await prisma.localitySuggestion.update({ where: { id }, data: { status: 'RESOLVED', resolvedAt: new Date() } });
+  } else {
+    await prisma.localitySuggestion.update({ where: { id }, data: { locality: finalName, key: suggestionKey(city, finalName) } });
+  }
+  cacheDel(CACHE_KEYS.CITIES_SUMMARY, CACHE_KEYS.LOCALITIES_LIST, CACHE_KEYS.localityPage(city, old), CACHE_KEYS.localityPage(city, finalName));
+  return { city, from: old, to: finalName, merged: !!match, propertiesUpdated: properties.count, projectsUpdated: projects.count, correctedBy: adminId };
+}
+
 async function getLocality(city, locality) {
   const insight = await prisma.localityInsight.findFirst({
     where: {
@@ -309,6 +341,7 @@ async function buildCitiesSummary() {
 }
 
 module.exports = {
+  correctSuggestion,
   listLocalityOptions, suggestLocality, listPendingSuggestions,
   getLocality, getLocalityPage, listLocalities, getLocalityById, upsertLocality, deleteLocality,
   getCitiesSummary, getLocalityReportPdf, getLocalitiesList,

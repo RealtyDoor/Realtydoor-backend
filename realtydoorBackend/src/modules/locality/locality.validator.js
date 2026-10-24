@@ -151,5 +151,7 @@ const suggestLocalitySchema = z.object({
 
 const localityOptionsQuerySchema = z.object({ city: placeName('city') });
 
+const correctSuggestionSchema = z.object({ locality: placeName('locality') });
+
 module.exports = {
-  suggestLocalitySchema, localityOptionsQuerySchema, upsertLocalitySchema, MARKET_STAGES, DEMAND_LEVELS, INFRA_STRENGTHS };
+  correctSuggestionSchema, suggestLocalitySchema, localityOptionsQuerySchema, upsertLocalitySchema, MARKET_STAGES, DEMAND_LEVELS, INFRA_STRENGTHS };
