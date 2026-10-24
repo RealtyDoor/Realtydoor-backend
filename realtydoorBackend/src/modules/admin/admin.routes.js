@@ -122,7 +122,7 @@ router.patch('/projects/:id/reject',         requirePermission('LISTINGS'), proj
 router.patch('/projects/:id/request-changes', requirePermission('LISTINGS'), projectCtrl.requestChanges);
 router.patch('/projects/:id/approvals/:item', requirePermission('LISTINGS'), projectCtrl.setApprovalItem);
 // R28 — admin-only; a builder cannot set their own brokerage rate.
-router.patch('/projects/:id/brokerage',       projectCtrl.setBrokerage);
+router.patch('/projects/:id/brokerage',       requirePermission('COMMISSION'), projectCtrl.setBrokerage);
 
 // R28 — builder brokerage invoices. Static segments stay above
 // /builder-invoices/:id for the same reason as /projects/:id above.
@@ -377,8 +377,8 @@ router.delete('/commission-overrides/:id', requirePermission('COMMISSION'), comm
 router.get('/leads/:id/commission',          commissionCtrl.getLeadTerms);
 router.get('/leads/:id/commission/preview',  commissionCtrl.previewLeadTerms);
 router.get('/leads/:id/commission/history',  commissionCtrl.leadTermsHistory);
-router.post('/leads/:id/commission/prefill', commissionCtrl.prefillLeadTerms);
-router.put('/leads/:id/commission',          commissionCtrl.setLeadTerms);
+router.post('/leads/:id/commission/prefill', requirePermission('COMMISSION'), commissionCtrl.prefillLeadTerms);
+router.put('/leads/:id/commission',          requirePermission('COMMISSION'), commissionCtrl.setLeadTerms);
 router.put('/leads/:id/commission/deal-rate', validateObjectId('id'), requirePermission('COMMISSION'), commissionCtrl.setDealRate);
 // 16.x — locking/collecting commission is a FINANCE-gated action; setting
 // terms (above, PUT) is left ungated on COMMISSION since negotiating terms
