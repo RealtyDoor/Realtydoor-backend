@@ -144,6 +144,39 @@ async function getMyLeads(userId) {
   return leads.map(sanitizeLeadForBuyer);
 }
 
+// Every payment the buyer has made (and any refund of it), newest first, for the Wallet page. Only payments that were
+// actually captured appear; an abandoned checkout is not a payment. Amounts are paise. A receipt exists for each of these
+// (and a processing-fee tax invoice when a fee was charged), both through /escrow/:id/receipt and /escrow/:id/fee-invoice.
+const PAID_ESCROW_STATUSES = ['HELD', 'HELD_PAYOUT_FAILED', 'RELEASED', 'REFUNDED', 'FROZEN'];
+async function getMyPayments(userId) {
+  const rows = await prisma.escrowTransaction.findMany({
+    where: { buyerId: userId, status: { in: PAID_ESCROW_STATUSES } },
+    include: { lead: { select: { id: true, refCode: true, property: { select: { title: true } }, propertyInterest: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return rows.map((e) => {
+    const tokenPaise = e.amountPaise ?? Math.round((e.amount || 0) * 100);
+    const feePaise = e.processingFeePaise > 0 ? e.processingFeePaise : 0;
+    return {
+      id: e.id,
+      leadId: e.leadId,
+      refCode: e.lead?.refCode || null,
+      propertyTitle: e.lead?.property?.title || e.lead?.propertyInterest || null,
+      status: e.status === 'HELD_PAYOUT_FAILED' ? 'HELD' : e.status,
+      tokenPaise,
+      processingFeePaise: feePaise,
+      paidPaise: e.chargedPaise ?? tokenPaise + feePaise,
+      paidAt: e.heldAt || e.createdAt,
+      paymentId: e.razorpayPaymentId || null,
+      refundedPaise: e.status === 'REFUNDED' ? (e.refundedAmountPaise > 0 ? e.refundedAmountPaise : null) : null,
+      refundedAt: e.status === 'REFUNDED' ? (e.refundedAt || null) : null,
+      cancellationChargePaise: e.cancellationChargePaise || 0,
+      hasReceipt: true,
+      hasFeeInvoice: feePaise > 0,
+    };
+  });
+}
+
 // Single-lead detail for a buyer — findFirst scoped to buyerId, so another
 // user's lead id (or a nonexistent one) both give the same 404, not a 403
 // that would confirm the id exists. :id is validated as an ObjectId at the
@@ -993,7 +1026,7 @@ const disputeService = require('../disputes/disputes.service');
 
 module.exports = {
   getCancelQuote,
-  requestPhoneOtp, verifyPhoneOtp, getClaimableLeads, claimLead, getMyLeads, getMyLead, rateLead, getMyRatings, updateLeadRating, RATING_EDIT_DAYS, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getClaimableLeads, claimLead, getMyLeads, getMyPayments, getMyLead, rateLead, getMyRatings, updateLeadRating, RATING_EDIT_DAYS, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
   formatProfileSettings,
   updateConsent,
   getConsentState, getPrivacyState, withdrawConsent, requestAccountDeletion, cancelAccountDeletion,
