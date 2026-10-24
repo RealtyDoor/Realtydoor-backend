@@ -65,7 +65,8 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // ── Health check ──────────────────────────────────────────────────────────────
-app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
+// /api/health too: the public API host (tunnel / load balancer) only forwards /api/*, so uptime checks need it there (BUG-021).
+app.get(['/health', '/api/health'], (req, res) => res.json({ status: 'ok', ts: Date.now() }));
 
 // ── API routes ────────────────────────────────────────────────────────────────
 // Global baseline rate limit — route-specific limiters (auth, OTP, upload,
