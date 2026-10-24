@@ -37,7 +37,9 @@ router.use('/locality-insights', localityRoutes);
 router.use('/partner/b2b', b2bRoutes);
 router.use('/config', configRoutes);
 
-// Authenticated
+// Authenticated. Private uploads (BUG-048) are returned as short-lived signed links on all of these.
+const { signPrivateUrls } = require('../lib/signedUrls');
+router.use(['/leads', '/user', '/partner', '/notifications', '/escrow', '/admin'], signPrivateUrls);
 router.use('/leads', leadsRoutes);
 router.use('/user', usersRoutes);
 router.use('/partner', partnersRoutes);
