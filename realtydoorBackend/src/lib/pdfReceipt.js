@@ -177,6 +177,94 @@ function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, proc
   });
 }
 
+// Refund receipt: what the buyer paid, what was kept (the cancellation charge, and the processing fee unless it came back too),
+// and what returned to the original payment method. Same plain layout as the token receipt.
+function refundReceiptLines({ tokenPaise, feePaise, refundedPaise, chargePaise }) {
+  const rs = rsPaise;
+  const fee = feePaise > 0 ? feePaise : 0;
+  const feeReturned = fee > 0 && refundedPaise > tokenPaise;
+  return [
+    { label: 'Token advance paid', value: rs(tokenPaise) },
+    ...(chargePaise > 0 ? [{ label: 'Cancellation charge kept', value: `- ${rs(chargePaise)}` }] : []),
+    ...(fee ? [{ label: feeReturned ? 'Payment processing fee (returned)' : 'Payment processing fee (not returned)', value: feeReturned ? rs(fee) : '-' }] : []),
+    { label: 'Refunded to your original payment method', value: rs(refundedPaise), strong: true },
+  ];
+}
+
+function buildRefundReceiptPdf({ refCode, propertyTitle, buyerName, tokenPaise, feePaise, refundedPaise, chargePaise, razorpayRefundId, refundedAt, company = {} }) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const left = 50;
+    const right = doc.page.width - 50;
+    const width = right - left;
+    const INK = '#111111'; const BODY = '#333333'; const MUTED = '#777777'; const RULE = '#DDDDDD'; const BRAND = '#2C2FEE';
+    const legalName = company.legalName || 'RealtyDoor';
+    const receiptNo = razorpayRefundId ? `RFN-${String(razorpayRefundId).replace(/^rfnd_/, '').slice(-8).toUpperCase()}` : 'RFN-N/A';
+
+    doc.fontSize(20).fillColor(INK).font('Helvetica-Bold').text(legalName, left, 50, { width: width * 0.6 });
+    doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('REFUND RECEIPT', left, 56, { width, align: 'right' });
+    doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
+
+    const meta = [
+      ['Receipt no.', receiptNo],
+      ['Date', refundedAt ? new Date(refundedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'],
+      ['Deal reference', refCode || 'N/A'],
+      ['Refunded to', buyerName || 'N/A'],
+      ['Property', propertyTitle || 'N/A'],
+      ['Refund reference', razorpayRefundId || 'N/A'],
+    ];
+    let y = 108;
+    doc.font('Helvetica').fontSize(10);
+    for (const [label, value] of meta) {
+      doc.fillColor(MUTED).text(label, left, y, { width: 120 });
+      doc.fillColor(INK).text(value, left + 130, y, { width: width - 130 });
+      y = Math.max(y + 16, doc.y + 4);
+    }
+
+    y += 14;
+    doc.rect(left, y, width, 24).fill('#F3F4F8');
+    doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(9)
+      .text('DESCRIPTION', left + 10, y + 8, { width: width - 130 })
+      .text('AMOUNT', left, y + 8, { width: width - 10, align: 'right' });
+    y += 24;
+    for (const line of refundReceiptLines({ tokenPaise, feePaise, refundedPaise, chargePaise })) {
+      if (line.strong) {
+        doc.moveTo(left, y).lineTo(right, y).lineWidth(1).strokeColor(INK).stroke();
+        doc.rect(left, y, width, 30).fill('#F3F4F8');
+        doc.fillColor(INK).font('Helvetica-Bold').fontSize(12)
+          .text(line.label, left + 10, y + 9, { width: width - 130 })
+          .text(line.value, left, y + 9, { width: width - 10, align: 'right' });
+        y += 30;
+      } else {
+        doc.fillColor(BODY).font('Helvetica').fontSize(11)
+          .text(line.label, left + 10, y + 9, { width: width - 130 })
+          .text(line.value, left, y + 9, { width: width - 10, align: 'right' });
+        y += 30;
+        doc.moveTo(left, y).lineTo(right, y).lineWidth(0.5).strokeColor(RULE).stroke();
+      }
+    }
+
+    y += 22;
+    doc.font('Helvetica').fontSize(9).fillColor(BODY).text(
+      'The refund goes back to the payment method you used. Your bank may take a few days to show it.',
+      left, y, { width },
+    );
+
+    const footerY = doc.page.height - 90;
+    doc.moveTo(left, footerY).lineTo(right, footerY).lineWidth(0.5).strokeColor(RULE).stroke();
+    doc.font('Helvetica').fontSize(8).fillColor(MUTED)
+      .text(`${legalName}${company.gstin ? `  |  GSTIN ${company.gstin}` : ''}`, left, footerY + 10, { width, align: 'center' })
+      .text('This is a refund receipt, not a GST document.', left, footerY + 24, { width, align: 'center' });
+
+    doc.end();
+  });
+}
+
 // GST tax invoice for the buyer's processing fee (T62). Lines come from lib/gstInvoice.js's splitGstInclusive (all paise).
 // `rows` is pure data so a test can check the numbers without parsing a PDF.
 function feeTaxInvoiceRows({ split, gstPct, sacCode }) {
@@ -294,4 +382,4 @@ function buildPartnerStatementPdf(st) {
   });
 }
 
-module.exports = { feeTaxInvoiceRows, buildFeeTaxInvoicePdf, escrowReceiptLines, buildPartnerStatementPdf, buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf };
+module.exports = { feeTaxInvoiceRows, buildFeeTaxInvoicePdf, escrowReceiptLines, buildPartnerStatementPdf, buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf, buildRefundReceiptPdf, refundReceiptLines };
