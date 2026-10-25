@@ -192,6 +192,17 @@ describe('partnerPayout statement (section 2.6a)', () => {
 });
 
 describe('refundQuote (section 2.2)', () => {
+
+  test('says when the free refund period ends: the time the token was held plus the window, never the time of the request', () => {
+    const q1 = m.refundQuote({ ...base, reason: 'BUYER_CANCEL', now: at(10) });
+    const q2 = m.refundQuote({ ...base, reason: 'BUYER_CANCEL', now: at(100) });
+    expect(q1.freeRefundEndsAt).toEqual(at(48));
+    expect(q2.freeRefundEndsAt).toEqual(at(48));
+    const short = m.refundQuote({ ...base, reason: 'BUYER_CANCEL', now: at(10), settings: { ...S.refund, freeWindowHours: 1 } });
+    expect(short.freeRefundEndsAt).toEqual(at(1));
+    const noPay = m.refundQuote({ ...base, paidAt: null, reason: 'BUYER_CANCEL', now: at(10) });
+    expect(noPay.freeRefundEndsAt).toBeNull();
+  });
   const base = { tokenPaise: rs(50000), feePaise: rs(1209), paidAt: '2026-10-22T10:00:00Z', settings: S.refund };
   const at = (hours) => new Date(new Date(base.paidAt).getTime() + hours * 3600e3);
 

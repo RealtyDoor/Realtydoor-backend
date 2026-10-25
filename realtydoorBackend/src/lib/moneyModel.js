@@ -170,9 +170,11 @@ const REFUND_REASONS = ['BUYER_CANCEL', ...FAULT_REASONS, 'ADMIN_TOKEN_ONLY'];
 
 function refundQuote({ reason, tokenPaise, feePaise = 0, paidAt, now = new Date(), letterVerified = false, settings }) {
   if (!REFUND_REASONS.includes(reason)) throw new Error(`Unknown refund reason "${reason}"`);
+  // When the free refund period ends: counted from the moment the token was held, never from the moment of the request.
+  const freeRefundEndsAt = paidAt && settings ? new Date(new Date(paidAt).getTime() + settings.freeWindowHours * 3600 * 1000) : null;
   const base = {
     reason, tokenPaise, feePaise, refundable: true, cancellationChargePaise: 0,
-    refundPaise: tokenPaise, feeReturned: false, stage: null,
+    refundPaise: tokenPaise, feeReturned: false, stage: null, freeRefundEndsAt,
   };
   if (FAULT_REASONS.includes(reason)) {
     return { ...base, stage: 'FAULT', refundPaise: tokenPaise + feePaise, feeReturned: feePaise > 0 };
