@@ -58,6 +58,15 @@ async function getReceipt(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getRefundReceipt(req, res, next) {
+  try {
+    const pdfBuffer = await service.getRefundReceipt(req.params.id, req.user.id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="refund-receipt-${req.params.id}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (err) { next(err); }
+}
+
 // 2.8 / 2.9 — read-only: per-payee entitlements from the lead's locked
 // commission lines, whether the held amount covers the fee, and which release
 // conditions are unmet. Moves no money.
@@ -182,6 +191,6 @@ async function refundRemaining(req, res, next) {
 }
 
 module.exports = {
-  payPartnerCommission, repairBookkeeping, getCheckoutQuote, createOrder, getEscrowById, getReceipt, getFeeInvoice, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
+  payPartnerCommission, repairBookkeeping, getCheckoutQuote, createOrder, getEscrowById, getReceipt, getRefundReceipt, getFeeInvoice, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
   freezeEscrow, unfreezeEscrow, getPayouts, retryPayout, resolvePayout, refundRemaining,
 };

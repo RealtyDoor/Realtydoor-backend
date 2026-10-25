@@ -17,6 +17,8 @@ router.get('/:id',              authenticate, requireUser, validateObjectId('id'
 // Express only falls through to /:id/receipt if the path actually has
 // that extra segment; a bare /:id request never reaches this route.
 router.get('/:id/receipt',      authenticate, requireUser, validateObjectId('id'), documentLimiter, ctrl.getReceipt);
+// BUG-M11 — refund receipt, only for a refunded payment (400 otherwise).
+router.get('/:id/refund-receipt', authenticate, requireUser, validateObjectId('id'), documentLimiter, ctrl.getRefundReceipt);
 // T62 — GST tax invoice for the processing fee (409 FEE_INVOICE_UNAVAILABLE until the company GSTIN is set).
 router.get('/:id/fee-invoice',  authenticate, requireUser, validateObjectId('id'), documentLimiter, ctrl.getFeeInvoice);
 
