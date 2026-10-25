@@ -2,12 +2,12 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { razorpay, createEscrowOrder, createPayoutContact, createPayoutFundAccount, createPayout, validateFundAccountOrWarn, refundPayment } = require('../../lib/razorpay');
 const { createAuditLog } = require('../../lib/auditLog');
-const { createNotification } = require('../../lib/notifications');
+const { createNotification, notifyAdmins } = require('../../lib/notifications');
 const { notifyUser } = require('../../lib/wati');
 const { sendEscrowRefunded, sendEscrowHeld } = require('../../lib/email');
 const { getConfigNumber } = require('../config/config.service');
 const { isEscrowLeadUniqueViolation } = require('../../lib/escrowUtils');
-const { buildEscrowReceiptPdf, buildFeeTaxInvoicePdf } = require('../../lib/pdfReceipt');
+const { buildEscrowReceiptPdf, buildFeeTaxInvoicePdf, buildRefundReceiptPdf } = require('../../lib/pdfReceipt');
 const { splitGstInclusive, financialYear, formatInvoiceNo } = require('../../lib/gstInvoice');
 const logger = require('../../lib/logger');
 const { withKeyLock } = require('../../lib/keyLock');
@@ -81,6 +81,29 @@ async function getReceipt(escrowId, buyerId) {
     chargedPaise: escrow.chargedPaise,
     razorpayPaymentId: escrow.razorpayPaymentId,
     paidAt: escrow.heldAt,
+  });
+}
+
+// BUG-M11 — the buyer's refund receipt: what came back, what was kept, the refund reference. Only for a refunded payment.
+async function getRefundReceipt(escrowId, buyerId) {
+  const escrow = await prisma.escrowTransaction.findFirst({
+    where: { id: escrowId, buyerId },
+    include: { lead: { select: { refCode: true, buyerName: true, property: { select: { title: true } }, propertyInterest: true } } },
+  });
+  if (!escrow) throw new ApiError(404, 'Escrow not found');
+  if (escrow.status !== 'REFUNDED') throw new ApiError(400, 'No refund receipt — this payment has not been refunded');
+  const { company } = await getMoneySettings();
+  return buildRefundReceiptPdf({
+    company,
+    refCode: escrow.lead?.refCode,
+    propertyTitle: escrow.lead?.property?.title || escrow.lead?.propertyInterest,
+    buyerName: escrow.lead?.buyerName,
+    tokenPaise: Math.round((escrow.amount || 0) * 100),
+    feePaise: escrow.processingFeePaise,
+    refundedPaise: escrow.refundedAmountPaise > 0 ? escrow.refundedAmountPaise : Math.round((escrow.amount || 0) * 100),
+    chargePaise: escrow.cancellationChargePaise || 0,
+    razorpayRefundId: escrow.razorpayRefundId,
+    refundedAt: escrow.refundedAt,
   });
 }
 
@@ -427,7 +450,25 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
       type: 'ESCROW_HELD',
       linkUrl: `/user/inquiries/${updated.leadId}`,
     });
-    const heldLead = await prisma.lead.findUnique({ where: { id: updated.leadId }, select: { assignedPartnerId: true, property: { select: { id: true, title: true, partnerId: true } }, propertyInterest: true } });
+    const heldLead = await prisma.lead.findUnique({ where: { id: updated.leadId }, select: { refCode: true, assignedPartnerId: true, property: { select: { id: true, title: true, partnerId: true } }, propertyInterest: true } });
+    // The assigned partner is told first: their lead now has money held (found on 25 Oct 2026: nobody but the buyer was told).
+    const tokenRupees = updated.amount.toLocaleString('en-IN');
+    const leadRef = heldLead?.refCode || 'a lead';
+    if (heldLead?.assignedPartnerId) {
+      await createNotification({
+        userId: heldLead.assignedPartnerId,
+        title: 'Token received on your lead',
+        message: `${leadRef}: the buyer's token advance of ₹${tokenRupees} is held in escrow. It is released after the allocation letter is verified.`,
+        type: 'ESCROW_HELD',
+        linkUrl: `/partners/leads/${updated.leadId}`,
+      });
+    }
+    await notifyAdmins({
+      title: 'Token received',
+      message: `${leadRef}: a buyer's token advance of ₹${tokenRupees} is held in escrow${heldLead?.property?.title ? ` for ${heldLead.property.title}` : ''}.`,
+      type: 'ESCROW_HELD',
+      linkUrl: '/admin/escrow',
+    });
     // The partner who owns the listing is told too (no buyer details): a token in escrow on their listing is news to them.
     const ownerId = heldLead?.property?.partnerId;
     if (ownerId && ownerId !== heldLead?.assignedPartnerId) {
@@ -1325,13 +1366,36 @@ async function refund(escrowId, adminId, ip, opts = {}) {
   // here must not surface as a failed refund.
   (async () => {
     const refundRupees = money.toRupees(amountInPaise);
+    const inr = (n) => `₹${n.toLocaleString('en-IN')}`;
+    const chargeRupees = quote.cancellationChargePaise ? money.toRupees(quote.cancellationChargePaise) : 0;
+    const feeNote = quote.feeReturned ? ' The processing fee is returned too.' : ' The processing fee is not returned.';
     await createNotification({
       userId: escrow.buyerId,
       title: 'Escrow Refunded',
-      message: quote.cancellationChargePaise
-        ? `₹${refundRupees.toLocaleString('en-IN')} of your token advance is being refunded to your original payment method. A cancellation charge of ₹${money.toRupees(quote.cancellationChargePaise).toLocaleString('en-IN')} was kept, as shown at checkout.`
-        : 'Your token advance has been refunded to your original payment method.',
+      message: chargeRupees
+        ? `${inr(refundRupees)} of your token advance is being refunded to your original payment method. A cancellation charge of ${inr(chargeRupees)} was kept, as shown at checkout.${feeNote}`
+        : `${inr(refundRupees)} of your token advance has been refunded to your original payment method.${feeNote}`,
       type: 'ESCROW_REFUNDED',
+    });
+    // The assigned partner and the admins are told too (found on 25 Oct 2026: they saw nothing when a buyer cancelled).
+    const refundedLead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { refCode: true, assignedPartnerId: true, property: { select: { title: true } } } });
+    const leadRef = refundedLead?.refCode || 'a lead';
+    const who = opts.actorType === 'BUYER' ? 'The buyer cancelled and' : 'The token was refunded:';
+    const detail = `${inr(refundRupees)} was refunded${chargeRupees ? `, ${inr(chargeRupees)} cancellation charge kept` : ''}.`;
+    if (refundedLead?.assignedPartnerId) {
+      await createNotification({
+        userId: refundedLead.assignedPartnerId,
+        title: opts.actorType === 'BUYER' ? 'Buyer cancelled and was refunded' : 'Token refunded',
+        message: `${leadRef}: ${who} ${detail}`,
+        type: 'ESCROW_REFUNDED',
+        linkUrl: `/partners/leads/${escrow.leadId}`,
+      });
+    }
+    await notifyAdmins({
+      title: opts.actorType === 'BUYER' ? 'Buyer cancelled and was refunded' : 'Token refunded',
+      message: `${leadRef}${refundedLead?.property?.title ? ` (${refundedLead.property.title})` : ''}: ${who} ${detail}`,
+      type: 'ESCROW_REFUNDED',
+      linkUrl: '/admin/escrow',
     });
     const buyer = await prisma.user.findUnique({ where: { id: escrow.buyerId }, select: { email: true } });
     if (buyer) await sendEscrowRefunded(buyer.email, refundRupees);
@@ -1472,6 +1536,6 @@ async function unfreeze(escrowId, adminId, ip) {
 }
 
 module.exports = {
-  createOrder, getCheckoutQuote, checkoutBreakdown, getById, getReceipt, getFeeInvoice, getReleasePlan, confirmPayment, release, refund, getAllEscrow, getEscrowStats,
+  createOrder, getCheckoutQuote, checkoutBreakdown, getById, getReceipt, getRefundReceipt, getFeeInvoice, getReleasePlan, confirmPayment, release, refund, getAllEscrow, getEscrowStats,
   freeze, unfreeze, payDeferredPartnerCommission, recordPartnerCredit, repairReleaseBookkeeping,
 };

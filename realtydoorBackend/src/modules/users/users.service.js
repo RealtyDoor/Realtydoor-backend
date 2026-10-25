@@ -172,6 +172,7 @@ async function getMyPayments(userId) {
       refundedAt: e.status === 'REFUNDED' ? (e.refundedAt || null) : null,
       cancellationChargePaise: e.cancellationChargePaise || 0,
       hasReceipt: true,
+      hasRefundReceipt: e.status === 'REFUNDED',
       hasFeeInvoice: feePaise > 0,
     };
   });
@@ -826,7 +827,7 @@ async function verifyTicket(userId, ticketId, { vendorRating, vendorRatingCommen
   if (!ticket) throw new ApiError(404, 'Ticket not found');
   if (ticket.status !== 'RESOLVED') throw new ApiError(400, 'Ticket is not yet resolved');
 
-  return prisma.serviceTicket.update({
+  const updated = await prisma.serviceTicket.update({
     where: { id: ticketId },
     data: {
       status: 'VERIFIED_BY_USER',
@@ -835,6 +836,14 @@ async function verifyTicket(userId, ticketId, { vendorRating, vendorRatingCommen
       ...(vendorRatingComment !== undefined && { vendorRatingComment }),
     },
   });
+  // The admins were not told when a buyer closed a ticket (found on 25 Oct 2026). Never fails the buyer's action.
+  await Promise.resolve(notifyAdmins({
+    title: 'Ticket verified by the buyer',
+    message: `${ticket.subject}${vendorRating !== undefined ? ` — vendor rated ${vendorRating} of 5` : ''}.`,
+    type: 'TICKET_VERIFIED',
+    linkUrl: `/admin/tickets/${ticketId}`,
+  })).catch(() => {});
+  return updated;
 }
 
 async function reopenTicket(userId, ticketId, reason) {
@@ -845,10 +854,18 @@ async function reopenTicket(userId, ticketId, reason) {
   // 7.6 — sticky once true: "first-time verify rate" asks whether THIS
   // ticket was ever reopened, not just whether the current resolve attempt
   // was clean.
-  return prisma.serviceTicket.update({
+  const updated = await prisma.serviceTicket.update({
     where: { id: ticketId },
     data: { status: 'IN_PROGRESS', reopenReason: reason, resolvedAt: null, wasReopened: true },
   });
+  // The buyer says the fix did not work: admins must hear it (found on 25 Oct 2026: they did not).
+  await Promise.resolve(notifyAdmins({
+    title: 'Ticket reopened by the buyer',
+    message: `${ticket.subject}: ${reason || 'the buyer says it is not fixed'}`,
+    type: 'TICKET_REOPENED',
+    linkUrl: `/admin/tickets/${ticketId}`,
+  })).catch(() => {});
+  return updated;
 }
 
 async function withdrawTicket(userId, ticketId) {

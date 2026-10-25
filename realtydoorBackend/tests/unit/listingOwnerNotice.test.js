@@ -1,4 +1,5 @@
-// BUG-060: the partner who owns the listing is told when a token is received on it (no buyer details), once, and not when they are also the assigned partner.
+// BUG-060: the partner who owns the listing is told when a token is received on it (no buyer details), once, and not twice when they are also the assigned partner.
+// 25 Oct 2026: the assigned partner is always told about the token on their lead (one notice, the lead one); the listing-owner notice stays for a different owner.
 jest.mock('../../src/lib/prisma', () => ({
   escrowTransaction: { findUnique: jest.fn(), updateMany: jest.fn() },
   user: { findUnique: jest.fn() },
@@ -41,16 +42,19 @@ describe('token received: the listing owner is told', () => {
     expect(JSON.stringify(n[0])).not.toMatch(/b1|b@example/);
     expect(sentTo('b1')).toHaveLength(1); // the buyer still gets their own notice
   });
-  test('the listing owner is also the assigned partner: no second notice', async () => {
+  test('the listing owner is also the assigned partner: exactly one notice (the lead one), not two', async () => {
     prisma.lead.findUnique.mockResolvedValue({ assignedPartnerId: 'owner1', property: { id: 'p1', title: 'Plot A', partnerId: 'owner1' }, propertyInterest: null });
     await confirmPayment('order_1', 'pay_1');
     await flush();
-    expect(sentTo('owner1')).toHaveLength(0);
+    const n = sentTo('owner1');
+    expect(n).toHaveLength(1);
+    expect(n[0].title).toBe('Token received on your lead');
   });
   test('a lead without a listing owner still works', async () => {
     prisma.lead.findUnique.mockResolvedValue({ assignedPartnerId: 'dev1', property: null, propertyInterest: 'Somewhere' });
     await expect(confirmPayment('order_1', 'pay_1')).resolves.toMatchObject({ status: 'HELD' });
     await flush();
-    expect(createNotification.mock.calls.filter((c) => c[0].userId !== 'b1')).toHaveLength(0);
+    // only the assigned partner is told (a lead with no listing has no owner)
+    expect(createNotification.mock.calls.filter((c) => c[0].userId !== 'b1').map((c) => c[0].userId)).toEqual(['dev1']);
   });
 });
