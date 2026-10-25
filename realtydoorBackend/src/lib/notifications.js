@@ -13,6 +13,7 @@ const CATEGORY_BY_TYPE = {
   LEAD_DROPPED: 'LEADS',
   OTP_OVERRIDE_REQUESTED: 'LEADS',
   DEAL_CLOSED: 'LEADS',
+  ESCROW_HELD: 'ESCROW',
   ESCROW_RELEASED: 'ESCROW',
   ESCROW_REFUNDED: 'ESCROW',
   PAYMENT_FAILED: 'ESCROW',
@@ -61,6 +62,12 @@ const CATEGORY_BY_TYPE = {
   // R32 — a partner's own earnings on a deal, distinct from ESCROW (whether
   // the *money itself* moved) and LEADS (the deal's own lifecycle).
   COMMISSION_LOCKED: 'FEES',
+  // The partner's tax invoice and commission voucher (money model phase 2).
+  TAX_INVOICE_UPLOADED: 'FEES',
+  TAX_INVOICE_ACCEPTED: 'FEES',
+  TAX_INVOICE_REJECTED: 'FEES',
+  COMMISSION_VOUCHER: 'FEES',
+  COMMISSION_VOUCHER_READY: 'FEES',
   // R29 — affects whether an advisor earns anything on a referred buyer at all.
   ADVISOR_REFERRAL_REVOKED: 'FEES',
   // R26 — the owner's success-fee payment lifecycle.
