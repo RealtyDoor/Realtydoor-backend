@@ -11,6 +11,8 @@ const { getConfigValue } = require('../config/config.service');
 const { notifyAdmins, createNotification } = require('../../lib/notifications');
 const { canLinkLeadToUser, UNLINKED_LEAD_WHERE, UNLINKABLE_STATUSES } = require('../../lib/leadClaim');
 const { presentTicketForBuyer } = require('../../lib/ticketPresenter');
+const { getMoneySettings } = require('../money/moneyConfig');
+const { buildServiceReceiptPdf } = require('../../lib/pdfReceipt');
 
 const DELETION_GRACE_PERIOD_DAYS = 30;
 const DEFAULT_TERMS_VERSION = '1';
@@ -175,6 +177,42 @@ async function getMyPayments(userId) {
       hasRefundReceipt: e.status === 'REFUNDED',
       hasFeeInvoice: feePaise > 0,
     };
+  });
+}
+
+// The buyer's paid service subscriptions (the price includes GST, so the split is shown), newest first.
+async function getMyServicePayments(userId) {
+  const [rows, settings] = await Promise.all([
+    prisma.userSubscription.findMany({
+      where: { userId, paymentStatus: 'SUCCESS' },
+      include: { service: { select: { name: true, category: true } } },
+      orderBy: { startDate: 'desc' },
+    }),
+    getMoneySettings(),
+  ]);
+  const gstPct = settings?.commission?.gstPct ?? 18;
+  return rows.map((s) => {
+    const paidPaise = s.amountPaidPaise ?? Math.round((s.amountPaid || 0) * 100);
+    const gstPaise = paidPaise - Math.round(paidPaise / (1 + gstPct / 100));
+    return {
+      id: s.id, serviceName: s.service?.name || 'Service', category: s.service?.category || null,
+      paidPaise, gstPaise, netPaise: paidPaise - gstPaise,
+      paidAt: s.startDate, validUntil: s.endDate, paymentId: s.razorpayPaymentId || null, hasReceipt: true,
+    };
+  });
+}
+
+async function getServiceReceipt(userId, subscriptionId) {
+  const sub = await prisma.userSubscription.findFirst({
+    where: { id: subscriptionId, userId, paymentStatus: 'SUCCESS' },
+    include: { service: { select: { name: true } } },
+  });
+  if (!sub) throw new ApiError(404, 'Payment not found');
+  const [user, settings] = await Promise.all([prisma.user.findUnique({ where: { id: userId }, select: { name: true } }), getMoneySettings()]);
+  return buildServiceReceiptPdf({
+    serviceName: sub.service?.name, buyerName: user?.name,
+    amountPaise: sub.amountPaidPaise ?? Math.round((sub.amountPaid || 0) * 100), gstPct: settings?.commission?.gstPct ?? 18,
+    razorpayPaymentId: sub.razorpayPaymentId, paidAt: sub.startDate, validUntil: sub.endDate, company: settings?.company || {},
   });
 }
 
@@ -1055,7 +1093,7 @@ const disputeService = require('../disputes/disputes.service');
 
 module.exports = {
   getCancelQuote,
-  requestPhoneOtp, verifyPhoneOtp, getClaimableLeads, claimLead, getMyLeads, getMyPayments, getMyLead, rateLead, getMyRatings, updateLeadRating, RATING_EDIT_DAYS, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getClaimableLeads, claimLead, getMyLeads, getMyPayments, getMyServicePayments, getServiceReceipt, getMyLead, rateLead, getMyRatings, updateLeadRating, RATING_EDIT_DAYS, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
   formatProfileSettings,
   updateConsent,
   getConsentState, getPrivacyState, withdrawConsent, requestAccountDeletion, cancelAccountDeletion,

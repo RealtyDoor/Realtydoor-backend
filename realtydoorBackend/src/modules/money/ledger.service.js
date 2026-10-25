@@ -92,6 +92,18 @@ async function onPaymentCaptured(escrow, { feeGstPct = 18 } = {}) {
   }
 }
 
+// A service subscription was paid (Razorpay captured). The price the buyer paid includes GST, so the GST is taken out of it.
+async function onServicePaid(subscription, service, { gstPct = 18 } = {}) {
+  const grossPaise = subscription.amountPaidPaise ?? Math.round((subscription.amountPaid || 0) * 100);
+  const gstPaise = grossPaise - Math.round(grossPaise / (1 + gstPct / 100));
+  return recordSafe({
+    type: 'SERVICE_REVENUE', direction: 'IN', status: 'RECORDED', partyType: 'BUYER', partyId: subscription.userId,
+    grossPaise, gstPaise, netPaise: grossPaise - gstPaise, razorpayPaymentId: subscription.razorpayPaymentId || null,
+    note: `${service?.name || 'Service'} subscription (1 year), GST inside the price`,
+    idempotencyKey: `serviceRevenue:${subscription.id}`, ...sys,
+  });
+}
+
 // A refund went out: the money back, and the cancellation charge kept.
 async function onRefund(escrow, quote, { refundId, actor }) {
   const by = actor || sys;
@@ -562,7 +574,7 @@ async function monthlyCsv(kind, month) {
 
 module.exports = {
   LEDGER_TYPES, MANUAL_TYPES, record, recordSafe, addManual,
-  onPaymentCaptured, onRefund, onSellerPayout, onPartnerCredit, onPayoutStatus,
+  onPaymentCaptured, onServicePaid, onRefund, onSellerPayout, onPartnerCredit, onPayoutStatus,
   onBrokerageInvoiced, onBrokerageReceived, onTdsDeposited, onInvoiceMatched,
   listEntries, withCurrentStatus, dealMoneyCard, payablesReceivables, reconcile,
   profitView, monthlyCsv, csvCell, monthRange, buildWhere,

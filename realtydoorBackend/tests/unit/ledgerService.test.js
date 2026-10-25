@@ -176,3 +176,24 @@ describe('dealMoneyCard', () => {
     expect(card.summary.brokerage).toMatchObject({ invoicedPaise: 300000, receivedPaise: 100000, outstandingPaise: 200000 });
   });
 });
+
+describe('onServicePaid: a service subscription reaches the ledger (found live 25 Oct 2026: it never did)', () => {
+  const sub = { id: 's1', userId: 'b1', razorpayPaymentId: 'pay_1', amountPaidPaise: 299900, amountPaid: 2999 };
+  test('writes one SERVICE_REVENUE line, GST taken out of the price paid', async () => {
+    await ledger.onServicePaid(sub, { name: 'Home Loan Assistance' }, { gstPct: 18 });
+    expect(prisma.moneyLedgerEntry.create).toHaveBeenCalledTimes(1);
+    expect(prisma.moneyLedgerEntry.create.mock.calls[0][0].data).toMatchObject({
+      type: 'SERVICE_REVENUE', direction: 'IN', partyType: 'BUYER', partyId: 'b1', status: 'RECORDED',
+      grossPaise: 299900, gstPaise: 45747, netPaise: 254153, razorpayPaymentId: 'pay_1', idempotencyKey: 'serviceRevenue:s1',
+    });
+  });
+  test('the same subscription twice makes one row (idempotent)', async () => {
+    prisma.moneyLedgerEntry.findUnique.mockResolvedValue({ id: 'row1' });
+    await ledger.onServicePaid(sub, { name: 'X' }, { gstPct: 18 });
+    expect(prisma.moneyLedgerEntry.create).not.toHaveBeenCalled();
+  });
+  test('a ledger failure never throws into the payment', async () => {
+    prisma.moneyLedgerEntry.create.mockRejectedValue(new Error('db down'));
+    await expect(ledger.onServicePaid(sub, { name: 'X' }, { gstPct: 18 })).resolves.toBeNull();
+  });
+});

@@ -351,6 +351,80 @@ function buildFeeTaxInvoicePdf({ company = {}, invoiceNo, invoiceDate, buyerName
 
 // Partner statement for one deal (money model Rev 3, section 2.6a): commission,
 // GST (registered partners only), TDS, net, bank reference, date.
+
+// The money lines of a service receipt. The price the buyer paid already includes GST, so the lines show the amount before GST,
+// the GST inside it, and the total (what the card was charged).
+function serviceReceiptLines({ amountPaise, gstPct = 18 }) {
+  const gstPaise = amountPaise - Math.round(amountPaise / (1 + gstPct / 100));
+  return [
+    { label: 'Service fee before GST', value: rsPaise(amountPaise - gstPaise) },
+    { label: `GST at ${gstPct}% (included in the price)`, value: rsPaise(gstPaise) },
+    { label: 'Total paid', value: rsPaise(amountPaise), strong: true },
+  ];
+}
+
+function buildServiceReceiptPdf({ serviceName, buyerName, amountPaise, gstPct = 18, razorpayPaymentId, paidAt, validUntil, company = {} }) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const left = 50; const right = doc.page.width - 50; const width = right - left;
+    const INK = '#111111'; const BODY = '#333333'; const MUTED = '#777777'; const RULE = '#DDDDDD'; const BRAND = '#2C2FEE';
+    const legalName = company.legalName || 'RealtyDoor';
+    const receiptNo = razorpayPaymentId ? `SRV-${String(razorpayPaymentId).replace(/^pay_/, '').slice(-8).toUpperCase()}` : 'SRV-N/A';
+    const day = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A');
+
+    doc.fontSize(20).fillColor(INK).font('Helvetica-Bold').text(legalName, left, 50, { width: width * 0.6 });
+    doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('SERVICE PAYMENT RECEIPT', left, 56, { width, align: 'right' });
+    doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
+
+    const meta = [
+      ['Receipt no.', receiptNo], ['Date', day(paidAt)], ['Paid by', buyerName || 'N/A'], ['Service', serviceName || 'N/A'],
+      ['Valid until', day(validUntil)], ['Payment reference', razorpayPaymentId || 'N/A'],
+    ];
+    let y = 108;
+    doc.font('Helvetica').fontSize(10);
+    for (const [label, value] of meta) {
+      doc.fillColor(MUTED).text(label, left, y, { width: 120 });
+      doc.fillColor(INK).text(value, left + 130, y, { width: width - 130 });
+      y = Math.max(y + 16, doc.y + 4);
+    }
+
+    y += 14;
+    doc.rect(left, y, width, 24).fill('#F3F4F8');
+    doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(9)
+      .text('DESCRIPTION', left + 10, y + 8, { width: width - 130 })
+      .text('AMOUNT', left, y + 8, { width: width - 10, align: 'right' });
+    y += 24;
+    for (const line of serviceReceiptLines({ amountPaise, gstPct })) {
+      if (line.strong) {
+        doc.moveTo(left, y).lineTo(right, y).lineWidth(1).strokeColor(INK).stroke();
+        doc.rect(left, y, width, 30).fill('#F3F4F8');
+        doc.fillColor(INK).font('Helvetica-Bold').fontSize(12)
+          .text(line.label, left + 10, y + 9, { width: width - 130 })
+          .text(line.value, left, y + 9, { width: width - 10, align: 'right' });
+        y += 30;
+      } else {
+        doc.fillColor(BODY).font('Helvetica').fontSize(11)
+          .text(line.label, left + 10, y + 9, { width: width - 130 })
+          .text(line.value, left, y + 9, { width: width - 10, align: 'right' });
+        y += 30;
+        doc.moveTo(left, y).lineTo(right, y).lineWidth(0.5).strokeColor(RULE).stroke();
+      }
+    }
+
+    const footerY = doc.page.height - 90;
+    doc.moveTo(left, footerY).lineTo(right, footerY).lineWidth(0.5).strokeColor(RULE).stroke();
+    doc.font('Helvetica').fontSize(8).fillColor(MUTED)
+      .text(`${legalName}${company.gstin ? `  |  GSTIN ${company.gstin}` : ''}`, left, footerY + 10, { width, align: 'center' })
+      .text('This is a payment receipt, not a GST tax invoice.', left, footerY + 24, { width, align: 'center' });
+    doc.end();
+  });
+}
+
 function buildPartnerStatementPdf(st) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50 });
@@ -382,4 +456,4 @@ function buildPartnerStatementPdf(st) {
   });
 }
 
-module.exports = { feeTaxInvoiceRows, buildFeeTaxInvoicePdf, escrowReceiptLines, buildPartnerStatementPdf, buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf, buildRefundReceiptPdf, refundReceiptLines };
+module.exports = { serviceReceiptLines, buildServiceReceiptPdf, feeTaxInvoiceRows, buildFeeTaxInvoicePdf, escrowReceiptLines, buildPartnerStatementPdf, buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf, buildRefundReceiptPdf, refundReceiptLines };

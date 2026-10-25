@@ -50,6 +50,21 @@ async function getMyPayments(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getMyServicePayments(req, res, next) {
+  try {
+    success(res, await service.getMyServicePayments(req.user.id));
+  } catch (err) { next(err); }
+}
+
+async function getServiceReceipt(req, res, next) {
+  try {
+    const pdf = await service.getServiceReceipt(req.user.id, req.params.id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="service-receipt-${req.params.id}.pdf"`);
+    res.send(pdf);
+  } catch (err) { next(err); }
+}
+
 async function getMyLead(req, res, next) {
   try {
     const lead = await service.getMyLead(req.user.id, req.params.id);
@@ -342,7 +357,7 @@ async function getMyDisputes(req, res, next) {
 }
 
 module.exports = {
-  requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyPayments, getMyLead, rateLead, getMyRatings, updateLeadRating, getCancelQuote, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
+  requestPhoneOtp, verifyPhoneOtp, getMyLeads, getMyPayments, getMyServicePayments, getServiceReceipt, getMyLead, rateLead, getMyRatings, updateLeadRating, getCancelQuote, cancelLead, confirmDeal, toggleFavorite, getFavorites, updateProfile,
   updateConsent,
   getConsentState, getPrivacyState,
   withdrawConsent, withdrawConsentLegacy,

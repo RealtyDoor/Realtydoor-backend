@@ -155,6 +155,14 @@ async function activateSubscription(orderId, paymentId, userId = null) {
   // reached from the buyer-facing verify controller too, so a notification/
   // email hiccup must never surface as "payment verification failed".
   (async () => {
+    // The money book: one line per paid subscription (never throws; see ledger.recordSafe).
+    try {
+      const { getMoneySettings } = require('../money/moneyConfig');
+      const settings = await getMoneySettings();
+      await require('../money/ledger.service').onServicePaid(updated, service, { gstPct: settings?.commission?.gstPct ?? 18 });
+    } catch (err) {
+      logger.error('[Services] could not write the ledger line for a paid subscription', { subscriptionId: updated.id, error: err.message });
+    }
     await createNotification({
       userId: updated.userId,
       title: 'Service Activated',
