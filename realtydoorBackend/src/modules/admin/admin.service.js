@@ -28,6 +28,7 @@ const { averageResolutionDays } = require('../../lib/ticketStats');
 const { isLoanTransitionAllowed, hasVerifiedDocument } = require('../../lib/loanTransitions');
 const { assertLeadNotPaused } = require('../../lib/accountDeletion');
 const partnerService = require('../partners/partners.service');
+const { kycApprovalBlocker } = require('../../lib/kycApproval');
 const { buildTicketChargeReceiptPdf } = require('../../lib/pdfReceipt');
 const { s3Upload } = require('../../lib/fileUpload');
 const { getConfigNumber } = require('../config/config.service');
@@ -1146,9 +1147,9 @@ async function verifyKyc(userId, action, note, adminId, ip) {
   if (!user) throw new ApiError(404, 'User not found');
 
   // B53 — partners were being marked VERIFIED with zero documents on file.
-  if (action === 'APPROVE' && !(user.kycDocumentUrls?.length)) {
-    throw new ApiError(400, 'Cannot verify KYC: this partner has not uploaded any documents', { code: 'KYC_NO_DOCUMENTS' });
-  }
+  // The PAN number is checked here too: without one the commission is taxed at the higher no-PAN rate.
+  const blocker = action === 'APPROVE' ? kycApprovalBlocker(user) : null;
+  if (blocker) throw new ApiError(400, blocker.message, { code: blocker.code });
 
   const kycStatus = action === 'APPROVE' ? 'VERIFIED' : 'REJECTED';
 
