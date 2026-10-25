@@ -291,6 +291,11 @@ describe('tax invoice validation', () => {
     ['wrong SAC', { sacCode: '999999' }, 'SAC_MISMATCH'],
     ['no invoice number', { invoiceNumber: '  ' }, 'NO_INVOICE_NUMBER'],
   ])('%s is refused', (_n, patch, code) => expect(check({ ...good, ...patch })).toContain(code));
+  test('supplier and recipient GSTIN cannot be the same number', () => {
+    const same = { ...good, supplierGstin: GSTIN, recipientGstin: GSTIN };
+    const codes = money.validateTaxInvoice(same, { commissionPaise: rs(75000), partnerGstin: GSTIN, settings: { ...settings, company: { ...settings.company, gstin: GSTIN } }, now: new Date('2026-10-22') }).map((e) => e.code);
+    expect(codes).toContain('SAME_GSTIN');
+  });
   test('a partner with no GSTIN cannot use a tax invoice', () => {
     expect(money.validateTaxInvoice(good, { commissionPaise: rs(75000), partnerGstin: null, settings }).map((e) => e.code)).toContain('PARTNER_NOT_REGISTERED');
   });
@@ -326,6 +331,12 @@ describe('tax invoice upload and review', () => {
     await expect(tax.uploadInvoice('p1', 'l1', fields, null, '::1')).rejects.toMatchObject({ data: { code: 'FILE_REQUIRED' } });
     prisma.partnerTaxInvoice.findFirst.mockResolvedValue({ invoiceNumber: 'INV-1', status: 'ACCEPTED' });
     await expect(tax.uploadInvoice('p1', 'l1', fields, 'u', '::1')).rejects.toMatchObject({ statusCode: 409, data: { code: 'INVOICE_EXISTS' } });
+  });
+  test('a deal already paid by commission voucher cannot get a tax invoice afterwards', async () => {
+    setup();
+    prisma.commissionVoucher.findFirst.mockResolvedValue({ id: 'v1', voucherNumber: 'CV/2026-27/000012' });
+    await expect(tax.uploadInvoice('p1', 'l1', fields, 'u', '::1')).rejects.toMatchObject({ statusCode: 409, data: { code: 'DEAL_PAID_BY_VOUCHER' } });
+    expect(prisma.partnerTaxInvoice.create).not.toHaveBeenCalled();
   });
   test('another partner cannot upload for this deal', async () => {
     setup();
@@ -385,6 +396,15 @@ describe('registered-partner payout is blocked without an accepted tax invoice',
   };
   const releaseBody = { manualTransferConfirmed: true, note: 'seller paid by NEFT' };
 
+  test('the admins hear that an escrow was released, with the amount and the deal', async () => {
+    setupRelease({ gstin: GSTIN, invoiceStatus: 'ACCEPTED' });
+    const { notifyAdmins } = require('../../src/lib/notifications');
+    notifyAdmins.mockClear();
+    await escrow.release('esc1', 'admin1', releaseBody, '::1');
+    await new Promise((r) => setImmediate(r));
+    expect(notifyAdmins).toHaveBeenCalledWith(expect.objectContaining({ title: 'Escrow released', type: 'ESCROW_RELEASED', linkUrl: '/admin/escrow' }));
+    expect(notifyAdmins.mock.calls.at(-1)[0].message).toMatch(/₹/);
+  });
   test('the partner who owns the listing (a different partner) is told the token was released; the assigned partner and an owner who is the same partner are not told twice', async () => {
     setupRelease({ gstin: GSTIN, invoiceStatus: 'ACCEPTED' });
     const lead = await prisma.lead.findUnique();

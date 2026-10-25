@@ -1132,6 +1132,13 @@ async function release(escrowId, adminId, releaseData, ip) {
         linkUrl: `/partners/leads/${escrow.leadId}`,
       });
     }
+    // The other admins are told too (the one who pressed Release already knows).
+    await notifyAdmins({
+      title: 'Escrow released',
+      message: `₹${Number(sellerAmount || 0).toLocaleString('en-IN')} released to the seller for ${lead?.refCode || dealLabel} (${dealLabel}).`,
+      type: 'ESCROW_RELEASED',
+      linkUrl: '/admin/escrow',
+    });
     // The listing's owner, when that is a different partner, is told the token was released.
     const ownerId = lead?.property?.partnerId;
     if (ownerId && ownerId !== lead?.assignedPartnerId) {

@@ -78,6 +78,11 @@ async function uploadInvoice(partnerId, leadId, fields, fileUrl, ip) {
     throw new ApiError(400, problems[0].message, { code: 'INVOICE_INVALID', problems });
   }
 
+  // A deal already settled by commission voucher (the partner had no GSTIN then) carried no GST, so a tax invoice now would
+  // book input credit for GST that was never paid.
+  const voucher = await prisma.commissionVoucher.findFirst({ where: { leadId, partnerId } });
+  if (voucher) throw new ApiError(409, `This deal was already paid by commission voucher ${voucher.voucherNumber}, so it cannot take a tax invoice.`, { code: 'DEAL_PAID_BY_VOUCHER' });
+
   // One live invoice per deal: a new upload is only for a deal with none, or
   // after the last one was rejected.
   const live = await prisma.partnerTaxInvoice.findFirst({ where: { leadId, partnerId, status: { in: ['UPLOADED', 'ACCEPTED', 'MATCHED'] } } });

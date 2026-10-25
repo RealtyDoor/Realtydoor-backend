@@ -12,7 +12,8 @@ async function getMyNotifications(req, res, next) {
     if (category && !NOTIFICATION_CATEGORIES.includes(category)) {
       throw new ApiError(400, `category must be one of: ${NOTIFICATION_CATEGORIES.join(', ')}`);
     }
-    const { data, total } = await service.getMyNotifications(req.user.id, skip, limit, category);
+    const unreadOnly = req.query.unread === 'true';
+    const { data, total } = await service.getMyNotifications(req.user.id, skip, limit, category, unreadOnly);
     success(res, paginate(data, total, page, limit));
   } catch (err) { next(err); }
 }

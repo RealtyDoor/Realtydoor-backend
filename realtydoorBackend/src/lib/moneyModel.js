@@ -237,6 +237,7 @@ function validateTaxInvoice(inv, { commissionPaise, partnerGstin, settings, now 
   const recipient = normGstin(inv.recipientGstin);
   if (!GSTIN_FORMAT.test(recipient)) add('BAD_RECIPIENT_GSTIN', 'Our GSTIN is not valid.');
   else if (settings.company.gstin && recipient !== settings.company.gstin) add('RECIPIENT_GSTIN_MISMATCH', 'The invoice must be addressed to Realtydoor\'s GSTIN.');
+  if (GSTIN_FORMAT.test(supplier) && supplier === recipient) add('SAME_GSTIN', 'Your GSTIN and Realtydoor\'s GSTIN are the same number. A tax invoice needs two different parties; check Realtydoor\'s company GSTIN in settings.');
   if (!String(inv.invoiceNumber || '').trim()) add('NO_INVOICE_NUMBER', 'Invoice number is required.');
   if (!String(inv.placeOfSupply || '').trim()) add('NO_PLACE_OF_SUPPLY', 'Place of supply is required.');
   if (!String(inv.sacCode || '').trim()) add('NO_SAC', 'SAC code is required.');

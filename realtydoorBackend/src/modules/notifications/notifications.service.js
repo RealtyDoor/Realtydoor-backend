@@ -1,11 +1,11 @@
 const prisma = require('../../lib/prisma');
 const { broadcastNotification, NOTIFICATION_CATEGORIES } = require('../../lib/notifications');
 
-async function getMyNotifications(userId, skip, limit, category) {
+async function getMyNotifications(userId, skip, limit, category, unreadOnly = false) {
   // B6.1 — `category` narrows to one chip. Rows created before the field
   // existed have category: null, so they only ever appear in the unfiltered
   // list; nothing is hidden by default.
-  const where = { userId, ...(category && { category }) };
+  const where = { userId, ...(category && { category }), ...(unreadOnly && { isRead: false }) };
   const [data, total] = await prisma.$transaction([
     prisma.notification.findMany({ where, skip, take: limit, orderBy: { createdAt: 'desc' } }),
     prisma.notification.count({ where }),
