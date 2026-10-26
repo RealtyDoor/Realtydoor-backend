@@ -2524,7 +2524,7 @@ async function getPropertyByIdAdmin(propertyId) {
   // hard-deleted-partner bug as getPendingProperties/approveProperty above).
   property.partner = await prisma.user.findUnique({
     where: { id: property.partnerId },
-    select: { name: true, email: true, phone: true, companyName: true, partnerSubType: true },
+    select: { name: true, email: true, phone: true, companyName: true, partnerSubType: true, kycStatus: true },
   });
   return property;
 }
