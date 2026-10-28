@@ -263,7 +263,7 @@ async function buildLocalitiesList() {
     prisma.localityInsight.findMany({
       select: {
         city: true, locality: true, avgPricePerSqftPaise: true,
-        priceChangeLastMonthPct: true, localityScore: true, subtitle: true,
+        priceChangeLastMonthPct: true, priceTrends: true, localityScore: true, subtitle: true,
       },
       orderBy: [{ city: 'asc' }, { locality: 'asc' }],
     }),
@@ -284,6 +284,7 @@ async function buildLocalitiesList() {
       locality: i.locality,
       avgPricePerSqftPaise: i.avgPricePerSqftPaise,
       priceChangeLastMonthPct: i.priceChangeLastMonthPct ?? null,
+      priceChangeOneYearPct: i.priceTrends?.growth?.oneYear ?? null,
       localityScore: i.localityScore ?? null,
       subtitle: i.subtitle ?? null,
       listingsCount: countMap.get(`${i.city}|${i.locality}`) ?? 0,
