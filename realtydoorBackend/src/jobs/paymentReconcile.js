@@ -6,6 +6,7 @@ const { confirmPayment } = require('../modules/escrow/escrow.service');
 const { activateSubscription } = require('../modules/services/services.service');
 const { createNotification, broadcastNotification } = require('../lib/notifications');
 const { notifyUser } = require('../lib/wati');
+const { onPayoutFailed } = require('../lib/payoutAlerts');
 
 // BE-5 — a self-healing safety net for whatever the webhook alone might miss
 // (dropped delivery, Razorpay outage, a bug that threw and — before this —
@@ -145,6 +146,7 @@ async function applyLivePayoutStatus(escrow, leg, payoutId, live) {
         type: 'ESCROW_PAYOUT_FAILED',
       });
     }
+    onPayoutFailed({ escrow, leg, status: live.status, reason });
     logger.error('[PaymentReconcile] Escrow payout reconciled as failed/reversed', { payoutId, escrowId: escrow.id, leg, status: live.status });
     return true;
   }

@@ -163,8 +163,11 @@ async function refundPayment(paymentId, amountInPaise) {
 // otpAuth.js's codeMatches.
 function verifyWebhookSignature(rawBody, signature) {
   if (typeof signature !== 'string' || !signature) return false;
+  // An empty or missing secret verifies nothing: HMAC with an empty key can be computed by anyone.
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  if (!secret) return false;
   const expected = crypto
-    .createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET)
+    .createHmac('sha256', secret)
     .update(rawBody)
     .digest('hex');
   const expectedBuf = Buffer.from(expected);
@@ -175,9 +178,11 @@ function verifyWebhookSignature(rawBody, signature) {
 
 function verifyPaymentSignature(orderId, paymentId, signature) {
   if (typeof signature !== 'string' || !signature) return false;
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+  if (!secret) return false;
   const body = `${orderId}|${paymentId}`;
   const expected = crypto
-    .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+    .createHmac('sha256', secret)
     .update(body)
     .digest('hex');
   const expectedBuf = Buffer.from(expected);

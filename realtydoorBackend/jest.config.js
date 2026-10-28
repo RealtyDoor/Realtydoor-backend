@@ -11,4 +11,7 @@ module.exports = {
   testMatch: ['**/tests/**/*.test.js'],
   testPathIgnorePatterns: ['/node_modules/'],
   clearMocks: true,
+  // The route tests load the whole Express app and send real requests through it. On a busy machine (a full run, or a run beside the
+  // dev servers) the first request can take more than Jest's default 5 s, which made adminEscalation fail once in a while.
+  testTimeout: 30000,
 };

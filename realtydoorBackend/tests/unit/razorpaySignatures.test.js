@@ -21,9 +21,9 @@ describe('verifyWebhookSignature', () => {
   test.each([[undefined], [null], [''], [123], [['a']], [{}], ['short'], ['x'.repeat(10000)]])('a signature of %p is false and never throws', (sig) => {
     expect(rz.verifyWebhookSignature(body, sig)).toBe(false);
   });
-  test('with no webhook secret configured it cannot be satisfied (it throws, which the handler turns into a 500)', () => {
+  test('with no webhook secret configured it cannot be satisfied (rejected, not thrown)', () => {
     delete process.env.RAZORPAY_WEBHOOK_SECRET;
-    expect(() => rz.verifyWebhookSignature(body, 'a'.repeat(64))).toThrow();
+    expect(rz.verifyWebhookSignature(body, 'a'.repeat(64))).toBe(false);
   });
 });
 

@@ -18,7 +18,9 @@ function start() {
       );
 
       const lockedLeads = await prisma.lead.findMany({
-        where: { otpLockedUntil: { lte: now } },
+        // `not: null` matters: on MongoDB a lead with no lock (null) also satisfies `lte now`, so every lead used to be
+        // "unlocked" and updated every 30 minutes, which kept moving its updatedAt (wrong ages and last-activity dates).
+        where: { otpLockedUntil: { not: null, lte: now } },
         select: { id: true },
       });
       await Promise.all(

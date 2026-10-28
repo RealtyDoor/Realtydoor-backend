@@ -8,6 +8,7 @@ const {
   sendKycVerified, sendKycRejected,
   sendLeadAssigned, sendLeadInquiryConfirmed,
   sendLoanStatusUpdate,
+  sendTicketUpdate, sendVideoTourUpdate,
 } = require('../../lib/email');
 const { sendLeadAssignedNotice, sendSiteVisitOtp, sendTicketVendorDispatched, notifyUser } = require('../../lib/wati');
 const { setUserRole } = require('../../lib/clerkAdmin');
@@ -933,7 +934,8 @@ async function approveProperty(propertyId, adminId, ip, visibility = {}) {
     title: 'Listing Approved!',
     message: `Your listing "${property.title}" is now live.`,
     type: 'PROPERTY_APPROVED',
-    linkUrl: `/properties/${property.slug}`,
+    // The partner's own page, not the public one: the public page 404s if the listing is later rejected or hidden.
+    linkUrl: `/partners/listings/${propertyId}`,
   });
   notifyUser(property.partnerId, 'listing_approved', { partner_name: '$userName', property_title: property.title });
 
@@ -983,6 +985,7 @@ async function rejectProperty(propertyId, note, adminId, ip) {
   });
 
   if (property.partner) sendPropertyRejected(property.partner.email, property.title, note, property.partner).catch(() => {});
+  notifyUser(property.partnerId, 'listing_rejected', { partner_name: '$userName', property_title: property.title, reason: note || 'Please check the app for details' });
   cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
   cacheDel(CACHE_KEYS.localityPage(property.city, property.locality));
   invalidateMicrositeCache(propertyId).catch(() => {});
@@ -2191,6 +2194,12 @@ async function resolveTicket(ticketId, data, adminId, ip) {
     type: 'TICKET_RESOLVED',
     linkUrl: `/user/tickets/${ticketId}`,
   });
+  messageBuyer(ticket.userId, {
+    template: 'buyer_ticket_update',
+    params: { name: '$userName', ticket_subject: ticket.subject, update: `resolved${totalCharge > 0 ? `, total charge Rs ${totalCharge.toLocaleString('en-IN')}` : ''}. Please open the app to verify it` },
+    context: { ticketId },
+    email: (to, user) => sendTicketUpdate(to, { subject: ticket.subject, ticketId, update: `it has been resolved${totalCharge > 0 ? `, total charge ₹${totalCharge.toLocaleString('en-IN')}` : ''}. Please open it to verify.` }, user),
+  });
 
   await createAuditLog({
     adminId, action: 'TICKET_RESOLVED', targetType: 'ServiceTicket', targetId: ticketId,
@@ -2243,6 +2252,12 @@ async function addAdminTicketComment(ticketId, adminId, { text, photos }, ip) {
     message: `${text.slice(0, 150)}${text.length > 150 ? '…' : ''}`,
     type: 'TICKET_ADMIN_REPLY',
     linkUrl: `/user/tickets/${ticketId}`,
+  });
+  messageBuyer(ticket.userId, {
+    template: 'buyer_ticket_update',
+    params: { name: '$userName', ticket_subject: ticket.subject, update: 'our team has replied. Please open the app to read it' },
+    context: { ticketId },
+    email: (to, user) => sendTicketUpdate(to, { subject: ticket.subject, ticketId, update: `our team has replied: "${text.slice(0, 200)}${text.length > 200 ? '…' : ''}"` }, user),
   });
 
   // T46 — the reply is visible to the buyer, so it is on the record too.
@@ -2973,6 +2988,20 @@ async function uploadVideoTourFile(id, fileUrl) {
   });
 }
 
+// Tells a buyer about a ticket or video-tour change on WhatsApp and email. Fire-and-forget by design: the change has
+// already been saved, so a message that cannot be sent must never fail the admin's action. WhatsApp is skipped until the
+// template is in WATI_LIVE_TEMPLATES (see notifyUser).
+async function messageBuyer(userId, { template, params, context, email }) {
+  try {
+    if (template) notifyUser(userId, template, params, context || {});
+    // The preference fields go along, so the buyer's "Email alerts" switch is respected (with no user in scope the gate sends anyway).
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, notifEmail: true, notifWhatsapp: true, marketingOptIn: true } });
+    if (u?.email && email) await email(u.email, u);
+  } catch (err) {
+    logger.warn('[Admin] buyer message failed', { userId, template, error: err.message });
+  }
+}
+
 async function updateVideoTour(id, { assignedTo, videoUrl, scheduledAt, adminNote, status }) {
   const tour = await prisma.videoTourRequest.findUnique({ where: { id } });
   if (!tour) throw new ApiError(404, 'Video tour request not found');
@@ -3006,6 +3035,15 @@ async function updateVideoTour(id, { assignedTo, videoUrl, scheduledAt, adminNot
       type: 'VIDEO_TOUR_UPDATE',
       linkUrl: '/user/nri',
     }).catch(() => null);
+    const tourProperty = await prisma.property.findUnique({ where: { id: tour.propertyId }, select: { title: true } }).catch(() => null);
+    const whenText = scheduledAt ? new Date(scheduledAt).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST' : '';
+    messageBuyer(tour.userId, {
+      // The WhatsApp template covers "scheduled" only; a completed tour is told in the app and by email.
+      template: justCompleted ? null : 'nri_video_tour_scheduled',
+      params: { name: '$userName', property_title: tourProperty?.title || 'the property', tour_time: whenText },
+      context: {},
+      email: (to, user) => sendVideoTourUpdate(to, { propertyTitle: tourProperty?.title, whenText, completed: justCompleted }, user),
+    });
   }
   return updated;
 }

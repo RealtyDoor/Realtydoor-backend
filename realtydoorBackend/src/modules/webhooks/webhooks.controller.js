@@ -2,9 +2,10 @@ const { verifyWebhookSignature } = require('../../lib/razorpay');
 const { confirmPayment } = require('../escrow/escrow.service');
 const { activateSubscription } = require('../services/services.service');
 const prisma = require('../../lib/prisma');
-const { sendEscrowPaymentFailed } = require('../../lib/email');
+const { sendEscrowPaymentFailed, sendPartnerPayoutProcessed } = require('../../lib/email');
 const { createNotification, broadcastNotification } = require('../../lib/notifications');
 const { notifyUser } = require('../../lib/wati');
+const { onPayoutFailed } = require('../../lib/payoutAlerts');
 const logger = require('../../lib/logger');
 const ledger = require('../money/ledger.service');
 const { createAuditLog } = require('../../lib/auditLog');
@@ -128,6 +129,12 @@ async function razorpay(req, res) {
 
           const buyer = await prisma.user.findUnique({ where: { id: escrow.buyerId }, select: { email: true } });
           if (buyer) sendEscrowPaymentFailed(buyer.email).catch(() => {});
+          (async () => {
+            const failedLead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { property: { select: { title: true } }, propertyInterest: true } });
+            notifyUser(escrow.buyerId, 'escrow_payment_failed', {
+              name: '$userName', property_title: failedLead?.property?.title || failedLead?.propertyInterest || 'your property',
+            }, { leadId: escrow.leadId });
+          })().catch(() => null);
         }
       } else {
         const failedSub = await prisma.userSubscription.findUnique({ where: { razorpayOrderId: orderId } });
@@ -286,6 +293,10 @@ async function razorpay(req, res) {
             notifyUser(lead.assignedPartnerId, 'escrow_released', {
               name: '$userName', amount: Math.round((payload.payout.entity.amount || 0) / 100).toLocaleString('en-IN'), lead_ref: lead.refCode || 'your lead',
             });
+            (async () => {
+              const u = await prisma.user.findUnique({ where: { id: lead.assignedPartnerId }, select: { email: true } });
+              if (u?.email) await sendPartnerPayoutProcessed(u.email, { amountRupees: Math.round((payload.payout.entity.amount || 0) / 100), utr, leadRef: lead.refCode });
+            })().catch((err) => logger.warn('[RazorpayWebhook] payout email failed', { error: err.message }));
           }
         }
 
@@ -351,6 +362,7 @@ async function razorpay(req, res) {
           });
         }
 
+        onPayoutFailed({ escrow, leg, status, reason });
         await ledger.onPayoutStatus({ escrowId: escrow.id, payoutId, status, reason });
         await createAuditLog({
           actorRole: 'WEBHOOK', action: status === 'reversed' ? 'PAYOUT_REVERSED' : 'PAYOUT_FAILED',

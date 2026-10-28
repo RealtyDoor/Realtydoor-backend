@@ -111,7 +111,7 @@ const disputeCommissionSchema = z.object({
 // inflate what we record as received).
 const collectCommissionSchema = z.object({
   tdsDeductedRupees: z.coerce.number().finite().min(0, 'TDS cannot be negative').max(1_000_000_000).optional().default(0),
-}).default({});
+}).prefault({});
 
 module.exports = {
   collectCommissionSchema,

@@ -5,7 +5,7 @@ const { generate, expiresAt, isExpired, isLocked, lockUntil, maxAttemptsReached,
 const { sendSiteVisitOtp } = require('../../lib/wati');
 const { createNotification, broadcastNotification, notifyAdmins } = require('../../lib/notifications');
 const logger = require('../../lib/logger');
-const { sendLeadAssigned } = require('../../lib/email');
+const { sendLeadAssigned, sendVisitScheduled } = require('../../lib/email');
 const { createAuditLog } = require('../../lib/auditLog');
 const { isVisitTooEarly, DEFAULT_EARLY_WINDOW_HOURS } = require('../../lib/visitWindow');
 const { withKeyLock } = require('../../lib/keyLock');
@@ -205,15 +205,16 @@ async function partnerAddLead(partnerId, data) {
 }
 
 async function addPartnerLeadLocked(partnerId, data) {
-  // Scoped to the partner's own listings — they shouldn't be able to attach a
-  // self-sourced buyer to someone else's property.
+  // 28 Oct 2026 (owner decision): a partner can add a buyer they met offline to ANY live listing or project on the
+  // platform, not only their own. That is how a partner earns commission on another partner's or a builder's property
+  // (a partner cannot earn it on their own listing). Admin still reviews and confirms every partner-added lead, and
+  // the ownership rules below (one mobile number is one buyer) still apply.
+  // B10 — only a live (approved) listing: a rejected or pending one is not something a buyer can be sent to.
   const property = await prisma.property.findFirst({
-    // B10 — and only a live (approved) one: a rejected/pending listing is not
-    // something a buyer can be sent to.
-    where: { id: data.propertyId, partnerId, publishStatus: 'APPROVED' },
+    where: { id: data.propertyId, publishStatus: 'APPROVED' },
     select: { id: true, title: true },
   });
-  if (!property) throw new ApiError(404, 'Property not found among your approved listings');
+  if (!property) throw new ApiError(404, 'Property not found among live listings');
 
   // B3.2 — same buyer, same property, still active.
   const duplicate = await prisma.lead.findFirst({
@@ -426,6 +427,15 @@ async function scheduleVisit(leadId, partnerId, scheduledAt) {
       type: 'VISIT_SCHEDULED',
       linkUrl: `/user/inquiries/${leadId}`,
     }).catch(() => null);
+    (async () => {
+      const u = await prisma.user.findUnique({ where: { id: lead.buyerId }, select: { email: true } });
+      if (!u?.email) return;
+      const prop = lead.propertyId ? await prisma.property.findUnique({ where: { id: lead.propertyId }, select: { title: true } }) : null;
+      await sendVisitScheduled(u.email, {
+        propertyTitle: prop?.title || lead.propertyInterest || 'the property', leadId,
+        whenText: new Date(scheduledAt).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST',
+      });
+    })().catch((err) => logger.warn('[scheduleVisit] visit email failed', { leadId, error: err.message }));
   }
   return { message: 'Visit scheduled. OTP sent to buyer via WhatsApp.' };
 }
@@ -502,12 +512,16 @@ async function verifyOtp(leadId, partnerId, inputOtp, ip) {
   }
 
   if (lead.siteVisitOTP !== inputOtp) {
-    const newAttempts = (lead.otpAttempts || 0) + 1;
-    const locked = maxAttemptsReached(newAttempts) ? lockUntil() : null;
-    await prisma.lead.update({
+    // Counted by the database, not read-add-write: guesses sent at the same moment used to all read the same count, so the
+    // 3-try lock never closed (security pass, 28 Oct 2026).
+    const bumped = await prisma.lead.update({
       where: { id: leadId },
-      data: { otpAttempts: newAttempts, otpLockedUntil: locked },
+      data: { otpAttempts: { increment: 1 } },
+      select: { otpAttempts: true },
     });
+    const newAttempts = Number.isFinite(bumped?.otpAttempts) ? bumped.otpAttempts : (lead.otpAttempts || 0) + 1;
+    const locked = maxAttemptsReached(newAttempts) ? lockUntil() : null;
+    if (locked) await prisma.lead.update({ where: { id: leadId }, data: { otpLockedUntil: locked } });
     if (locked) throw new ApiError(429, 'Maximum OTP attempts reached. Lead is locked. Contact Admin.', { code: 'LEAD_OTP_LOCKED' }); // BE-21
     // BE-21 — LEAD_OTP_INVALID with attemptsLeft, instead of only encoding
     // it into the message text (which the FE must never parse).

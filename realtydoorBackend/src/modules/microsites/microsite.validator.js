@@ -17,7 +17,7 @@ const slugSchema = z.string()
       .min(3, 'Slug must be 3-60 characters')
       .max(60, 'Slug must be 3-60 characters')
       .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Slug must be lowercase letters, digits and single hyphens only (e.g. whitefield-3bhk-villa)')
-      .refine((s) => !RESERVED_SLUGS.includes(s), (s) => ({ message: `"${s}" is a reserved word and can't be used as a slug` }))
+      .refine((s) => !RESERVED_SLUGS.includes(s), { error: (issue) => `"${issue.input}" is a reserved word and can't be used as a slug` })
   );
 
 const createMicrositeSchema = z.object({

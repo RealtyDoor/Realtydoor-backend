@@ -3,6 +3,7 @@ const ApiError = require('../../utils/ApiError');
 const { createNotification } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const { notifyUser } = require('../../lib/wati');
+const { sendDisputeUpdate } = require('../../lib/email');
 
 async function raiseDispute(userId, { type, referenceId, reason, description }) {
   let owned = false;
@@ -34,6 +35,7 @@ async function raiseDispute(userId, { type, referenceId, reason, description }) 
     type: 'DISPUTE_RAISED',
     linkUrl: '/admin/disputes',
   }).catch(() => null)));
+  require('../../lib/staffAlerts').alertStaff('New dispute raised', `<p>${String(raiser?.name || 'A user').replace(/[<>&]/g, '')} raised a ${type.toLowerCase()} dispute: ${String(reason).replace(/[<>&]/g, '')}</p><p>Open Dispute Resolution in the admin console.</p>`).catch(() => null);
 
   return dispute;
 }
@@ -99,6 +101,10 @@ async function adminResolveDispute(disputeId, { status, adminNote }, adminId) {
   notifyUser(dispute.userId, 'dispute_update', {
     name: '$userName', status: label, note: adminNote || 'No note added',
   }, {});
+  (async () => {
+    const u = await prisma.user.findUnique({ where: { id: dispute.userId }, select: { email: true } });
+    if (u?.email) await sendDisputeUpdate(u.email, { status: label, note: adminNote ? adminNote.slice(0, 200) : '' });
+  })().catch(() => null);
   await createAuditLog({
     adminId, action: 'DISPUTE_UPDATED', targetType: 'Dispute', targetId: disputeId,
     before: { status: dispute.status, adminNote: dispute.adminNote },

@@ -4,7 +4,7 @@ const { razorpay, createEscrowOrder, createPayoutContact, createPayoutFundAccoun
 const { createAuditLog } = require('../../lib/auditLog');
 const { createNotification, notifyAdmins } = require('../../lib/notifications');
 const { notifyUser } = require('../../lib/wati');
-const { sendEscrowRefunded, sendEscrowHeld } = require('../../lib/email');
+const { sendEscrowRefunded, sendEscrowHeld, sendPartnerTaxInvoiceNeeded } = require('../../lib/email');
 const { getConfigNumber } = require('../config/config.service');
 const { isEscrowLeadUniqueViolation } = require('../../lib/escrowUtils');
 const { buildEscrowReceiptPdf, buildFeeTaxInvoicePdf, buildRefundReceiptPdf } = require('../../lib/pdfReceipt');
@@ -462,6 +462,10 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
         type: 'ESCROW_HELD',
         linkUrl: `/partners/leads/${updated.leadId}`,
       });
+      notifyUser(heldLead.assignedPartnerId, 'partner_token_held', {
+        partner_name: '$userName', lead_ref: leadRef, amount: tokenRupees,
+        property_title: heldLead?.property?.title || heldLead?.propertyInterest || 'the property',
+      }, { leadId: updated.leadId });
     }
     await notifyAdmins({
       title: 'Token received',
@@ -1063,6 +1067,23 @@ async function release(escrowId, adminId, releaseData, ip) {
     parts.push(invoiceBlocked
       ? 'Partner payout HELD: GST-registered partner has no accepted tax invoice for this deal'
       : 'Partner payout deferred at admin request');
+    // The partner was never told their payout was waiting on their invoice (found on 28 Oct 2026). Fire-and-forget:
+    // the release has already happened and must not fail because a message could not be sent.
+    if (invoiceBlocked) {
+      (async () => {
+        const held = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { refCode: true, assignedPartnerId: true } });
+        if (!held?.assignedPartnerId) return;
+        const leadRef = held.refCode || 'your lead';
+        await createNotification({
+          userId: held.assignedPartnerId, title: 'Upload your tax invoice to get paid',
+          message: `${leadRef}: the deal is closed and your commission is waiting for your GST tax invoice. Upload it from Payouts & paperwork.`,
+          type: 'TAX_INVOICE_NEEDED', linkUrl: '/partners/finance/payouts',
+        });
+        notifyUser(held.assignedPartnerId, 'partner_tax_invoice_needed', { partner_name: '$userName', lead_ref: leadRef }, { leadId: escrow.leadId });
+        const partnerUser = await prisma.user.findUnique({ where: { id: held.assignedPartnerId }, select: { email: true } });
+        if (partnerUser) await sendPartnerTaxInvoiceNeeded(partnerUser.email, { leadRef });
+      })().catch((err) => logger.warn('[Escrow] tax-invoice-needed notice failed', { escrowId, error: err.message }));
+    }
   } else if (newModel) {
     const c = commissionPayout;
     parts.push(`Partner commission ₹${money.toRupees(c.commissionPaise).toLocaleString('en-IN')} on the deal price, TDS ₹${money.toRupees(c.tdsPaise).toLocaleString('en-IN')} (${c.tdsSection}), net ₹${partnerShare.toLocaleString('en-IN')}${partnerPayoutId ? '' : ' awaiting payout'}${c.gstPendingPaise ? `, GST ₹${money.toRupees(c.gstPendingPaise).toLocaleString('en-IN')} held until the partner's tax invoice is matched` : ''}`);
@@ -1397,7 +1418,16 @@ async function refund(escrowId, adminId, ip, opts = {}) {
         type: 'ESCROW_REFUNDED',
         linkUrl: `/partners/leads/${escrow.leadId}`,
       });
+      if (opts.actorType === 'BUYER') {
+        notifyUser(refundedLead.assignedPartnerId, 'partner_buyer_cancelled', {
+          partner_name: '$userName', lead_ref: leadRef, property_title: refundedLead?.property?.title || 'the property',
+        }, { leadId: escrow.leadId });
+      }
     }
+    notifyUser(escrow.buyerId, 'escrow_refunded', {
+      name: '$userName', amount: refundRupees.toLocaleString('en-IN'), charge: chargeRupees.toLocaleString('en-IN'),
+      property_title: refundedLead?.property?.title || 'your property',
+    }, { leadId: escrow.leadId });
     await notifyAdmins({
       title: opts.actorType === 'BUYER' ? 'Buyer cancelled and was refunded' : 'Token refunded',
       message: `${leadRef}${refundedLead?.property?.title ? ` (${refundedLead.property.title})` : ''}: ${who} ${detail}`,
@@ -1405,7 +1435,7 @@ async function refund(escrowId, adminId, ip, opts = {}) {
       linkUrl: '/admin/escrow',
     });
     const buyer = await prisma.user.findUnique({ where: { id: escrow.buyerId }, select: { email: true } });
-    if (buyer) await sendEscrowRefunded(buyer.email, refundRupees);
+    if (buyer) await sendEscrowRefunded(buyer.email, refundRupees, { chargeRupees, feeReturned: !!quote.feeReturned, propertyTitle: refundedLead?.property?.title });
   })().catch((err) => logger.warn('[Escrow] Post-refund notification/email failed', { escrowId: updated.id, error: err.message }));
 
   return { ...updated, refundQuote: quote };

@@ -64,6 +64,8 @@ const CATEGORY_BY_TYPE = {
   COMMISSION_LOCKED: 'FEES',
   // The partner's tax invoice and commission voucher (money model phase 2).
   TAX_INVOICE_UPLOADED: 'FEES',
+  // The deal closed but the partner's payout waits for their GST tax invoice.
+  TAX_INVOICE_NEEDED: 'FEES',
   TAX_INVOICE_ACCEPTED: 'FEES',
   TAX_INVOICE_REJECTED: 'FEES',
   COMMISSION_VOUCHER: 'FEES',

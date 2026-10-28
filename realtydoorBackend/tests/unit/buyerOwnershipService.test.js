@@ -89,3 +89,18 @@ describe('partnerAddLead does not leak other people\'s leads', () => {
     expect(own.relatedLead).toEqual({ id: 'e1', refCode: 'RD-L-000002' });
   });
 });
+
+describe('partnerAddLead: any live listing (28 Oct 2026, owner decision)', () => {
+  test('looks the property up among all approved listings, not only the partner\'s own', async () => {
+    await leads.partnerAddLead('A', data);
+    const where = prisma.property.findFirst.mock.calls[0][0].where;
+    expect(where).toEqual({ id: 'prop1', publishStatus: 'APPROVED' });
+    expect(where).not.toHaveProperty('partnerId');
+  });
+  test('a listing that is not approved is still refused', async () => {
+    prisma.property.findFirst.mockResolvedValue(null);
+    const err = await leads.partnerAddLead('A', data).catch((e) => e);
+    expect(err.statusCode).toBe(404);
+    expect(err.message).toBe('Property not found among live listings');
+  });
+});

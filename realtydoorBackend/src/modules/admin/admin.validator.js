@@ -105,7 +105,7 @@ const approvePropertySchema = z.object({
     searchable:       z.boolean().optional(),
     homepageFeatured: z.boolean().optional(),
   }).optional(),
-}).optional().default({});
+}).optional().prefault({});
 
 // 4.15 — the checklist of fixes. At least one item, because a change request
 // with nothing in it tells the partner nothing.
@@ -350,7 +350,7 @@ const updateRoutingRuleSchema = z.object({
 );
 
 // Admin actions that took a loose req.body: bound the type and length of every field.
-const overrideOtpSchema = z.object({ note: z.string().trim().max(500).optional() }).default({});
+const overrideOtpSchema = z.object({ note: z.string().trim().max(500).optional() }).prefault({});
 const suspendUserSchema = z.object({
   suspend: z.boolean({ required_error: '"suspend" must be a boolean', invalid_type_error: '"suspend" must be a boolean' }),
   reason: z.string().trim().max(500).optional(),

@@ -33,3 +33,11 @@ test('once the locality is filled in or corrected, the same listing approves', a
   prisma.localitySuggestion.findFirst.mockResolvedValue(null);
   await expect(admin.approveProperty('p1', 'a1', '1.1.1.1')).resolves.toMatchObject({ publishStatus: 'APPROVED' });
 });
+
+test('the "Listing Approved" notice opens the partner\'s own listing page, which still exists if the listing is later rejected or hidden', async () => {
+  const { createNotification } = require('../../src/lib/notifications');
+  prisma.localitySuggestion.findFirst.mockResolvedValue(null);
+  await admin.approveProperty('p1', 'a1', '1.1.1.1');
+  const n = createNotification.mock.calls.map((c) => c[0]).find((x) => x.type === 'PROPERTY_APPROVED');
+  expect(n.linkUrl).toBe('/partners/listings/p1');
+});

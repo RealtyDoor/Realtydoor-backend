@@ -44,15 +44,18 @@ function notFound(req, res, next) {
   next(new ApiError(404, `Route not found: ${req.method} ${req.originalUrl}`));
 }
 
+const issues = (zodError) => zodError.issues || zodError.errors || [];
+
 function errorHandler(err, req, res, next) {
   if (res.headersSent) return next(err);
 
   if (err instanceof ZodError) {
     return res.status(400).json({
       success: false,
-      message: err.errors[0]?.message || 'Validation error',
+      // zod 4 renamed ZodError.errors to .issues
+      message: issues(err)[0]?.message || 'Validation error',
       data: { code: 'VALIDATION_ERROR' },
-      errors: err.errors.map((e) => ({ field: e.path.join('.'), message: e.message })),
+      errors: issues(err).map((e) => ({ field: e.path.join('.'), message: e.message })),
     });
   }
 

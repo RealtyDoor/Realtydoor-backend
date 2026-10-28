@@ -23,9 +23,23 @@ const transporter = nodemailer.createTransport({
 
 // Every caller fires this and forgets (`.catch(() => {})`), so a failing mailbox used to be invisible. Log the
 // outcome here, once, for every email the app sends. The error is still thrown so callers behave as before.
+// Outside production, EMAIL_ALLOWED_RECIPIENTS (comma-separated addresses, or @domain.com for a whole domain) limits who a
+// test run can email, the same idea as WATI_ALLOWED_NUMBERS for WhatsApp. Unset = no limit. Production ignores it.
+function isRecipientAllowed(to, env = process.env) {
+  if (env.NODE_ENV === 'production') return true;
+  const list = String(env.EMAIL_ALLOWED_RECIPIENTS || '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+  if (list.length === 0) return true;
+  const addr = String(to || '').trim().toLowerCase();
+  return list.some((entry) => (entry.startsWith('@') ? addr.endsWith(entry) : addr === entry));
+}
+
 async function send({ to, subject, html, user, category }) {
   if (!to) {
     logger.warn('[Email] skipped: no recipient address', { subject });
+    return null;
+  }
+  if (!isRecipientAllowed(to)) {
+    logger.warn('[Email] blocked: recipient not in EMAIL_ALLOWED_RECIPIENTS', { subject });
     return null;
   }
   if (!canSend({ user, channel: 'EMAIL', category })) {
@@ -110,11 +124,17 @@ async function sendEscrowHeld(email, amount, processingFeePaise = 0) {
   });
 }
 
-async function sendEscrowRefunded(email, amount) {
+// `detail` is optional so older callers keep the short wording; the cancel flow passes the charge kept and whether the
+// processing fee came back, so the refund email says the same thing the checkout and the receipt say.
+async function sendEscrowRefunded(email, amount, detail = {}) {
+  const { chargeRupees = 0, feeReturned, propertyTitle } = detail;
+  const forProperty = propertyTitle ? ` for <strong>${propertyTitle}</strong>` : '';
+  const charge = chargeRupees > 0 ? ` A cancellation charge of <strong>₹${Number(chargeRupees).toLocaleString('en-IN')}</strong> was kept, as shown when you cancelled.` : '';
+  const fee = feeReturned === undefined ? '' : (feeReturned ? ' The payment processing fee is returned too.' : ' The payment processing fee is not returned.');
   return send({
     to: email,
     subject: 'Token Advance Refunded',
-    html: `<p>Your token advance of <strong>₹${Number(amount).toLocaleString('en-IN')}</strong> has been refunded to your original payment method. It may take 5–7 business days to reflect.</p>`,
+    html: `<p>Your token advance of <strong>₹${Number(amount).toLocaleString('en-IN')}</strong>${forProperty} has been refunded to your original payment method.${charge}${fee} It may take 5–7 business days to reflect.</p>`,
     category: CATEGORIES.TRANSACTIONAL,
   });
 }
@@ -169,8 +189,97 @@ async function sendWelcomeEmail(email, name, role, user) {
   });
 }
 
+const FRONTEND = () => process.env.FRONTEND_URL || '';
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// The visit code itself is never put in an email (it is WhatsApp-only, so it stays with the buyer's own phone).
+async function sendVisitScheduled(email, { propertyTitle, whenText, partnerName, leadId }, user) {
+  return send({
+    to: email,
+    subject: `Site visit scheduled — ${propertyTitle}`,
+    html: `<p>Your site visit to <strong>${esc(propertyTitle)}</strong> is set for <strong>${esc(whenText)}</strong>${partnerName ? ` with ${esc(partnerName)}` : ''}.</p><p>Your visit code was sent to you on WhatsApp. Share it with the partner only when you are at the property. <a href="${FRONTEND()}/user/inquiries/${esc(leadId)}">View your inquiry</a>.</p>`,
+    user,
+    category: CATEGORIES.TRANSACTIONAL,
+  });
+}
+
+async function sendDisputeUpdate(email, { status, note }, user) {
+  return send({
+    to: email,
+    subject: `Your report is ${status}`,
+    html: `<p>Your report has moved to <strong>${esc(status)}</strong>.${note ? ` Note from our team: <em>${esc(note)}</em>.` : ''} <a href="${FRONTEND()}/user/disputes">See your reports</a>.</p>`,
+    user,
+    category: CATEGORIES.TRANSACTIONAL,
+  });
+}
+
+async function sendTicketUpdate(email, { subject, update, ticketId }, user) {
+  return send({
+    to: email,
+    subject: `Update on your ticket — ${subject}`,
+    html: `<p>There is an update on your ticket <strong>${esc(subject)}</strong>: ${esc(update)}</p><p><a href="${FRONTEND()}/user/tickets/${esc(ticketId)}">Open the ticket</a> to read it or reply.</p>`,
+    user,
+  });
+}
+
+async function sendVideoTourUpdate(email, { propertyTitle, whenText, completed }, user) {
+  return send({
+    to: email,
+    subject: completed ? 'Your video tour is ready' : 'Your video tour is scheduled',
+    html: completed
+      ? `<p>Your video tour${propertyTitle ? ` of <strong>${esc(propertyTitle)}</strong>` : ''} has been completed. <a href="${FRONTEND()}/user/nri">Open your video tours</a>.</p>`
+      : `<p>Your live video tour${propertyTitle ? ` of <strong>${esc(propertyTitle)}</strong>` : ''} is scheduled for <strong>${esc(whenText)}</strong>. Your Realtydoor partner will walk you through the property on a video call.</p>`,
+    user,
+    category: CATEGORIES.TRANSACTIONAL,
+  });
+}
+
+async function sendPartnerPayoutProcessed(email, { amountRupees, utr, leadRef }, user) {
+  return send({
+    to: email,
+    subject: 'Your commission payout was processed',
+    html: `<p>Your payout of <strong>₹${Number(amountRupees).toLocaleString('en-IN')}</strong>${leadRef ? ` for ${esc(leadRef)}` : ''} has been processed${utr ? ` (UTR ${esc(utr)})` : ''}. <a href="${FRONTEND()}/partners/finance/payouts">See Payouts &amp; paperwork</a>.</p>`,
+    user,
+    category: CATEGORIES.TRANSACTIONAL,
+  });
+}
+
+async function sendPartnerTaxInvoiceNeeded(email, { leadRef }, user) {
+  return send({
+    to: email,
+    subject: 'Upload your tax invoice to get paid',
+    html: `<p>The deal ${esc(leadRef)} is closed, and your commission is waiting for your GST tax invoice. <a href="${FRONTEND()}/partners/finance/payouts">Upload it from Payouts &amp; paperwork</a>. Your payout goes ahead after Realtydoor accepts it.</p>`,
+    user,
+    category: CATEGORIES.TRANSACTIONAL,
+  });
+}
+
+async function sendTaxInvoiceReviewed(email, { accepted, invoiceNumber, reason }, user) {
+  return send({
+    to: email,
+    subject: accepted ? 'Your tax invoice was accepted' : 'Your tax invoice needs a correction',
+    html: accepted
+      ? `<p>Invoice <strong>${esc(invoiceNumber)}</strong> was accepted. Your commission payout can now go ahead. <a href="${FRONTEND()}/partners/finance/payouts">See Payouts &amp; paperwork</a>.</p>`
+      : `<p>Invoice <strong>${esc(invoiceNumber)}</strong> was rejected: <em>${esc(reason)}</em>. Please upload a corrected invoice from <a href="${FRONTEND()}/partners/finance/payouts">Payouts &amp; paperwork</a>.</p>`,
+    user,
+    category: CATEGORIES.TRANSACTIONAL,
+  });
+}
+
+// No bank reason is put in the email: it can contain account details.
+async function sendPartnerPayoutFailed(email, { leadRef }, user) {
+  return send({
+    to: email,
+    subject: 'Your commission payout could not be completed',
+    html: `<p>We could not complete the commission payout for ${esc(leadRef)}. Our team is looking into it and will contact you if we need anything from you. <a href="${FRONTEND()}/partners/finance">See your deals and payouts</a>.</p>`,
+    user,
+    category: CATEGORIES.TRANSACTIONAL,
+  });
+}
+
 module.exports = {
   send,
+  isRecipientAllowed,
   sendLeadAssigned,
   sendPropertyApproved,
   sendPropertyRejected,
@@ -179,6 +288,14 @@ module.exports = {
   sendKycRejected,
   sendEscrowHeld,
   sendEscrowRefunded,
+  sendVisitScheduled,
+  sendDisputeUpdate,
+  sendTicketUpdate,
+  sendVideoTourUpdate,
+  sendPartnerPayoutProcessed,
+  sendPartnerTaxInvoiceNeeded,
+  sendTaxInvoiceReviewed,
+  sendPartnerPayoutFailed,
   sendEscrowPaymentFailed,
   sendLoanStatusUpdate,
   sendLeadInquiryConfirmed,

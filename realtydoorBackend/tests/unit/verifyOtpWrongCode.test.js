@@ -8,22 +8,24 @@ const leads = require('../../src/modules/leads/leads.service');
 const lead = (over = {}) => ({ id: 'l1', assignedPartnerId: 'p1', siteVisitOTP: '123456', otpAttempts: 0, otpLockedUntil: null,
   otpExpiresAt: new Date(Date.now() + 3600e3), siteVisitScheduledAt: new Date(Date.now() - 3600e3), ...over });
 
-beforeEach(() => { jest.clearAllMocks(); prisma.lead.update.mockResolvedValue({}); });
+// The counter is bumped by the database ({ increment: 1 }); the update returns the new count.
+beforeEach(() => { jest.clearAllMocks(); prisma.lead.update.mockImplementation(async ({ data }) => ({ otpAttempts: (prisma.__start ?? 0) + (data.otpAttempts?.increment ?? 0) })); prisma.__start = 0; });
 
 test('first wrong code: 400, two tries left, counter saved', async () => {
   prisma.lead.findFirst.mockResolvedValue(lead());
   await expect(leads.verifyOtp('l1', 'p1', '958251', '1.1.1.1')).rejects.toMatchObject({ statusCode: 400, data: { code: 'LEAD_OTP_INVALID', attemptsLeft: 2 } });
-  expect(prisma.lead.update.mock.calls[0][0].data.otpAttempts).toBe(1);
+  expect(prisma.lead.update.mock.calls[0][0].data.otpAttempts).toEqual({ increment: 1 });
 });
 
 test('third wrong code locks the visit and says to contact admin', async () => {
+  prisma.__start = 2;
   prisma.lead.findFirst.mockResolvedValue(lead({ otpAttempts: 2 }));
   await expect(leads.verifyOtp('l1', 'p1', '958251', '1.1.1.1')).rejects.toMatchObject({ statusCode: 429, data: { code: 'LEAD_OTP_LOCKED' } });
-  expect(prisma.lead.update.mock.calls[0][0].data.otpLockedUntil).toBeInstanceOf(Date);
+  expect(prisma.lead.update.mock.calls[1][0].data.otpLockedUntil).toBeInstanceOf(Date);
 });
 
 test('a lead stored without a counter still counts from zero', async () => {
   prisma.lead.findFirst.mockResolvedValue(lead({ otpAttempts: undefined }));
   await expect(leads.verifyOtp('l1', 'p1', '958251', '1.1.1.1')).rejects.toMatchObject({ statusCode: 400, data: { attemptsLeft: 2 } });
-  expect(prisma.lead.update.mock.calls[0][0].data.otpAttempts).toBe(1);
+  expect(prisma.lead.update.mock.calls[0][0].data.otpAttempts).toEqual({ increment: 1 });
 });

@@ -28,6 +28,14 @@ const DELIVERY_EVENTS = {
   messageRead: 'READ',
   failed: 'FAILED',
   messageFailed: 'FAILED',
+  // The names WATI's own webhook screen lists ("Sent Message is DELIVERED v2" and so on). Written from WATI's event list, not yet
+  // checked against a real payload: capture one in WATI's webhook Logs and correct any name that differs.
+  sentMessageDELIVERED: 'DELIVERED',
+  sentMessageDELIVERED_v2: 'DELIVERED',
+  sentMessageREAD: 'READ',
+  sentMessageREAD_v2: 'READ',
+  templateMessageSent: 'SENT',
+  templateMessageFailed: 'FAILED',
 };
 
 const KEYWORD_MAP = {
@@ -117,4 +125,4 @@ async function watiWebhook(req, res) {
   }
 }
 
-module.exports = { watiWebhook };
+module.exports = { watiWebhook, DELIVERY_EVENTS };

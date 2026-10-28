@@ -17,6 +17,8 @@ const JOB_MODULES = [
   './resetWeeklyViews',
   './processAccountDeletions',
   './paymentReconcile',
+  './visitReminder',
+  './staffDigest',
 ];
 
 function shouldRunJobs(env = process.env) {

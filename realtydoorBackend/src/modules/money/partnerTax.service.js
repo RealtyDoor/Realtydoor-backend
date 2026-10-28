@@ -141,6 +141,14 @@ async function reviewInvoice(id, decision, { reason }, adminId, ip) {
       : `Invoice ${inv.invoiceNumber} was rejected: ${reason.trim()}. Please upload a corrected invoice.`,
     type: decision === 'ACCEPTED' ? 'TAX_INVOICE_ACCEPTED' : 'TAX_INVOICE_REJECTED', linkUrl: '/partners/finance',
   }).catch((e) => logger.warn('[TaxInvoice] partner notify failed', { error: e.message }));
+  (async () => {
+    const partner = await prisma.user.findUnique({ where: { id: inv.partnerId }, select: { email: true } });
+    const accepted = decision === 'ACCEPTED';
+    require('../../lib/wati').notifyUser(inv.partnerId, accepted ? 'partner_tax_invoice_accepted' : 'partner_tax_invoice_rejected', {
+      partner_name: '$userName', invoice_number: inv.invoiceNumber, ...(accepted ? {} : { reason: reason.trim() }),
+    }, { leadId: inv.leadId });
+    if (partner?.email) await require('../../lib/email').sendTaxInvoiceReviewed(partner.email, { accepted, invoiceNumber: inv.invoiceNumber, reason: reason?.trim() });
+  })().catch((e) => logger.warn('[TaxInvoice] partner message failed', { error: e.message }));
   return prisma.partnerTaxInvoice.findUnique({ where: { id } });
 }
 

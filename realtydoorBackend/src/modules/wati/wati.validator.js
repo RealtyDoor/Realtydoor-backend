@@ -37,7 +37,7 @@ const testSendSchema = z.object({
   phone:     phoneField,
   // Keyed by variable name, matching WatiTemplate.variables. Values are
   // coerced to strings at send time.
-  variables: z.record(z.union([z.string(), z.number()])).default({}),
+  variables: z.record(z.string(), z.union([z.string(), z.number()])).default({}),
 });
 
 module.exports = {

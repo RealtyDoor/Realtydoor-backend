@@ -151,7 +151,7 @@ describe('verifyOtp', () => {
   test.each([[123456], ['12345'], ['1234567'], [' 123456'], ['123456 '], ['12345a'], [['123456']], [{ a: 1 }], [true]])('a guess of %p is not the code', async (guess) => {
     prisma.lead.findFirst.mockResolvedValue(lead());
     await expect(ref(guess)).rejects.toMatchObject({ statusCode: 400 });
-    expect(prisma.lead.update.mock.calls[0][0].data.otpAttempts).toBe(1);
+    expect(prisma.lead.update.mock.calls[0][0].data.otpAttempts).toEqual({ increment: 1 });
   });
   test('a wrong code never reveals the phone number or the real code', async () => {
     prisma.lead.findFirst.mockResolvedValue(lead());
