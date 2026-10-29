@@ -118,6 +118,9 @@ async function searchProperties(query, skip, limit, page) {
     // same search endpoint for peers and was silently getting undefined
     // for these three without them in the select.
     builtUpArea: true, ageOfProperty: true, floorNumber: true, totalFloors: true,
+    // What a card shows for a plot, a new project or a house: size, units, layout, developer, configurations, price range.
+    bathrooms: true, plotArea: true, totalUnits: true, landAreaValue: true, landAreaUnit: true, openSpacePct: true,
+    developer: true, unitConfigurations: true, priceMax: true, possessionDate: true,
     // Needed for a map view (pins for every result on the listing page)
     // without round-tripping to the per-property detail endpoint.
     latitude: true, longitude: true,
@@ -301,11 +304,10 @@ function shapePropertyDetail(property, ratingData) {
     },
 
     pricing: {
-      // We store one price per listing, not a range — minPrice/maxPrice are
-      // equal here. A true range only makes sense for a multi-unit project,
-      // which isn't a concept this schema models.
+      // One price per listing, so minPrice and maxPrice are equal, except for a new project, where `price` is the starting
+      // price and `priceMax` the top of its range.
       minPrice: property.price ?? null,
-      maxPrice: property.price ?? null,
+      maxPrice: property.priceMax ?? property.price ?? null,
       monthlyRent: property.monthlyRent ?? null,
       priceNegotiable: property.priceNegotiable,
       currency: 'INR',
