@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { tidyLocality } = require('../../lib/localityName');
 const { objectId, roleEnum, userStatusEnum } = require('../../utils/validators');
 const { phoneField } = require('../../lib/phoneUtils');
 const { ADMIN_PERMISSION_SCOPES, ADMIN_STAFF_ROLES } = require('../../utils/adminPermissions');
@@ -126,20 +127,91 @@ const requestKycDocumentsSchema = z.object({
   dueInDays: z.number().int().positive().max(90).optional(),
 });
 
+// Admin edit of a listing: every field a listing has, typed. Unknown or protected fields (partnerId, slug, id, counters,
+// timestamps) are rejected rather than passed through. `null` clears an optional field; required ones cannot be cleared.
+const url = z.string().url().max(2000);
+const posNum = z.number().positive();
+const posInt = z.number().int().positive();
+const nonNegInt = z.number().int().min(0);
+const list = (max, itemMax) => z.array(z.string().trim().min(1).max(itemMax)).max(max);
+
 const editPropertySchema = z.object({
-  title:         z.string().min(5).max(200).optional(),
-  description:   z.string().max(5000).optional(),
-  price:         z.number().positive().optional(),
-  bhk:           z.number().int().min(1).optional(),
-  city:          z.string().optional(),
-  locality:      z.string().optional(),
-  pincode:       z.string().optional(),
-  area:          z.number().positive().optional(),
-  publishStatus: z.enum(['PENDING_APPROVAL', 'APPROVED', 'REJECTED']).optional(),
-  rejectionNote: z.string().max(500).optional(),
-}).passthrough().refine(
+  // basics
+  title:           z.string().min(5).max(200),
+  description:     z.string().min(20).max(5000),
+  price:           posNum.nullable(),
+  previousPrice:   posInt.nullable(),
+  monthlyRent:     posNum.nullable(),
+  priceNegotiable: z.boolean(),
+  propertyType:    z.enum(['FLAT', 'INDEPENDENT_HOUSE', 'VILLA', 'PLOT', 'COMMERCIAL_OFFICE', 'RETAIL_SHOP']),
+  listingType:     z.enum(['SALE', 'RENT', 'LEASE']),
+  propertyStatus:  z.enum(['PRE_LAUNCH', 'READY_TO_MOVE', 'UNDER_CONSTRUCTION', 'SOLD', 'RENTED']),
+  publishStatus:   z.enum(['PENDING_APPROVAL', 'APPROVED', 'REJECTED']),
+  rejectionNote:   z.string().max(500).nullable(),
+  adminEditNote:   z.string().max(1000).nullable(),
+  // specs
+  bhk:             z.number().int().min(1).max(10).nullable(),
+  bathrooms:       nonNegInt.nullable(),
+  balconies:       nonNegInt.nullable(),
+  carpetArea:      posNum.nullable(),
+  builtUpArea:     posNum.nullable(),
+  plotArea:        posNum.nullable(),
+  floorNumber:     nonNegInt.nullable(),
+  totalFloors:     posInt.nullable(),
+  ageOfProperty:   nonNegInt.nullable(),
+  furnishing:      z.string().max(50).nullable(),
+  facing:          z.string().max(50).nullable(),
+  possessionDate:  z.string().datetime().nullable(),
+  unitsLeft:       nonNegInt.nullable(),
+  developer:       z.string().max(200).nullable(),
+  landAreaValue:   posNum.nullable(),
+  landAreaUnit:    z.string().max(20).nullable(),
+  openSpacePct:    z.number().int().min(0).max(100).nullable(),
+  totalUnits:      posInt.nullable(),
+  // location
+  address:         z.string().min(5).max(500),
+  locality:        z.string().min(2).max(120).transform(tidyLocality),
+  city:            z.string().min(2).max(100),
+  state:           z.string().min(2).max(100),
+  pincode:         z.string().regex(/^\d{6}$/, 'Pincode must be 6 digits'),
+  latitude:        z.number().min(-90).max(90).nullable(),
+  longitude:       z.number().min(-180).max(180).nullable(),
+  nearbyLandmarks: list(30, 120),
+  mapLink:         z.string().max(2000).nullable(),
+  // compliance
+  reraNumber:      z.string().max(100).nullable(),
+  bankApprovals:   list(30, 80),
+  isMortgaged:     z.boolean().nullable(),
+  mortgageLender:  z.string().max(200).nullable(),
+  loanNocStatus:   z.enum(['NOT_REQUIRED', 'PENDING', 'RECEIVED', 'REJECTED']).nullable(),
+  loanNocUrl:      url.nullable(),
+  hasCoOwners:     z.boolean().nullable(),
+  // media
+  images:          z.array(url).max(30),
+  videos:          z.array(url).max(10),
+  coverImageIndex: nonNegInt,
+  floorPlanUrl:    url.nullable(),
+  virtualTourUrl:  url.nullable(),
+  videoUrl:        url.nullable(),
+  // lists and search
+  amenities:       list(60, 80),
+  societyFeatures: list(60, 80),
+  metaTitle:       z.string().max(60).nullable(),
+  metaDescription: z.string().max(160).nullable(),
+  // admin flags
+  isFeatured:        z.boolean(),
+  isFeaturedProject: z.boolean(),
+  isSearchable:      z.boolean().nullable(),
+  isVerified:        z.boolean(),
+  isB2BOnly:         z.boolean(),
+  b2bUrgent:         z.boolean(),
+  commissionSplitOffer: z.string().max(200).nullable(),
+}).partial().strict().refine(
   (data) => Object.keys(data).length > 0,
-  { message: 'At least one field must be provided' }
+  { message: 'At least one field must be provided' },
+).refine(
+  (data) => !data.images || data.coverImageIndex === undefined || data.coverImageIndex < Math.max(data.images.length, 1),
+  { message: 'Cover photo must be one of the photos', path: ['coverImageIndex'] },
 );
 
 const updateTicketSchema = z.object({

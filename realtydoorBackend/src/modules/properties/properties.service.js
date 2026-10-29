@@ -591,7 +591,8 @@ async function updateProperty(id, partnerId, data) {
     data.changesRequestedByAdminId = null;
   }
 
-  const updated = await prisma.property.update({ where: { id }, data });
+  const { withMapLinkCoords } = require('../listings/location.service');
+  const updated = await prisma.property.update({ where: { id }, data: withMapLinkCoords(data) });
   return {
     property: updated,
     changeRequest: null,

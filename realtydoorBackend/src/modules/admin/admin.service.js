@@ -1254,9 +1254,22 @@ async function editProperty(propertyId, data, adminId, adminName, ip) {
 
   const FORBIDDEN = ['partnerId', 'slug'];
   FORBIDDEN.forEach((f) => delete data[f]);
+  // Same spelling rules as a partner edit: one canonical city name.
+  if (data.city) data.city = canonicalizeCity(data.city);
+  // verifiedAt follows the verified switch: stamped when it turns on, cleared when it turns off.
+  if (data.isVerified === true && !property.isVerified) data.verifiedAt = new Date();
+  if (data.isVerified === false && property.isVerified) data.verifiedAt = null;
+
+  // Lists and dates compare by value; String() on an array or a Date made every untouched one look changed.
+  const norm = (v) => (v instanceof Date ? v.toISOString() : v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+  const sameValue = (a, b) => {
+    if (typeof a === 'string' && typeof b === 'object' && b instanceof Date) return new Date(a).getTime() === b.getTime();
+    if (a instanceof Date && typeof b === 'string') return a.getTime() === new Date(b).getTime();
+    return norm(a) === norm(b);
+  };
 
   const editLogRows = Object.entries(data)
-    .filter(([field, newVal]) => String(property[field] ?? '') !== String(newVal ?? ''))
+    .filter(([field, newVal]) => field !== 'verifiedAt' && !sameValue(property[field], newVal))
     .map(([field, newVal]) => ({
       propertyId,
       editedBy:     adminId,
@@ -1266,8 +1279,10 @@ async function editProperty(propertyId, data, adminId, adminName, ip) {
       newValue:     newVal     != null ? JSON.stringify(newVal)              : null,
     }));
 
+  // A changed map link carries its parsed coordinates with it (same helper listing creation and the location edit use).
+  const { withMapLinkCoords } = require('../listings/location.service');
   const [updated] = await prisma.$transaction([
-    prisma.property.update({ where: { id: propertyId }, data }),
+    prisma.property.update({ where: { id: propertyId }, data: withMapLinkCoords(data) }),
     ...editLogRows.map((row) => prisma.propertyEditLog.create({ data: row })),
   ]);
 

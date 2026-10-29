@@ -77,7 +77,27 @@ const createPropertySchema = z.object({
   landAreaUnit: z.string().max(20).optional(),
   openSpacePct: z.number().int().min(0).max(100).optional(),
   totalUnits: z.number().int().positive().optional(),
+
+  // Added so a partner can edit every field of their own listing.
+  balconies: z.number().int().min(0).optional(),
+  unitsLeft: z.number().int().min(0).optional(),
+  floorPlanUrl: z.string().url().max(2000).optional(),
+  virtualTourUrl: z.string().url().max(2000).optional(),
+  videoUrl: z.string().url().max(2000).optional(),
 });
+
+// PATCH /properties/:id (partner): every field optional, and the optional ones can be cleared with null. Required fields
+// (title, description, address, locality, city, state, pincode, type) cannot be cleared. Unknown and admin-only fields are dropped.
+const CLEARABLE_ON_UPDATE = [
+  'price', 'monthlyRent', 'bhk', 'bathrooms', 'balconies', 'carpetArea', 'builtUpArea', 'plotArea', 'floorNumber', 'totalFloors',
+  'ageOfProperty', 'furnishing', 'facing', 'possessionDate', 'unitsLeft', 'latitude', 'longitude', 'mapLink',
+  'partnerPinLatitude', 'partnerPinLongitude', 'reraNumber', 'isMortgaged', 'mortgageLender', 'loanNocStatus', 'loanNocUrl',
+  'hasCoOwners', 'metaTitle', 'metaDescription', 'developer', 'landAreaValue', 'landAreaUnit', 'openSpacePct', 'totalUnits',
+  'floorPlanUrl', 'virtualTourUrl', 'videoUrl',
+];
+const updatePropertySchema = createPropertySchema.partial().extend(
+  Object.fromEntries(CLEARABLE_ON_UPDATE.map((k) => [k, createPropertySchema.shape[k].unwrap().nullable().optional()])),
+);
 
 const searchSchema = paginationSchema.extend({
   q: z.string().optional(),
@@ -118,4 +138,4 @@ const reportUnauthorizedListingSchema = z.object({
   path: ['reporterEmail'],
 });
 
-module.exports = { createPropertySchema, missingPriceMessage, searchSchema, constructionUpdateSchema, reportUnauthorizedListingSchema };
+module.exports = { createPropertySchema, updatePropertySchema, missingPriceMessage, searchSchema, constructionUpdateSchema, reportUnauthorizedListingSchema };

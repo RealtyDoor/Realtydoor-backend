@@ -1,7 +1,7 @@
 const { success, created } = require('../../utils/ApiResponse');
 const { isTrustedMediaUrl } = require('../../lib/trustedUrl');
 const { parsePagination } = require('../../utils/pagination');
-const { searchSchema, createPropertySchema, missingPriceMessage, reportUnauthorizedListingSchema } = require('./properties.validator');
+const { searchSchema, createPropertySchema, updatePropertySchema, missingPriceMessage, reportUnauthorizedListingSchema } = require('./properties.validator');
 const service = require('./properties.service');
 const ApiError = require('../../utils/ApiError');
 
@@ -59,7 +59,7 @@ async function create(req, res, next) {
 
 async function update(req, res, next) {
   try {
-    const data = createPropertySchema.partial().parse(req.body);
+    const data = updatePropertySchema.parse(req.body);
     // 4.8 — editing a LIVE listing returns the unchanged property plus the
     // pending changeRequest, not an updated property. The listing stays live
     // until an admin reviews the diff, so callers must read `changeRequest`
