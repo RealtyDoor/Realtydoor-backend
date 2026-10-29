@@ -32,4 +32,15 @@ describe('partner update property schema', () => {
     expect(() => updatePropertySchema.parse({ floorPlanUrl: 'nope' })).toThrow();
     expect(() => updatePropertySchema.parse({ balconies: -1 })).toThrow();
   });
+
+  it('accepts a reordered or shortened photo list and a cover index', () => {
+    const out = updatePropertySchema.parse({ images: ['https://s3.example/b.png', 'https://s3.example/a.png'], coverImageIndex: 1, videos: [] });
+    expect(out.images).toHaveLength(2);
+    expect(out.coverImageIndex).toBe(1);
+  });
+
+  it('refuses a cover index past the photos, and non-link photo entries', () => {
+    expect(() => updatePropertySchema.parse({ images: ['https://s3.example/a.png'], coverImageIndex: 4 })).toThrow();
+    expect(() => updatePropertySchema.parse({ images: ['not a link'] })).toThrow();
+  });
 });

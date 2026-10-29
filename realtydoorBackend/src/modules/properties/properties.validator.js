@@ -95,8 +95,16 @@ const CLEARABLE_ON_UPDATE = [
   'hasCoOwners', 'metaTitle', 'metaDescription', 'developer', 'landAreaValue', 'landAreaUnit', 'openSpacePct', 'totalUnits',
   'floorPlanUrl', 'virtualTourUrl', 'videoUrl',
 ];
-const updatePropertySchema = createPropertySchema.partial().extend(
-  Object.fromEntries(CLEARABLE_ON_UPDATE.map((k) => [k, createPropertySchema.shape[k].unwrap().nullable().optional()])),
+const updatePropertySchema = createPropertySchema.partial().extend({
+  ...Object.fromEntries(CLEARABLE_ON_UPDATE.map((k) => [k, createPropertySchema.shape[k].unwrap().nullable().optional()])),
+  // Remove or reorder what is already on the listing, and pick the cover. New files go through the upload endpoints; the service
+  // refuses any link that is not already on the listing.
+  images: z.array(z.string().url().max(2000)).max(30).optional(),
+  videos: z.array(z.string().url().max(2000)).max(10).optional(),
+  coverImageIndex: z.number().int().min(0).optional(),
+}).refine(
+  (d) => !d.images || d.coverImageIndex === undefined || d.coverImageIndex < Math.max(d.images.length, 1),
+  { message: 'Cover photo must be one of the photos', path: ['coverImageIndex'] },
 );
 
 const searchSchema = paginationSchema.extend({

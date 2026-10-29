@@ -553,6 +553,13 @@ async function updateProperty(id, partnerId, data) {
   FORBIDDEN.forEach((f) => delete data[f]);
   if (data.city) data.city = canonicalizeCity(data.city);
 
+  // Photos and videos can be removed or reordered here, never added by link: a new file has to be uploaded to the listing.
+  for (const field of ['images', 'videos']) {
+    if (data[field] && data[field].some((u) => !(property[field] || []).includes(u))) {
+      throw new ApiError(400, `You can only remove or reorder the ${field} already on this listing. Upload new files instead.`);
+    }
+  }
+
   if (property.publishStatus === 'APPROVED') {
     const changes = diffProperty(property, data);
     const fieldCount = Object.keys(changes).length;
