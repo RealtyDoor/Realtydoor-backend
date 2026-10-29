@@ -74,6 +74,10 @@ model Property {
   landAreaUnit  String? // "acres", "sqft", etc. — free text, matches furnishing/facing convention
   openSpacePct  Int?
   totalUnits    Int?
+  // New-project listings: the unit types on offer (e.g. "2 BHK", "3 BHK", "Plots 30x40") and the top of the price range
+  // (`price` is the starting price).
+  unitConfigurations String[] @default([])
+  priceMax      Float?
 
   // Location
   address         String

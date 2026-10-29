@@ -143,7 +143,7 @@ const editPropertySchema = z.object({
   previousPrice:   posInt.nullable(),
   monthlyRent:     posNum.nullable(),
   priceNegotiable: z.boolean(),
-  propertyType:    z.enum(['FLAT', 'INDEPENDENT_HOUSE', 'VILLA', 'PLOT', 'COMMERCIAL_OFFICE', 'RETAIL_SHOP']),
+  propertyType:    z.enum(['FLAT', 'INDEPENDENT_HOUSE', 'VILLA', 'PLOT', 'COMMERCIAL_OFFICE', 'RETAIL_SHOP', 'NEW_PROJECT']),
   listingType:     z.enum(['SALE', 'RENT', 'LEASE']),
   propertyStatus:  z.enum(['PRE_LAUNCH', 'READY_TO_MOVE', 'UNDER_CONSTRUCTION', 'SOLD', 'RENTED']),
   publishStatus:   z.enum(['PENDING_APPROVAL', 'APPROVED', 'REJECTED']),
@@ -168,6 +168,8 @@ const editPropertySchema = z.object({
   landAreaUnit:    z.string().max(20).nullable(),
   openSpacePct:    z.number().int().min(0).max(100).nullable(),
   totalUnits:      posInt.nullable(),
+  unitConfigurations: list(30, 80),
+  priceMax:        posNum.nullable(),
   // location
   address:         z.string().min(5).max(500),
   locality:        z.string().min(2).max(120).transform(tidyLocality),

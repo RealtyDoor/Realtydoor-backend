@@ -67,3 +67,27 @@ describe('admin edit property schema', () => {
     expect(out.locality.length).toBeGreaterThan(0);
   });
 });
+
+describe('new project listings', () => {
+  const { createPropertySchema, updatePropertySchema } = require('../../src/modules/properties/properties.validator');
+
+  it('admin edit accepts the NEW_PROJECT type and the project-only fields', () => {
+    const out = editPropertySchema.parse({ propertyType: 'NEW_PROJECT', unitConfigurations: ['2 BHK', '3 BHK', 'Plots 30x40'], priceMax: 25000000, price: 6500000 });
+    expect(out.propertyType).toBe('NEW_PROJECT');
+    expect(out.unitConfigurations).toEqual(['2 BHK', '3 BHK', 'Plots 30x40']);
+  });
+
+  it('partner create and update accept NEW_PROJECT with its project fields', () => {
+    const base = { title: 'Vrunda City Phase 2', description: 'A new township with plots and villas near the ring road.', address: '12 Ring Road', locality: 'Hoskote', city: 'Bengaluru', state: 'Karnataka', pincode: '562114', listingType: 'SALE' };
+    const created = createPropertySchema.parse({ ...base, propertyType: 'NEW_PROJECT', developer: 'Greenfield Estates', totalUnits: 260, unitsLeft: 120, landAreaValue: 17, landAreaUnit: 'acres', openSpacePct: 55, unitConfigurations: ['Plots 30x40'], priceMax: 9000000, price: 3900000 });
+    expect(created.propertyType).toBe('NEW_PROJECT');
+    expect(created.unitConfigurations).toEqual(['Plots 30x40']);
+    const updated = updatePropertySchema.parse({ propertyType: 'NEW_PROJECT', unitConfigurations: [], priceMax: null });
+    expect(updated.priceMax).toBeNull();
+    expect(updated.unitConfigurations).toEqual([]);
+  });
+
+  it('keeps rejecting a made-up type', () => {
+    expect(() => editPropertySchema.parse({ propertyType: 'CASTLE' })).toThrow();
+  });
+});

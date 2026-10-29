@@ -32,6 +32,8 @@ enum PropertyType {
   PLOT
   COMMERCIAL_OFFICE
   RETAIL_SHOP
+  // A project launch listing (township, layout or apartment community): carries the project-level figures below.
+  NEW_PROJECT
 }
 
 enum ListingType {

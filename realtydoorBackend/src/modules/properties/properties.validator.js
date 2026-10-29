@@ -19,7 +19,7 @@ const createPropertySchema = z.object({
   price: z.number().positive().optional(),
   monthlyRent: z.number().positive().optional(),
   priceNegotiable: z.boolean().optional(),
-  propertyType: z.enum(['FLAT', 'INDEPENDENT_HOUSE', 'VILLA', 'PLOT', 'COMMERCIAL_OFFICE', 'RETAIL_SHOP']),
+  propertyType: z.enum(['FLAT', 'INDEPENDENT_HOUSE', 'VILLA', 'PLOT', 'COMMERCIAL_OFFICE', 'RETAIL_SHOP', 'NEW_PROJECT']),
   listingType: z.enum(['SALE', 'RENT', 'LEASE']),
   // SOLD/RENTED are deliberately not partner-settable here — same as before,
   // only PRE_LAUNCH is newly added for project-status reporting.
@@ -78,6 +78,10 @@ const createPropertySchema = z.object({
   openSpacePct: z.number().int().min(0).max(100).optional(),
   totalUnits: z.number().int().positive().optional(),
 
+  // New-project listings.
+  unitConfigurations: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+  priceMax: z.number().positive().optional(),
+
   // Added so a partner can edit every field of their own listing.
   balconies: z.number().int().min(0).optional(),
   unitsLeft: z.number().int().min(0).optional(),
@@ -93,7 +97,7 @@ const CLEARABLE_ON_UPDATE = [
   'ageOfProperty', 'furnishing', 'facing', 'possessionDate', 'unitsLeft', 'latitude', 'longitude', 'mapLink',
   'partnerPinLatitude', 'partnerPinLongitude', 'reraNumber', 'isMortgaged', 'mortgageLender', 'loanNocStatus', 'loanNocUrl',
   'hasCoOwners', 'metaTitle', 'metaDescription', 'developer', 'landAreaValue', 'landAreaUnit', 'openSpacePct', 'totalUnits',
-  'floorPlanUrl', 'virtualTourUrl', 'videoUrl',
+  'floorPlanUrl', 'virtualTourUrl', 'videoUrl', 'priceMax',
 ];
 const updatePropertySchema = createPropertySchema.partial().extend({
   ...Object.fromEntries(CLEARABLE_ON_UPDATE.map((k) => [k, createPropertySchema.shape[k].unwrap().nullable().optional()])),
