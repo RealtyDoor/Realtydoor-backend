@@ -149,7 +149,22 @@ const localitySuggestLimiter = rateLimit({
   message: rateLimitMessage('Too many new localities added. Try again later.'),
 });
 
+// Public forms (contact, NRI lead, service request, report a listing): anyone can post these, and each one creates a row and tells the admins.
+// 10 an hour per client address is far more than a real visitor needs. It only works if the real client address reaches the API (see
+// TRUST_PROXY_HOPS in app.js). FORM_RATE_LIMIT_MAX raises it for a test deployment where every visitor shares one address.
+function makePublicFormLimiter({ max = Number(process.env.FORM_RATE_LIMIT_MAX) || 10, enabledInTest = false } = {}) {
+  return rateLimit({
+    ...BASE,
+    skip: () => process.env.NODE_ENV === 'test' && !enabledInTest,
+    windowMs: 60 * 60 * 1000,
+    max,
+    message: rateLimitMessage('Too many submissions from your connection. Please try again later, or call us.'),
+  });
+}
+const publicFormLimiter = makePublicFormLimiter();
+
 module.exports = {
+  makePublicFormLimiter, publicFormLimiter,
   documentLimiter, localitySuggestLimiter,
   defaultLimiter, perUserLimiter, otpLimiter, authLimiter, uploadLimiter, searchLimiter,
   otpSendLimiter, otpVerifyLimiter, perUserPhoneOtpLimiter, privacyActionLimiter,
