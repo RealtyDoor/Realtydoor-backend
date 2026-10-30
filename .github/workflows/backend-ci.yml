@@ -1,0 +1,36 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [develop-extended, main]
+    paths: ["realtydoorBackend/**", ".github/workflows/backend-ci.yml"]
+  pull_request:
+    paths: ["realtydoorBackend/**", ".github/workflows/backend-ci.yml"]
+
+# One run per branch; a newer push cancels the older one.
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: realtydoorBackend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: realtydoorBackend/package-lock.json
+      # The postinstall step runs `prisma generate` (needs no database).
+      - run: npm ci
+      # Unit tests only: they use no database or network. The Razorpay library refuses to load without a key, so these are
+      # well-formed placeholders (not real keys); without them 27 test suites cannot start.
+      - run: npx jest tests/unit --forceExit
+        env:
+          RAZORPAY_KEY_ID: rzp_test_ci_placeholder
+          RAZORPAY_KEY_SECRET: ci_placeholder_secret

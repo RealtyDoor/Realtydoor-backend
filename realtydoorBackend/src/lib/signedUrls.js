@@ -1,5 +1,6 @@
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { awsClientCredentials } = require('./awsCredentials');
 
 // BUG-048 — private uploads (allocation letters and visit photos, KYC papers, buyer documents, listing papers, tax invoices,
 // ticket evidence) are stored in the bucket under these folders, and the database keeps their plain bucket link. A plain link works
@@ -12,7 +13,7 @@ let client;
 const s3 = () => {
   client = client || new S3Client({
     region: process.env.AWS_REGION,
-    credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY },
+    ...awsClientCredentials(),
   });
   return client;
 };

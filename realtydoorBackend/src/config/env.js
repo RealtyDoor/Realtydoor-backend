@@ -29,13 +29,17 @@ const envSchema = z.object({
   // a throwaway value — required once NODE_ENV is actually 'production',
   // enforced by the .refine() below.
   WATI_WEBHOOK_TOKEN: z.string().optional(),
-  AWS_ACCESS_KEY_ID: z.string().min(1),
-  AWS_SECRET_ACCESS_KEY: z.string().min(1),
+  // Optional: on AWS the task's IAM role supplies S3 credentials. Local setups use a key pair; a lone key is refused below.
+  AWS_ACCESS_KEY_ID: z.string().optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().optional(),
   AWS_REGION: z.string().min(1),
   AWS_S3_BUCKET: z.string().min(1),
   GMAIL_APP_PASSWORD: z.string().min(1),
   EMAIL_FROM: z.string().email(),
+  // FRONTEND_URL is the public site address that emails and PDFs build their links from, so it is always required. FRONTEND_URLS is an
+  // optional comma-separated list of every allowed origin for CORS (src/app.js reads it first); set it when more than one host calls the API.
   FRONTEND_URL: z.string().url(),
+  FRONTEND_URLS: z.string().optional(),
   REDIS_URL: z.string().optional(),
   OTP_EXPIRY_MINUTES: z.string().default('120'),
   OTP_MAX_ATTEMPTS: z.string().default('3'),
@@ -43,6 +47,9 @@ const envSchema = z.object({
   DEV_EXPOSE_OTP: z.string().optional(),
   DEV_API_KEY: z.string().optional(),
 }).refine(
+  (env) => Boolean(env.AWS_ACCESS_KEY_ID) === Boolean(env.AWS_SECRET_ACCESS_KEY),
+  { message: 'Set both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or neither (neither = use the task IAM role).', path: ['AWS_ACCESS_KEY_ID'] }
+).refine(
   (env) => !(env.NODE_ENV === 'production' && env.DEV_EXPOSE_OTP === 'true'),
   { message: 'DEV_EXPOSE_OTP must not be set to "true" in production — it echoes real OTP codes in API responses.', path: ['DEV_EXPOSE_OTP'] }
 ).refine(

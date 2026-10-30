@@ -43,3 +43,17 @@ test('the error output names the variable but never prints its value', () => {
   check({ ...GOOD, OTP_HASH_SECRET: 'tooshort-secret' });
   expect(JSON.stringify(err.mock.calls)).not.toContain('tooshort-secret');
 });
+
+// Production on AWS: the task's IAM role supplies S3 credentials (no static keys), and the API may sit behind several frontend hosts.
+test('production boots on an IAM role: no AWS keys, with a list of frontend origins as well', () => {
+  const { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, ...rest } = GOOD;
+  expect(check({ ...rest, FRONTEND_URLS: 'https://www.realtydoor.com,https://app.realtydoor.com' })).toBe('ok');
+});
+test.each([
+  ['only the AWS access key id (half a key pair)', { AWS_SECRET_ACCESS_KEY: undefined }],
+  ['only the AWS secret key (half a key pair)', { AWS_ACCESS_KEY_ID: undefined }],
+  ['no FRONTEND_URL, even with FRONTEND_URLS (emails and PDFs build their links from it)', { FRONTEND_URL: undefined, FRONTEND_URLS: 'https://www.realtydoor.com' }],
+  ['a FRONTEND_URL that is not a URL', { FRONTEND_URL: 'nope' }],
+])('refuses to boot with %s', (_n, change) => {
+  expect(check({ ...GOOD, ...change })).toBe('exit');
+});

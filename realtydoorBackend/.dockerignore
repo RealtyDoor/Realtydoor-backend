@@ -1,0 +1,20 @@
+# Nothing secret, local or heavy goes into the build context.
+.git
+node_modules
+.env
+.env.*
+!.env.example
+coverage
+logs
+*.log
+health.log
+tests
+jest.config.js
+jsconfig.json
+.DS_Store
+Dockerfile
+.dockerignore
+readme.md
+API.md
+RealtyDoor.postman_collection.json
+scripts/.mockStatesIndex.json
