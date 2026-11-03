@@ -349,7 +349,7 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
       title: 'Lead Confirmed',
       message: creditAdder
         ? `${lead.refCode} · ${lead.buyerName} has been confirmed and is now in the assignment queue.`
-        : `${lead.refCode} · ${lead.buyerName} is in the assignment queue. ${OWNERSHIP_TEXT[ownership.reason]}`,
+        : `${lead.refCode} · ${lead.buyerName} is in the assignment queue. ${OWNERSHIP_TEXT[ownership.reason]} If you think this is wrong, raise a support ticket with the lead reference and the team will review it.`,
       type: 'LEAD_ASSIGNED',
       linkUrl: `/partners/leads/${leadId}`,
     });
