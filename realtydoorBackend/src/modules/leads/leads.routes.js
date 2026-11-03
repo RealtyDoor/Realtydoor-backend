@@ -14,6 +14,8 @@ router.post('/', authenticate, requireUser, requirePhone, ctrl.submit);
 // B3.1 — partner logs a self-sourced buyer. Lands as AWAITING_ADMIN.
 router.post('/partner', authenticate, requirePartner, requireKyc, ctrl.partnerAddLead);
 router.get('/partner', authenticate, requirePartner, requireKyc, ctrl.getMyLeads);
+// Static path: must stay above GET /partner/:id so it is never read as a lead id.
+router.get('/partner/pooled', authenticate, requirePartner, requireKyc, ctrl.getPooledLeads);
 router.get('/partner/:id', authenticate, requirePartner, requireKyc, ctrl.getLeadById);
 router.post('/partner/:id/schedule-visit', authenticate, requirePartner, requireKyc, ctrl.scheduleVisit);
 router.post('/partner/:id/resend-otp', authenticate, requirePartner, requireKyc, otpLimiter, ctrl.resendOtp);

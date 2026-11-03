@@ -114,3 +114,38 @@ describe('a property stops being available while leads on it are open', () => {
     expect(notifyAdmins).not.toHaveBeenCalled();
   });
 });
+
+describe('the partner\'s view of leads they brought that they do not hold', () => {
+  test('lists only their own, in review or in the pool, thin, and says which can be contested', async () => {
+    prisma.lead.findMany.mockResolvedValue([
+      { id: 'a', refCode: 'RD-L-A', buyerName: 'Asha', status: 'UNASSIGNED', createdAt: new Date(), creditContestedAt: null, property: { title: 'Villa', city: 'B' } },
+      { id: 'b', refCode: 'RD-L-B', buyerName: 'Ravi', status: 'UNASSIGNED', createdAt: new Date(), creditContestedAt: new Date(), property: null },
+      { id: 'c', refCode: 'RD-L-C', buyerName: 'Meera', status: 'AWAITING_ADMIN', createdAt: new Date(), creditContestedAt: null, property: null },
+    ]);
+    const out = await leads.getPooledLeads('P1');
+    const q = prisma.lead.findMany.mock.calls.at(-1)[0];
+    expect(q.where).toEqual({ addedByPartnerId: 'P1', status: { in: ['AWAITING_ADMIN', 'UNASSIGNED'] } });
+    expect(Object.keys(q.select)).not.toEqual(expect.arrayContaining(['buyerPhone', 'buyerEmail', 'assignedPartnerId', 'assignedPartner']));
+    expect(out.map((l) => [l.refCode, l.canContest])).toEqual([['RD-L-A', true], ['RD-L-B', false], ['RD-L-C', false]]);
+  });
+  test('the static path is registered before /partner/:id, so it is never read as a lead id', () => {
+    const router = require('../../src/modules/leads/leads.routes');
+    const paths = router.stack.filter((l) => l.route && l.route.methods.get).map((l) => l.route.path);
+    expect(paths.indexOf('/partner/pooled')).toBeGreaterThan(-1);
+    expect(paths.indexOf('/partner/pooled')).toBeLessThan(paths.indexOf('/partner/:id'));
+  });
+  test('a not-credited partner is sent to that view, a credited one to the lead', async () => {
+    const awaiting = { id: 'l1', refCode: 'RD-L-1', status: 'AWAITING_ADMIN', buyerName: 'Asha', buyerPhone: '+919000000001', buyerId: null, propertyId: 'prop1', addedByPartnerId: 'A', createdAt: new Date(Date.now() - 86_400_000), property: { title: 'V' } };
+    prisma.lead.findUnique.mockResolvedValue(awaiting);
+    prisma.lead.update.mockImplementation(async ({ data }) => ({ ...awaiting, ...data }));
+    prisma.user.findFirst.mockImplementation(async ({ where }) => (where.role === 'PARTNER' ? { id: where.id } : null));
+    prisma.lead.findMany.mockResolvedValue([{ id: 'old', addedByPartnerId: null, createdAt: new Date(Date.now() - 100 * 86_400_000) }]); // the platform knew this number first
+    await admin.confirmLead('l1', undefined, 'admin1', 'ip');
+    expect(createNotification.mock.calls.map((c) => c[0]).find((n) => n.userId === 'A')).toMatchObject({ linkUrl: '/partners/leads/pooled' });
+    jest.clearAllMocks();
+    prisma.lead.findMany.mockResolvedValue([]);
+    prisma.lead.update.mockImplementation(async ({ data }) => ({ ...awaiting, ...data }));
+    await admin.confirmLead('l1', undefined, 'admin1', 'ip');
+    expect(createNotification.mock.calls.map((c) => c[0]).find((n) => n.userId === 'A')).toMatchObject({ linkUrl: '/partners/leads/l1' });
+  });
+});

@@ -728,6 +728,22 @@ async function requestDrop(leadId, partnerId, reason, reasonCode) {
   return { message: 'Drop request submitted. Admin will review.' };
 }
 
+// Leads this partner brought that they do not hold: waiting for the team's review, or sitting in the company pool (the buyer was already
+// ours, or another partner registered them first). Read-only and deliberately thin: the buyer's name, the property and where it stands.
+// The partner is never told who else holds the buyer, and never sees the buyer's number.
+async function getPooledLeads(partnerId) {
+  const leads = await prisma.lead.findMany({
+    where: { addedByPartnerId: partnerId, status: { in: ['AWAITING_ADMIN', 'UNASSIGNED'] } },
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+    select: {
+      id: true, refCode: true, buyerName: true, status: true, createdAt: true, creditContestedAt: true, creditContestNote: true,
+      property: { select: { title: true, city: true, locality: true } },
+    },
+  });
+  return leads.map((l) => ({ ...l, canContest: l.status === 'UNASSIGNED' && !l.creditContestedAt }));
+}
+
 // A partner who brought the buyer and sees the lead sitting in the company pool can say so once; the admin is told and decides (assigning
 // the lead to anyone settles it). The partner is never told who else holds the buyer.
 async function contestCredit(leadId, partnerId, note) {
@@ -841,4 +857,4 @@ async function adminRejectDrop(leadId, adminId, ip) {
 }
 
 module.exports = {
-  contestCredit, evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };
+  contestCredit, getPooledLeads, evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };

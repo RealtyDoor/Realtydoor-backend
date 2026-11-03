@@ -351,7 +351,8 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
         ? `${lead.refCode} · ${lead.buyerName} has been confirmed and is now in the assignment queue.`
         : `${lead.refCode} · ${lead.buyerName} is in the assignment queue. ${OWNERSHIP_TEXT[ownership.reason]} If you think this is wrong, raise a support ticket with the lead reference and the team will review it.`,
       type: 'LEAD_ASSIGNED',
-      linkUrl: `/partners/leads/${leadId}`,
+      // A lead that is not theirs to work is not in their own list, so the link goes to where they can see it (and contest it).
+      linkUrl: creditAdder ? `/partners/leads/${leadId}` : '/partners/leads/pooled',
     });
   }
 

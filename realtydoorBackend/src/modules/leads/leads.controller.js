@@ -86,6 +86,10 @@ async function requestDrop(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function getPooledLeads(req, res, next) {
+  try { success(res, await service.getPooledLeads(req.user.id)); } catch (err) { next(err); }
+}
+
 async function contestCredit(req, res, next) {
   try {
     const { note } = contestCreditSchema.parse(req.body);
@@ -130,4 +134,4 @@ async function rejectDrop(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { contestCredit, submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, updateVisitOutcome, partnerAddLead, approveDrop, rejectDrop, verifyAllocationLetter };
+module.exports = { getPooledLeads, contestCredit, submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, updateVisitOutcome, partnerAddLead, approveDrop, rejectDrop, verifyAllocationLetter };
