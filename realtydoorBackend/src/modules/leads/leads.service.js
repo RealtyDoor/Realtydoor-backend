@@ -14,6 +14,7 @@ const { nextRefCode } = require('../../lib/refCode');
 const { assertLeadNotPaused } = require('../../lib/accountDeletion');
 const { buildPartnerQuote } = require('../../lib/commissionQuote');
 const { decideBuyerOwnership, OWNERSHIP_TEXT } = require('../../lib/leadOwnership');
+const { canLinkLeadToUser } = require('../../lib/leadClaim');
 const { getMoneySettings } = require('../money/moneyConfig');
 
 const DEFAULT_MAX_ACTIVE_INQUIRIES = 5;
@@ -109,6 +110,29 @@ async function submitLead(data, user) {
   });
   if (todayCount >= maxDaily) {
     throw new ApiError(429, `You can submit at most ${maxDaily} inquiries per day.`, { code: 'DAILY_INQUIRY_LIMIT' });
+  }
+
+  // A partner may already have registered this very buyer for this very property. A second lead would put two leads, and possibly two
+  // partners, on one buyer, so the buyer's enquiry joins the partner's lead instead. If the admin has not reviewed it yet the enquiry
+  // is not lost: confirming the partner's lead links this buyer's account to it (confirmLead), and the admin is told now.
+  const registered = await prisma.lead.findFirst({
+    where: { propertyId: data.propertyId, buyerPhone: user.phone, addedByPartnerId: { isSet: true }, status: ACTIVE_LEAD_STATUSES },
+    orderBy: { createdAt: 'asc' },
+  });
+  if (registered) {
+    if (registered.status === 'AWAITING_ADMIN') {
+      await notifyAdmins({
+        title: 'Buyer enquired on their own',
+        message: `${registered.refCode} · ${registered.buyerName} also enquired about "${property.title}" themselves while the partner's lead is waiting for review. No second lead was made; confirming the partner's lead links the buyer's account to it.`,
+        type: 'LEAD_NEW',
+        linkUrl: `/admin/leads/${registered.id}`,
+      });
+      return { merged: true, pendingReview: true, refCode: registered.refCode };
+    }
+    if (!registered.buyerId && canLinkLeadToUser(registered, user)) {
+      const linked = await prisma.lead.update({ where: { id: registered.id }, data: { buyerId: user.id } });
+      return { ...sanitizeLeadForBuyer(linked), merged: true };
+    }
   }
 
   // Name/email/phone are always a snapshot of the verified account, never
@@ -387,9 +411,12 @@ async function getPartnerLeadById(leadId, partnerId) {
   return { ...sanitizeLeadForPartner(lead), commissionQuote: buildPartnerQuote(lead), netAmount: netAmountFor(lead, feePct), ...stalledInfoFor(lead) };
 }
 
+const DO_NOT_CONTACT = 'The buyer has asked not to be contacted, so this cannot go ahead. Please contact the Realtydoor team.';
+
 async function scheduleVisit(leadId, partnerId, scheduledAt) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.doNotContactAt) throw new ApiError(409, DO_NOT_CONTACT, { code: 'DO_NOT_CONTACT' });
   if (lead.status === 'CLOSED') throw new ApiError(400, 'Cannot schedule visit on a closed lead');
   await assertLeadNotPaused(lead.buyerId);
 
@@ -500,6 +527,7 @@ async function requestOtpOverride(leadId, partnerId) {
 async function verifyOtp(leadId, partnerId, inputOtp, ip) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.doNotContactAt) throw new ApiError(409, DO_NOT_CONTACT, { code: 'DO_NOT_CONTACT' }); // verifying reveals the buyer's number
   if (!lead.siteVisitOTP) throw new ApiError(400, 'No OTP generated for this lead');
   if (isLocked(lead.otpLockedUntil)) throw new ApiError(429, 'OTP locked. Contact Admin to override.', { code: 'LEAD_OTP_LOCKED' }); // BE-21
   if (isExpired(lead.otpExpiresAt)) throw new ApiError(400, 'OTP has expired');
@@ -675,7 +703,7 @@ async function closeLead(leadId, partnerId, { closingPrice } = {}) {
 
 // ─── DROP FLOW ───────────────────────────────────────────────────────────────
 
-async function requestDrop(leadId, partnerId, reason) {
+async function requestDrop(leadId, partnerId, reason, reasonCode) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (['CLOSED', 'DROPPED'].includes(lead.status)) {
@@ -685,7 +713,7 @@ async function requestDrop(leadId, partnerId, reason) {
 
   await prisma.lead.update({
     where: { id: leadId },
-    data: { dropRequestedByPartner: true, dropRequestNote: reason, dropRequestedAt: new Date() },
+    data: { dropRequestedByPartner: true, dropRequestNote: reason, dropRequestReasonCode: reasonCode || 'OTHER', dropRequestedAt: new Date() },
   });
 
   const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
@@ -698,6 +726,23 @@ async function requestDrop(leadId, partnerId, reason) {
   })));
 
   return { message: 'Drop request submitted. Admin will review.' };
+}
+
+// A partner who brought the buyer and sees the lead sitting in the company pool can say so once; the admin is told and decides (assigning
+// the lead to anyone settles it). The partner is never told who else holds the buyer.
+async function contestCredit(leadId, partnerId, note) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, addedByPartnerId: partnerId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.status !== 'UNASSIGNED') throw new ApiError(400, 'Only a lead that went to the company pool can be contested', { code: 'NOT_IN_POOL' });
+  if (lead.creditContestedAt) throw new ApiError(409, 'You have already asked for this lead to be reviewed', { code: 'ALREADY_CONTESTED' });
+  await prisma.lead.update({ where: { id: leadId }, data: { creditContestedAt: new Date(), creditContestNote: note } });
+  await notifyAdmins({
+    title: 'Partner contests a lead credit',
+    message: `${lead.refCode || 'A lead'} · ${lead.buyerName}: the partner who brought this buyer says they should be credited. Their note: ${note}`,
+    type: 'LEAD_NEW',
+    linkUrl: `/admin/leads/${leadId}`,
+  });
+  return { message: 'Thank you. The team will review it and get back to you.' };
 }
 
 // Admin marks the partner's uploaded allocation letter as verified. This, not the upload, is the point after which
@@ -742,6 +787,7 @@ async function adminApproveDrop(leadId, adminId, ip) {
       droppedAt: new Date(),
       droppedByAdminId: adminId,
       droppedReason: lead.dropRequestNote,
+      droppedReasonCode: lead.dropRequestReasonCode || 'OTHER',
       dropRequestedByPartner: false,
     },
   });
@@ -794,4 +840,5 @@ async function adminRejectDrop(leadId, adminId, ip) {
   return { message: 'Drop request rejected. Partner notified.' };
 }
 
-module.exports = { evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };
+module.exports = {
+  contestCredit, evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };

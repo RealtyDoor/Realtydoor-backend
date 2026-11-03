@@ -72,6 +72,17 @@ model Lead {
   lastContactedAt    DateTime?
   qualifiedAt        DateTime?
   notQualifiedReason String?
+  // How many times a BDE has tried to reach the buyer (calls, WhatsApps, meetings logged). Null counts as zero.
+  contactAttempts    Int?
+  // Timers (jobs/leadHygiene.js): when the assigned partner was last reminded to act, and when a partner who registered this buyer was
+  // warned that their hold is running out. Each is sent once.
+  responseReminderAt DateTime?
+  // The buyer asked not to be contacted (set for every lead on that mobile number). Partners cannot book visits or reveal the number.
+  doNotContactAt     DateTime?
+  // A partner who brought the buyer says they should have been credited when the lead went to the pool; an admin decides.
+  creditContestedAt  DateTime?
+  creditContestNote  String?
+  windowWarnedAt     DateTime?
 
   // OTP anti-leakage (PRD §5 — Rules 1, 2, 3)
   siteVisitScheduledAt DateTime?
@@ -138,8 +149,11 @@ model Lead {
   // Two-tier drop system (Appendix C.2)
   dropRequestedByPartner Boolean   @default(false)
   dropRequestNote        String?
+  dropRequestReasonCode  LeadDropReason?
   dropRequestedAt        DateTime?
   droppedReason          String?
+  // A fixed list next to the free-text reason, so lead quality can be measured (lib/leadHygiene.js DROP_REASON_CODES).
+  droppedReasonCode      LeadDropReason?
   droppedAt              DateTime?
   droppedByAdminId       String?   @db.ObjectId
 

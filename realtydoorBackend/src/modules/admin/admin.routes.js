@@ -23,6 +23,7 @@ const leadSalesCtrl = require('../leadSales/leadSales.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { requirePermission } = require('../../middleware/requirePermission');
+const { restrictSalesOnly } = require('../../middleware/salesOnly');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 const { videoTourUploader, onboardingDocUploader, buildMulter, IMAGE_FORMATS } = require('../../lib/fileUpload');
@@ -54,6 +55,7 @@ function uploadContentImageMiddleware(req, res, next) {
 }
 
 router.use(authenticate, requireAdmin, perUserLimiter);
+router.use(restrictSalesOnly); // a sales-only BDE reaches only the lead routes (middleware/salesOnly.js)
 
 // Lead management
 router.get('/leads',        ctrl.getLeads);
@@ -75,6 +77,8 @@ router.get('/leads/export',           requirePermission('LEADS'), leadSalesCtrl.
 router.get('/leads/:id/notes',        validateObjectId('id'), requirePermission(['LEADS', 'SALES']), leadSalesCtrl.listNotes);
 router.post('/leads/:id/notes',       validateObjectId('id'), requirePermission(['LEADS', 'SALES']), leadSalesCtrl.addNote);
 router.patch('/leads/:id/sales',      validateObjectId('id'), requirePermission(['LEADS', 'SALES']), leadSalesCtrl.updateSales);
+router.patch('/leads/:id/do-not-contact', validateObjectId('id'), requirePermission('LEADS'), ctrl.setDoNotContact); // the buyer asked not to be contacted
+router.get('/leads/:id/related', validateObjectId('id'), requirePermission('LEADS'), ctrl.getRelatedLeads); // other leads for the same buyer (same mobile number)
 router.get('/leads/:id',    ctrl.getLeadById);
 router.patch('/leads/:id/assign',        requirePermission('LEADS'), ctrl.assignLead);
 router.post('/leads/:id/auto-assign',    requirePermission('LEADS'), ctrl.autoAssignLead);

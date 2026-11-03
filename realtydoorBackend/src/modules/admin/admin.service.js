@@ -26,6 +26,9 @@ const { cacheDel, cacheDelPattern } = require('../../lib/cache');
 const dataAckService = require('../partners/dataAck.service');
 const { attachLoanDocuments } = require('../../lib/loanEligibility');
 const { canLinkLeadToUser } = require('../../lib/leadClaim');
+const leadHygiene = require('../../lib/leadHygiene');
+const { returnPartnerLeadsToPool } = require('../../lib/partnerHandover');
+const { notifyOpenLeadsPropertyUnavailable } = require('../../lib/propertyUnavailable');
 const { countInquiriesByUser, inquiryWhereForUser } = require('../../lib/inquiryCounts');
 const { averageResolutionDays } = require('../../lib/ticketStats');
 const { isLoanTransitionAllowed, hasVerifiedDocument } = require('../../lib/loanTransitions');
@@ -352,6 +355,21 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
     });
   }
 
+  // The partner who brought the buyer was credited but cannot be given the lead (not KYC verified, or no longer a partner): say so,
+  // instead of the lead quietly landing in the pool.
+  const adderLostLead = !partnerId && creditAdder && lead.addedByPartnerId && !partner;
+  if (adderLostLead) {
+    await createNotification({
+      userId: lead.addedByPartnerId,
+      title: 'Lead went to the pool',
+      message: `${lead.refCode} · ${lead.buyerName} was confirmed, but it could not be assigned to you because your KYC is not verified. It is in the company pool until it is. Complete your KYC to keep leads you bring.`,
+      type: 'LEAD_ASSIGNED',
+      linkUrl: '/partners/kyc',
+    }).catch(() => null);
+  }
+  // A buyer who also enquired on their own for this property while this lead waited: fold that duplicate into this lead.
+  const merged = await mergeDuplicateBuyerLeads(updated, adminId, ip);
+
   // B16 — "Partner-added lead needs review" stayed unread after the review.
   await markNotificationsRead({ linkUrl: `/admin/leads/${leadId}`, types: ['LEAD_NEW'] });
 
@@ -362,11 +380,65 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
     ipAddress: ip,
   });
 
+  if (adderLostLead) updated.warning = 'Confirmed, but the partner who added it is not KYC verified, so it went to the pool and they were told.';
+  if (merged.length) updated.mergedDuplicates = merged;
   return updated;
 }
 
+// The buyer asked not to be contacted. Applies to every lead on that mobile number, so a second enquiry cannot slip past it. Partners can
+// then neither book a visit nor reveal the number (leads.service). Reversible, and recorded.
+async function setDoNotContact(leadId, enabled, adminId, ip) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { id: true, buyerPhone: true, refCode: true } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  const where = lead.buyerPhone ? { buyerPhone: lead.buyerPhone } : { id: leadId };
+  const res = await prisma.lead.updateMany({ where, data: { doNotContactAt: enabled ? new Date() : null } });
+  await createAuditLog({ adminId, action: enabled ? 'LEAD_DO_NOT_CONTACT_SET' : 'LEAD_DO_NOT_CONTACT_CLEARED', targetType: 'Lead', targetId: leadId, after: { leadsChanged: res.count }, ipAddress: ip });
+  return { doNotContact: enabled, leadsChanged: res.count };
+}
+
+// The buyer's own enquiry for the same property, made while a partner's registration waited for review, is folded into the partner's
+// lead: dropped as a duplicate with a reason, and the buyer is already linked to the partner's lead. Anything with a visit or money on
+// it is left for an admin to look at.
+async function mergeDuplicateBuyerLeads(partnerLead, adminId, ip) {
+  if (!partnerLead.addedByPartnerId || !partnerLead.propertyId || !partnerLead.buyerPhone) return [];
+  const candidates = await prisma.lead.findMany({
+    where: { propertyId: partnerLead.propertyId, buyerPhone: partnerLead.buyerPhone, id: { not: partnerLead.id } },
+    include: { escrowTransactions: { select: { id: true } } },
+  });
+  const dupes = leadHygiene.duplicatesOfPartnerLead(partnerLead, candidates);
+  const out = [];
+  for (const d of dupes) {
+    await prisma.lead.update({
+      where: { id: d.id },
+      data: { status: 'DROPPED', droppedReason: `Merged into ${partnerLead.refCode} (same buyer, same property)`, droppedReasonCode: 'DUPLICATE', droppedAt: new Date(), droppedByAdminId: adminId },
+    });
+    await createAuditLog({ adminId, action: 'LEAD_MERGED_DUPLICATE', targetType: 'Lead', targetId: d.id, after: { mergedInto: partnerLead.id }, ipAddress: ip }).catch(() => null);
+    out.push(d.refCode || d.id);
+  }
+  return out;
+}
+
+// Every lead for the same mobile number, so an admin sees at a glance who holds the buyer and where the leads stand.
+async function getRelatedLeads(leadId) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { id: true, buyerPhone: true } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!lead.buyerPhone) return [];
+  const rows = await prisma.lead.findMany({
+    where: { buyerPhone: lead.buyerPhone, id: { not: leadId } },
+    orderBy: { createdAt: 'asc' },
+    take: 25,
+    select: {
+      id: true, refCode: true, status: true, source: true, createdAt: true, droppedReason: true, propertyInterest: true,
+      property: { select: { title: true, city: true } },
+      addedByPartner: { select: { name: true, companyName: true } },
+      assignedPartner: { select: { name: true } },
+    },
+  });
+  return rows.map((r) => ({ ...r, kind: r.addedByPartner ? 'PARTNER_ADDED' : 'COMPANY' }));
+}
+
 // 6.3 — admin rejects a partner-added lead outright.
-async function rejectLead(leadId, reason, adminId, ip) {
+async function rejectLead(leadId, reason, adminId, ip, reasonCode) {
   const lead = await prisma.lead.findUnique({ where: { id: leadId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (lead.status !== 'AWAITING_ADMIN') {
@@ -378,6 +450,7 @@ async function rejectLead(leadId, reason, adminId, ip) {
     data: {
       status: 'DROPPED',
       droppedReason: reason,
+      droppedReasonCode: reasonCode || 'OTHER',
       droppedAt: new Date(),
       droppedByAdminId: adminId,
     },
@@ -456,10 +529,10 @@ async function overrideLeadOtp(leadId, adminId, ip, note) {
   return { leadId: updated.id, otpAttempts: 0, otpLockedUntil: null, otpExpiresAt: updated.otpExpiresAt };
 }
 
-async function assignLead(leadId, partnerId, adminId, ip) {
+async function assignLead(leadId, partnerId, adminId, ip, reason) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
-    include: { property: { select: { title: true, partnerId: true } } },
+    include: { property: { select: { title: true, partnerId: true } }, escrowTransactions: { select: { status: true } } },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
   // BUG-039: the listing's owner cannot earn commission on their own listing, so a lead for it must not be assigned to them
@@ -491,11 +564,30 @@ async function assignLead(leadId, partnerId, adminId, ip) {
   const gateReason = await dataAckService.checkLeadDataHandlingGate(partnerId);
   if (gateReason) throw new ApiError(400, gateReason);
 
+  // Moving a lead off a partner who already holds the buyer is not a plain reassignment: refused once money is held or the buyer has
+  // met them, and a booked (not yet done) visit is cancelled and needs a reason.
+  let clearVisit = false;
+  if (isReassign) {
+    const check = leadHygiene.reassignCheck(lead, lead.escrowTransactions, reason);
+    if (!check.ok) throw new ApiError(409, check.message, { code: check.code });
+    clearVisit = check.clearVisit;
+  }
+
   const previousPartnerId = lead.assignedPartnerId;
   const updated = await prisma.lead.update({
     where: { id: leadId },
-    data: { assignedPartnerId: partnerId, status: 'ASSIGNED', assignedAt: new Date() },
+    data: {
+      assignedPartnerId: partnerId, status: 'ASSIGNED', assignedAt: new Date(),
+      ...(lead.creditContestedAt && { creditContestedAt: null }),
+      ...(clearVisit && { siteVisitScheduledAt: null, siteVisitOTP: null, otpGeneratedAt: null, otpExpiresAt: null, otpAttempts: 0, otpLockedUntil: null }),
+    },
   });
+  if (isReassign) {
+    await createAuditLog({
+      adminId, action: 'LEAD_REASSIGNED', targetType: 'Lead', targetId: leadId,
+      before: { assignedPartnerId: previousPartnerId, status: lead.status }, after: { assignedPartnerId: partnerId, visitCancelled: clearVisit, ...(reason && { reason }) }, ipAddress: ip,
+    }).catch(() => null);
+  }
 
   if (isReassign && previousPartnerId) {
     await createNotification({
@@ -998,6 +1090,9 @@ async function rejectProperty(propertyId, note, adminId, ip) {
     ipAddress: ip,
   });
 
+  // Taking a live listing down while buyers and partners are mid-lead: tell them now.
+  if (property.publishStatus === 'APPROVED') await notifyOpenLeadsPropertyUnavailable(property, 'taken down by the team');
+
   if (property.partner) sendPropertyRejected(property.partner.email, property.title, note, property.partner).catch(() => {});
   notifyUser(property.partnerId, 'listing_rejected', { partner_name: '$userName', property_title: property.title, reason: note || 'Please check the app for details' });
   cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
@@ -1325,6 +1420,9 @@ async function editProperty(propertyId, data, adminId, adminName, ip) {
     }
   }
 
+  if (['SOLD', 'RENTED'].includes(updated.propertyStatus) && property.propertyStatus !== updated.propertyStatus) {
+    await notifyOpenLeadsPropertyUnavailable(updated, updated.propertyStatus === 'SOLD' ? 'sold' : 'rented out');
+  }
   return updated;
 }
 
@@ -1751,6 +1849,13 @@ async function suspendUser(targetUserId, suspend, reason, adminId, ip) {
     after:  { isSuspended: suspend, suspendReason: reason || null },
     ipAddress: ip,
   });
+
+  // A suspended partner cannot work their leads, and the buyers on them must not wait: leads they have not started go back to the
+  // pool, and the ones that cannot move (token held, visit done) are listed for an admin to settle.
+  if (suspend && user.role === 'PARTNER') {
+    const handover = await returnPartnerLeadsToPool(targetUserId, adminId, ip, 'suspended');
+    return { ...updated, leadsReturned: handover.moved, leadsNeedingDecision: handover.stuck };
+  }
 
   return updated;
 }
@@ -2757,6 +2862,7 @@ async function adminDeleteTeamMember(id) {
 }
 
 module.exports = {
+  getRelatedLeads, mergeDuplicateBuyerLeads, setDoNotContact,
   getLeadById, getAllLeads, assignLead, createLead, confirmLead, rejectLead, overrideLeadOtp,
   getPendingProperties, approveProperty, rejectProperty, editProperty,
   requestPropertyChanges,

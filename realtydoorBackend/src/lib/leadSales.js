@@ -26,6 +26,17 @@ function salesAccess(user) {
   return { manager, bde, canWork: manager || bde };
 }
 
+/**
+ * A staff member whose ONLY permission is SALES: a BDE and nothing else. They are still an admin account, so the server also keeps them
+ * out of every admin route except the lead routes in middleware/salesOnly.js. Someone with SALES plus other permissions is not
+ * "sales only" and is not restricted that way (their other permissions still apply route by route).
+ */
+function isSalesOnly(user) {
+  if (!user || user.staffRole == null || user.staffRole === 'SUPER_ADMIN') return false;
+  const held = user.adminPermissions || [];
+  return held.length > 0 && held.every((p) => p === 'SALES');
+}
+
 /** The extra `where` that keeps a BDE to their own leads. Empty for everyone else. */
 function leadScope(user) {
   return salesAccess(user).bde ? { ownerStaffId: user.id } : {};
@@ -69,6 +80,14 @@ function salesWhere(query = {}, meId, now = new Date()) {
     else if (query.followUp === 'upcoming') and.push({ nextFollowUpAt: { gte: end } }, open);
     else if (query.followUp === 'none') and.push({ OR: [{ nextFollowUpAt: { isSet: false } }, { nextFollowUpAt: null }] }, { OR: [...newStage, { salesStage: { in: ['CONTACTED', 'FOLLOW_UP'] } }] });
     else throw new ApiError(400, 'Unknown follow-up filter');
+  }
+  if (query.decision === '1') {
+    // Tried many times over two weeks with no progress: time to decide, not chase (lib/leadTimers.js needsDecision).
+    and.push(
+      { contactAttempts: { gte: 5 } },
+      { createdAt: { lt: new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000) } },
+      { OR: [...newStage, { salesStage: { in: ['CONTACTED', 'FOLLOW_UP'] } }] },
+    );
   }
   if (query.source) and.push({ source: query.source });
   const created = {};
@@ -131,5 +150,5 @@ function planSalesChange(lead, body, access, now = new Date()) {
 
 module.exports = {
   STAGES, TERMINAL, TEMPERATURES, NOTE_KINDS, CONTACT_KINDS, STAGE_LABEL, TEMP_LABEL, QUALIFICATION_STATUSES,
-  salesAccess, leadScope, istDayRange, salesWhere, planSalesChange,
+  salesAccess, isSalesOnly, leadScope, istDayRange, salesWhere, planSalesChange,
 };

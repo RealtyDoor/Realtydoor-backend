@@ -71,6 +71,7 @@ async function addNote(user, leadId, body, ip) {
   const stage = lead.salesStage || 'NEW';
   if (f.CONTACT_KINDS.includes(body.kind)) {
     update.lastContactedAt = new Date();
+    update.contactAttempts = (lead.contactAttempts || 0) + 1;
     if (stage === 'NEW') update.salesStage = 'CONTACTED';
   }
   if (body.nextFollowUpAt !== undefined && !f.TERMINAL.includes(stage)) {
@@ -97,15 +98,16 @@ async function salesSummary(user, now = new Date()) {
   const base = f.leadScope(user);
   const count = (extra) => prisma.lead.count({ where: { ...base, ...extra } });
   const mine = (q) => f.salesWhere(q, user.id, now);
-  const [stages, temps, overdue, today, upcoming, unowned, total] = await Promise.all([
+  const [stages, temps, overdue, today, upcoming, unowned, total, needsDecision] = await Promise.all([
     Promise.all(f.STAGES.map((s) => count(mine({ salesStage: s })))),
     Promise.all(f.TEMPERATURES.map((t) => count(mine({ temperature: t })))),
     count(mine({ followUp: 'overdue' })), count(mine({ followUp: 'today' })), count(mine({ followUp: 'upcoming' })),
     access.manager ? count(mine({ owner: 'none' })) : Promise.resolve(null),
     count({}),
+    count(mine({ decision: '1' })),
   ]);
   return {
-    total, unowned,
+    total, unowned, needsDecision,
     stages: Object.fromEntries(f.STAGES.map((s, i) => [s, stages[i]])),
     temperatures: Object.fromEntries(f.TEMPERATURES.map((t, i) => [t, temps[i]])),
     followUp: { overdue, today, upcoming },

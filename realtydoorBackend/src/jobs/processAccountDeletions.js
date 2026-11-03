@@ -3,6 +3,7 @@ const prisma = require('../lib/prisma');
 const logger = require('../lib/logger');
 const { hasMoneyInFlight, anonymizeUser } = require('../lib/accountDeletion');
 const { createPrivacyAuditLog } = require('../lib/privacyAuditLog');
+const { returnPartnerLeadsToPool } = require('../lib/partnerHandover');
 
 // Runs nightly. Finds every account whose 30-day deletion grace period
 // (users.service.js::requestAccountDeletion) has expired and anonymizes it.
@@ -45,6 +46,10 @@ async function runOnce() {
         logger.info('[ProcessAccountDeletions] Skipped — money in flight', { userId });
         continue;
       }
+
+      // A partner being erased must not take their leads with them: open leads go back to the pool first.
+      const who = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+      if (who?.role === 'PARTNER') await returnPartnerLeadsToPool(userId, null, null, 'account deleted');
 
       await anonymizeUser(userId);
       await createPrivacyAuditLog({ userId, action: 'DELETION_COMPLETED' });

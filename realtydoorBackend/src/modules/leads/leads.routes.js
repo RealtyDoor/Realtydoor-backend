@@ -32,5 +32,6 @@ router.patch('/partner/:id/document', authenticate, requirePartner, requireKyc,
 router.patch('/partner/:id/status',       authenticate, requirePartner, requireKyc, ctrl.updateVisitOutcome);
 router.patch('/partner/:id/close',        authenticate, requirePartner, requireKyc, ctrl.closeLead);
 router.patch('/partner/:id/request-drop', authenticate, requirePartner, requireKyc, ctrl.requestDrop);
+router.patch('/partner/:id/contest-credit', authenticate, requirePartner, requireKyc, ctrl.contestCredit);
 
 module.exports = router;

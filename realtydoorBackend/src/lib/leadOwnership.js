@@ -50,4 +50,4 @@ const OWNERSHIP_TEXT = {
   EXISTING_BUYER: 'Already a RealtyDoor buyer, counted as our lead and not credited.',
 };
 
-module.exports = { decideBuyerOwnership, OWNERSHIP_TEXT };
+module.exports = { decideBuyerOwnership, OWNERSHIP_TEXT, lastActivity };

@@ -19,6 +19,7 @@ const JOB_MODULES = [
   './paymentReconcile',
   './visitReminder',
   './staffDigest',
+  './leadHygiene',
 ];
 
 function shouldRunJobs(env = process.env) {

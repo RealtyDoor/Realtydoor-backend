@@ -3,6 +3,7 @@ const { tidyLocality } = require('../../lib/localityName');
 const { objectId, roleEnum, userStatusEnum } = require('../../utils/validators');
 const { phoneField } = require('../../lib/phoneUtils');
 const { ADMIN_PERMISSION_SCOPES, ADMIN_STAFF_ROLES } = require('../../utils/adminPermissions');
+const { DROP_REASON_CODES } = require('../../lib/leadHygiene');
 
 // GET /admin/users — previously req.query went straight to getAllUsers with
 // no validation at all, so `status`/`isNRI` were silently ignored (the
@@ -55,10 +56,13 @@ const confirmLeadSchema = z.object({
 
 const rejectLeadSchema = z.object({
   reason: z.string().min(5, 'Please provide a meaningful reason (min 5 characters)').max(500),
+  reasonCode: z.enum(DROP_REASON_CODES).optional(),
 });
 
 const assignLeadSchema = z.object({
   partnerId: objectId,
+  // Needed to move a lead off a partner who already has a site visit booked (the visit is cancelled).
+  reason: z.string().trim().max(500).optional(),
 });
 
 const rejectPropertySchema = z.object({

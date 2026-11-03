@@ -327,7 +327,11 @@ async function dealMoneyCard(leadId) {
   const [lead, escrows, entries, tds, invoices, vouchers] = await Promise.all([
     prisma.lead.findUnique({
       where: { id: leadId },
-      select: { id: true, refCode: true, buyerName: true, feePct: true, dealPriceAtLock: true, partnerRatePct: true, platformFeePct: true, commissionStatus: true, assignedPartnerId: true, commissionRateCustom: true },
+      select: {
+        id: true, refCode: true, buyerName: true, feePct: true, dealPriceAtLock: true, partnerRatePct: true, platformFeePct: true, commissionStatus: true, assignedPartnerId: true, commissionRateCustom: true,
+        // Which property the money was taken for. A lead logged for a property that is not listed carries free text instead.
+        propertyId: true, propertyInterest: true, property: { select: { id: true, title: true, locality: true, city: true } },
+      },
     }),
     prisma.escrowTransaction.findMany({ where: { leadId }, orderBy: { createdAt: 'asc' } }),
     prisma.moneyLedgerEntry.findMany({ where: { leadId }, orderBy: { entryDate: 'asc' } }),

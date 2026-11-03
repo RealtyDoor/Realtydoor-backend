@@ -177,6 +177,28 @@ describe('dealMoneyCard', () => {
   });
 });
 
+describe('dealMoneyCard: which property the money was for', () => {
+  const quiet = () => {
+    prisma.escrowTransaction.findMany.mockResolvedValue([]); prisma.moneyLedgerEntry.findMany.mockResolvedValue([]); prisma.tdsEntry.findMany.mockResolvedValue([]);
+    prisma.partnerTaxInvoice.findMany.mockResolvedValue([]); prisma.commissionVoucher.findMany.mockResolvedValue([]);
+  };
+  test('asks for the property and returns it with the deal', async () => {
+    quiet();
+    prisma.lead.findUnique.mockResolvedValue({ id: 'l1', propertyId: 'p1', property: { id: 'p1', title: 'Green Park', locality: 'Chintamani', city: 'Bengaluru' } });
+    const card = await ledger.dealMoneyCard('l1');
+    const select = prisma.lead.findUnique.mock.calls.at(-1)[0].select;
+    expect(select.property).toEqual({ select: { id: true, title: true, locality: true, city: true } });
+    expect(select.propertyInterest).toBe(true);
+    expect(card.lead.property).toMatchObject({ title: 'Green Park', city: 'Bengaluru' });
+  });
+  test('a lead for an unlisted property keeps its free-text interest', async () => {
+    quiet();
+    prisma.lead.findUnique.mockResolvedValue({ id: 'l2', propertyId: null, propertyInterest: 'Plots near Hoskote', property: null });
+    const card = await ledger.dealMoneyCard('l2');
+    expect(card.lead).toMatchObject({ property: null, propertyInterest: 'Plots near Hoskote' });
+  });
+});
+
 describe('onServicePaid: a service subscription reaches the ledger (found live 25 Oct 2026: it never did)', () => {
   const sub = { id: 's1', userId: 'b1', razorpayPaymentId: 'pay_1', amountPaidPaise: 299900, amountPaid: 2999 };
   test('writes one SERVICE_REVENUE line, GST taken out of the price paid', async () => {

@@ -14,6 +14,17 @@ enum LeadTemperature {
   COLD
 }
 
+enum LeadDropReason {
+  INVALID_NUMBER
+  UNREACHABLE
+  DUPLICATE
+  NOT_INTERESTED
+  BOUGHT_ELSEWHERE
+  PROPERTY_UNAVAILABLE
+  PARTNER_UNAVAILABLE
+  OTHER
+}
+
 enum LeadNoteKind {
   NOTE
   CALL

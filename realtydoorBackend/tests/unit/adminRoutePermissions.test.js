@@ -27,6 +27,8 @@ const GATED = [
   ['post', '/leads/:id/commission/dispute', 'FINANCE'],
   ['patch', '/escrow/:id/release', 'FINANCE'],
   ['get', '/leads/export', 'LEADS'],
+  ['patch', '/leads/:id/do-not-contact', 'LEADS'],
+  ['get', '/leads/:id/related', 'LEADS'],
   ['post', '/escrow/:id/refund', 'FINANCE'],
   ['post', '/escrow/:id/freeze', 'FINANCE'],
   ['post', '/escrow/:id/unfreeze', 'FINANCE'],

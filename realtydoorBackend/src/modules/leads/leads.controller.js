@@ -1,5 +1,5 @@
 const { success, created } = require('../../utils/ApiResponse');
-const { submitLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema, updateVisitOutcomeSchema, partnerAddLeadSchema, closeLeadSchema } = require('./leads.validator');
+const { submitLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema, contestCreditSchema, updateVisitOutcomeSchema, partnerAddLeadSchema, closeLeadSchema } = require('./leads.validator');
 const service = require('./leads.service');
 
 async function submit(req, res, next) {
@@ -80,9 +80,16 @@ async function closeLead(req, res, next) {
 
 async function requestDrop(req, res, next) {
   try {
-    const { reason } = requestDropSchema.parse(req.body);
-    const result = await service.requestDrop(req.params.id, req.user.id, reason);
+    const { reason, reasonCode } = requestDropSchema.parse(req.body);
+    const result = await service.requestDrop(req.params.id, req.user.id, reason, reasonCode);
     success(res, result);
+  } catch (err) { next(err); }
+}
+
+async function contestCredit(req, res, next) {
+  try {
+    const { note } = contestCreditSchema.parse(req.body);
+    success(res, await service.contestCredit(req.params.id, req.user.id, note));
   } catch (err) { next(err); }
 }
 
@@ -123,4 +130,4 @@ async function rejectDrop(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, updateVisitOutcome, partnerAddLead, approveDrop, rejectDrop, verifyAllocationLetter };
+module.exports = { contestCredit, submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, updateVisitOutcome, partnerAddLead, approveDrop, rejectDrop, verifyAllocationLetter };

@@ -66,8 +66,8 @@ async function getLeads(req, res, next) {
 
 async function assignLead(req, res, next) {
   try {
-    const { partnerId } = assignLeadSchema.parse(req.body);
-    const lead = await service.assignLead(req.params.id, partnerId, req.user.id, req.ip);
+    const { partnerId, reason } = assignLeadSchema.parse(req.body);
+    const lead = await service.assignLead(req.params.id, partnerId, req.user.id, req.ip, reason);
     success(res, lead, 'Lead assigned');
   } catch (err) { next(err); }
 }
@@ -135,14 +135,25 @@ async function confirmLead(req, res, next) {
   try {
     const { partnerId } = confirmLeadSchema.parse(req.body ?? {});
     const lead = await service.confirmLead(req.params.id, partnerId, req.user.id, req.ip);
-    success(res, lead, 'Lead confirmed');
+    success(res, lead, lead.warning || 'Lead confirmed');
   } catch (err) { next(err); }
+}
+
+async function setDoNotContact(req, res, next) {
+  try {
+    const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body);
+    success(res, await service.setDoNotContact(req.params.id, enabled, req.user.id, req.ip), enabled ? 'Marked do not contact' : 'Contact allowed again');
+  } catch (err) { next(err); }
+}
+
+async function getRelatedLeads(req, res, next) {
+  try { success(res, await service.getRelatedLeads(req.params.id)); } catch (err) { next(err); }
 }
 
 async function rejectLead(req, res, next) {
   try {
-    const { reason } = rejectLeadSchema.parse(req.body);
-    const lead = await service.rejectLead(req.params.id, reason, req.user.id, req.ip);
+    const { reason, reasonCode } = rejectLeadSchema.parse(req.body);
+    const lead = await service.rejectLead(req.params.id, reason, req.user.id, req.ip, reasonCode);
     success(res, lead, 'Lead rejected');
   } catch (err) { next(err); }
 }
@@ -780,7 +791,7 @@ async function deleteConfig(req, res, next) {
 }
 
 module.exports = {
-  getLeadById, getLeads, assignLead, autoAssignLead, autoAssignUnassignedLeads, createLead, confirmLead, rejectLead, overrideLeadOtp,
+  getLeadById, getLeads, getRelatedLeads, setDoNotContact, assignLead, autoAssignLead, autoAssignUnassignedLeads, createLead, confirmLead, rejectLead, overrideLeadOtp,
   listRoutingRules, createRoutingRule, updateRoutingRule, deleteRoutingRule, dispatchTicketAutomatically,
   setPayoutAccountStatus, listPayoutAccounts, syncPayoutAccount,
   getPendingProperties, approveProperty, rejectProperty, editProperty,

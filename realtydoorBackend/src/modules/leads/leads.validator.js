@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { DROP_REASON_CODES } = require('../../lib/leadHygiene');
 const { objectId } = require('../../utils/validators');
 const { phoneField } = require('../../lib/phoneUtils');
 
@@ -73,6 +74,10 @@ const closeLeadSchema = z.object({
 
 const requestDropSchema = z.object({
   reason: z.string().min(5, 'Please provide a meaningful reason (min 5 characters)').max(500),
+  // The fixed list next to the words, so lead quality can be measured. Omitted means OTHER.
+  reasonCode: z.enum(DROP_REASON_CODES).optional(),
 });
 
-module.exports = { submitLeadSchema, partnerAddLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema, updateVisitOutcomeSchema, closeLeadSchema };
+const contestCreditSchema = z.object({ note: z.string().trim().min(5, 'Say why in a few words').max(500) });
+
+module.exports = { contestCreditSchema, submitLeadSchema, partnerAddLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema, updateVisitOutcomeSchema, closeLeadSchema };
