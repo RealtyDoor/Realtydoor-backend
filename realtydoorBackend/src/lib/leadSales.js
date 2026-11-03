@@ -89,6 +89,8 @@ function salesWhere(query = {}, meId, now = new Date()) {
       { OR: [...newStage, { salesStage: { in: ['CONTACTED', 'FOLLOW_UP'] } }] },
     );
   }
+  // A partner has asked to drop the lead and admin has not decided yet (approving or rejecting clears the flag).
+  if (query.dropRequested === '1') and.push({ dropRequestedByPartner: true });
   if (query.source) and.push({ source: query.source });
   const created = {};
   if (query.from && !Number.isNaN(Date.parse(query.from))) created.gte = new Date(query.from);

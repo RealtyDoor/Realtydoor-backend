@@ -60,6 +60,11 @@ describe('salesWhere', () => {
     expect(f.salesWhere({ salesStage: 'NEW' }, OID(1), now).AND[0].OR).toHaveLength(3);
     expect(f.salesWhere({ salesStage: 'QUALIFIED' }, OID(1), now)).toEqual({ AND: [{ salesStage: 'QUALIFIED' }] });
   });
+  test('dropRequested=1 keeps only leads with a pending partner drop request; anything else adds nothing', () => {
+    expect(f.salesWhere({ dropRequested: '1' }, OID(1), now)).toEqual({ AND: [{ dropRequestedByPartner: true }] });
+    expect(f.salesWhere({ dropRequested: '0' }, OID(1), now)).toEqual({});
+    expect(f.salesWhere({ dropRequested: 'true' }, OID(1), now)).toEqual({});
+  });
   test('owner: me, none, an id', () => {
     expect(f.salesWhere({ owner: 'me' }, OID(1), now)).toEqual({ AND: [{ ownerStaffId: OID(1) }] });
     expect(f.salesWhere({ owner: 'none' }, OID(1), now).AND[0].OR).toHaveLength(2);
