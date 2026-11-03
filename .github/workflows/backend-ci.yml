@@ -34,3 +34,17 @@ jobs:
         env:
           RAZORPAY_KEY_ID: rzp_test_ci_placeholder
           RAZORPAY_KEY_SECRET: ci_placeholder_secret
+
+  # Builds the production image to prove the Dockerfile works and prints its size. Nothing is pushed anywhere.
+  docker-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: realtydoorBackend
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t realtydoor-api .
+      - name: Image size
+        run: |
+          docker image ls realtydoor-api --format 'realtydoor-api image size: {{.Size}}' | tee -a "$GITHUB_STEP_SUMMARY"

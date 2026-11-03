@@ -46,7 +46,27 @@ const REDACTED_KEYS = new Set([
   'buyerEmail',
   'buyerPhone',
   'buyerName',
+  // Tax and bank identifiers (partner KYC, payout accounts, tax invoices). Logs are read by developers through CloudWatch.
+  'pan',
+  'panNumber',
+  'gstin',
+  'accountNumber',
+  'bankAccountNo',
+  'bankHolderName',
+  'bankIfsc',
+  'ifsc',
+  'beneficiaryName',
+  'upi',
+  'upiId',
+  'vpa',
 ]);
+
+// Free text typed by a person (contact, NRI and reply forms): hidden in what is sent TO us. Not hidden in responses, where `message`
+// is the standard status text ("Invalid token") that makes an error line useful.
+const REDACTED_REQUEST_ONLY_KEYS = new Set(['message', 'body']);
+
+// Query-string parameters whose values are hidden (searches by phone or email show up here). Also every key in REDACTED_KEYS.
+const REDACTED_QUERY_KEYS = new Set(['search', 'q', 'query']);
 
 // Max characters of response/request body to log before truncating
 // Dev used to log up to 4000 chars of every request AND response body, which
@@ -68,18 +88,40 @@ function sanitizeHeaders(headers, redactSet) {
 // Keys stripped entirely from logged bodies (verbose dev-only fields)
 const STRIP_BODY_KEYS = new Set(['stack']);
 
-function sanitizeObject(obj) {
+function sanitizeObject(obj, extraKeys) {
   if (!obj || typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(sanitizeObject);
+  if (Array.isArray(obj)) return obj.map((v) => sanitizeObject(v, extraKeys));
   const out = {};
   for (const [k, v] of Object.entries(obj)) {
     if (STRIP_BODY_KEYS.has(k)) continue;
-    out[k] = REDACTED_KEYS.has(k)
+    out[k] = REDACTED_KEYS.has(k) || (extraKeys && extraKeys.has(k))
       ? '[REDACTED]'
       : v && typeof v === 'object'
-        ? sanitizeObject(v)
+        ? sanitizeObject(v, extraKeys)
         : v;
   }
+  return out;
+}
+
+const isHiddenQueryKey = (k) => REDACTED_KEYS.has(k) || REDACTED_QUERY_KEYS.has(k);
+
+// "/api/admin/users?search=9845012345&page=2" -> "/api/admin/users?search=%5BREDACTED%5D&page=2"
+function redactUrl(url) {
+  if (typeof url !== 'string') return url;
+  const i = url.indexOf('?');
+  if (i < 0) return url;
+  try {
+    const params = new URLSearchParams(url.slice(i + 1));
+    for (const key of new Set(params.keys())) if (isHiddenQueryKey(key)) params.set(key, '[REDACTED]');
+    return `${url.slice(0, i)}?${params.toString()}`;
+  } catch {
+    return url.slice(0, i);
+  }
+}
+
+function redactQuery(query) {
+  const out = {};
+  for (const [k, v] of Object.entries(query || {})) out[k] = isHiddenQueryKey(k) ? '[REDACTED]' : v;
   return out;
 }
 
@@ -107,13 +149,13 @@ function requestLogger(req, res, next) {
   logger.info('→ Incoming request', {
     requestId,
     method:    req.method,
-    url:       req.originalUrl,
+    url:       redactUrl(req.originalUrl),
     ip:        req.ip || req.socket?.remoteAddress,
     userAgent: req.headers['user-agent'] || null,
     ...(isDev ? {} : { headers: sanitizeHeaders(req.headers, REDACTED_REQ_HEADERS) }),
-    query:     Object.keys(req.query).length ? req.query : undefined,
+    query:     Object.keys(req.query).length ? redactQuery(req.query) : undefined,
     body:      req.method !== 'GET'
-                 ? truncateBody(sanitizeObject(req.body))
+                 ? truncateBody(sanitizeObject(req.body, REDACTED_REQUEST_ONLY_KEYS))
                  : undefined,
   });
 
@@ -134,7 +176,9 @@ function requestLogger(req, res, next) {
                 : res.statusCode >= 400 ? 'warn'
                 : 'info';
 
-    const body = res._logPayload && (!isDev || res.statusCode >= 400)
+    // Only error responses are logged with their body, in every environment: a successful response carries profiles, KYC and bank
+    // data, and logging all of it filled the logs (and the CloudWatch free allowance) with personal data.
+    const body = res._logPayload && res.statusCode >= 400
       ? truncateBody(sanitizeObject(res._logPayload))
       : undefined;
 
@@ -143,7 +187,7 @@ function requestLogger(req, res, next) {
       userId:        req.user?.id   || null,
       role:          req.user?.role || null,
       method:        req.method,
-      url:           req.originalUrl,
+      url:           redactUrl(req.originalUrl),
       statusCode:    res.statusCode,
       durationMs,
       ...(isDev ? {} : { contentLength: res.getHeader('content-length') || null }),
@@ -155,4 +199,4 @@ function requestLogger(req, res, next) {
   next();
 }
 
-module.exports = { requestLogger };
+module.exports = { requestLogger, sanitizeObject, redactUrl };
