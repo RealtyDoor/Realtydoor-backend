@@ -112,6 +112,11 @@ describe('converting', () => {
     await expect(service.convertToListing('a1', 'r1', { partnerId: 'p1' })).rejects.toMatchObject({ data: { code: 'ALREADY_CONVERTED' } });
     expect(createProperty).not.toHaveBeenCalled();
   });
+  test('a request that already has a listing can never make another, even if its status was changed', async () => {
+    prisma.onboardingRequest.findUnique.mockResolvedValue(ready({ status: 'READY', convertedToId: 'prop0' }));
+    await expect(service.convertToListing('a1', 'r1', { partnerId: 'p1' })).rejects.toMatchObject({ data: { code: 'ALREADY_CONVERTED' } });
+    expect(createProperty).not.toHaveBeenCalled();
+  });
   test('needs a real partner account', async () => {
     prisma.onboardingRequest.findUnique.mockResolvedValue(ready());
     prisma.user.findFirst.mockResolvedValue(null);

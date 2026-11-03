@@ -153,6 +153,8 @@ async function adminCreate(adminId, body, ip) {
 async function adminUpdate(adminId, id, body, ip) {
   const row = await prisma.onboardingRequest.findUnique({ where: { id } });
   if (!row) throw new ApiError(404, 'Onboarding request not found');
+  // Once it has become a listing the request is a closed record: the listing is the live thing from then on.
+  if (row.status === 'CONVERTED' && body.status !== undefined) throw new ApiError(409, 'This one has already become a listing, so its status can no longer change.', { code: 'ALREADY_CONVERTED', propertyId: row.convertedToId });
   const data = {};
   for (const k of ['title', 'contactName', 'contactPhone', 'contactEmail', 'contactRole']) if (body[k] !== undefined) data[k] = body[k] || null;
   if (data.contactName === null) delete data.contactName;
@@ -184,7 +186,7 @@ async function adminAddNote(adminId, id, text, ip) {
 async function adminReopen(adminId, id, expiresInDays, ip) {
   const row = await prisma.onboardingRequest.findUnique({ where: { id } });
   if (!row) throw new ApiError(404, 'Onboarding request not found');
-  if (row.status === 'CONVERTED') throw new ApiError(409, 'This one has already become a listing.');
+  if (row.status === 'CONVERTED' || row.convertedToId) throw new ApiError(409, 'This one has already become a listing.');
   const token = f.newToken();
   const updated = await prisma.onboardingRequest.update({
     where: { id },
@@ -222,7 +224,8 @@ async function listingPreview(id) {
 async function convertToListing(adminId, id, { partnerId }, ip) {
   const row = await prisma.onboardingRequest.findUnique({ where: { id } });
   if (!row) throw new ApiError(404, 'Onboarding request not found');
-  if (row.status === 'CONVERTED') throw new ApiError(409, 'This one has already become a listing.', { code: 'ALREADY_CONVERTED', propertyId: row.convertedToId });
+  // Checked on the link to the listing as well as the status, so a request that was somehow moved back can never make a second listing.
+  if (row.status === 'CONVERTED' || row.convertedToId) throw new ApiError(409, 'This one has already become a listing.', { code: 'ALREADY_CONVERTED', propertyId: row.convertedToId });
   if (!CONVERTIBLE.includes(row.status)) throw new ApiError(409, 'Move it to "Ready to list" first, once the details are agreed.', { code: 'NOT_READY' });
   const partner = await prisma.user.findFirst({ where: { id: partnerId, role: 'PARTNER', deletedAt: { isSet: false } }, select: { id: true, name: true } });
   if (!partner) throw new ApiError(400, 'Choose the partner account that will own this listing.', { code: 'PARTNER_REQUIRED' });

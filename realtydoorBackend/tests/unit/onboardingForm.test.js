@@ -169,6 +169,15 @@ describe('admin side', () => {
     await service.adminUpdate('a1', 'r1', { status: 'IN_DISCUSSION', data: { a: ' b ' } });
     expect(prisma.onboardingRequest.update.mock.calls[0][0].data).toMatchObject({ status: 'IN_DISCUSSION', data: { a: 'b' } });
   });
+  test('a converted request is a closed record: no status change, no new link, no second listing', async () => {
+    prisma.onboardingRequest.findUnique.mockResolvedValue(row({ status: 'CONVERTED', convertedToId: 'prop1' }));
+    await expect(service.adminUpdate('a1', 'r1', { status: 'RECEIVED' })).rejects.toMatchObject({ statusCode: 409, data: { code: 'ALREADY_CONVERTED' } });
+    await expect(service.adminReopen('a1', 'r1')).rejects.toMatchObject({ statusCode: 409 });
+    // even one that was moved back before this rule existed
+    prisma.onboardingRequest.findUnique.mockResolvedValue(row({ status: 'SENT', convertedToId: 'prop1' }));
+    await expect(service.adminReopen('a1', 'r1')).rejects.toMatchObject({ statusCode: 409 });
+    expect(prisma.onboardingRequest.update).not.toHaveBeenCalled();
+  });
   test('notes are appended with the admin id', async () => {
     prisma.onboardingRequest.findUnique.mockResolvedValue(row());
     prisma.onboardingRequest.update.mockImplementation(async ({ data }) => ({ ...row(), ...data }));
