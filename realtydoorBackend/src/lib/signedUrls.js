@@ -6,7 +6,7 @@ const { awsClientCredentials } = require('./awsCredentials');
 // ticket evidence) are stored in the bucket under these folders, and the database keeps their plain bucket link. A plain link works
 // for anyone who has it, so signed-in responses hand out a signed link that expires instead. (The bucket itself must also refuse
 // public reads for these folders; this is the code half of that fix.)
-const PRIVATE_PREFIXES = ['visits/', 'kyc/', 'documents/', 'properties/documents/', 'partners/tax-invoices/', 'tickets/'];
+const PRIVATE_PREFIXES = ['visits/', 'kyc/', 'documents/', 'properties/documents/', 'partners/tax-invoices/', 'tickets/', 'onboarding/'];
 const DEFAULT_EXPIRY_SECONDS = 15 * 60;
 
 let client;

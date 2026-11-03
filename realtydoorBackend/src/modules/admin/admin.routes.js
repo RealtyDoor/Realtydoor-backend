@@ -18,12 +18,13 @@ const projectCtrl = require('../projects/project.controller');
 const builderInvoiceCtrl = require('../projects/builderInvoice.controller');
 const micrositeCtrl = require('../microsites/microsite.controller');
 const partnerTicketCtrl = require('../partners/partnerTicket.admin.controller');
+const onboardingCtrl = require('../onboarding/onboarding.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { requirePermission } = require('../../middleware/requirePermission');
 const { perUserLimiter } = require('../../middleware/rateLimiter');
 const { validateObjectId } = require('../../middleware/validateObjectId');
-const { videoTourUploader, buildMulter, IMAGE_FORMATS } = require('../../lib/fileUpload');
+const { videoTourUploader, onboardingDocUploader, buildMulter, IMAGE_FORMATS } = require('../../lib/fileUpload');
 const { auditAction } = require('../../middleware/auditAction');
 
 // T45 — a vendor is never hard-deleted (DELETE only deactivates), so the audit
@@ -295,6 +296,20 @@ router.get('/partner-support-tickets/:id',   validateObjectId('id'), partnerTick
 router.patch('/partner-support-tickets/:id', requirePermission('TICKETS'), validateObjectId('id'), partnerTicketCtrl.updatePartnerTicket);
 
 // NRI leads inbox
+// Build-out (onboarding) forms: admin creates a private link for a builder / owner, sees what comes back, edits it after the
+// discussion. Whole area needs LISTINGS, including reads (it holds the sender's documents).
+router.get('/onboarding',                      requirePermission('LISTINGS'), onboardingCtrl.list);
+router.post('/onboarding',                     requirePermission('LISTINGS'), onboardingCtrl.create);
+router.get('/onboarding/:id',                  validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.get);
+router.patch('/onboarding/:id',                validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.update);
+router.post('/onboarding/:id/notes',           validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.addNote);
+router.post('/onboarding/:id/reopen',          validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.reopen);
+router.get('/onboarding/:id/listing-preview',  validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.listingPreview);
+router.post('/onboarding/:id/convert',         validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.convert);
+router.post('/onboarding/:id/revoke',          validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.revoke);
+router.post('/onboarding/:id/documents/:docKey', validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.validateDocKey, onboardingDocUploader.single('file'), onboardingCtrl.adminUpload);
+router.delete('/onboarding/:id/documents/:docId', validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.adminRemoveFile);
+
 router.get('/nri-leads',             ctrl.listNriLeads);
 router.patch('/nri-leads/:id/read',  auditAction('NRI_LEAD_MARKED_READ', 'NriLead'), ctrl.markNriLeadRead);
 

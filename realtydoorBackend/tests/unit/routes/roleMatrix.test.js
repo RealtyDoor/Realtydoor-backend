@@ -271,4 +271,7 @@ const ANON_WRITES = [
   'POST /api/auth/login/otp', 'POST /api/auth/login/verify', 'POST /api/auth/signup/otp', 'POST /api/auth/signup/verify',
   'POST /api/auth/sync', 'POST /api/contact/', 'POST /api/nri-leads/', 'POST /api/properties/:id/report-unauthorized',
   'POST /api/service-requests/',
+  // Build-out form: reached with a private link whose secret is the credential (looked up by hash; rate limited; link checked before any upload).
+  'PUT /api/onboarding-forms/:token', 'POST /api/onboarding-forms/:token/submit', 'POST /api/onboarding-forms/:token/documents/:docKey',
+  'DELETE /api/onboarding-forms/:token/documents/:docId',
 ];

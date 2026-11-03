@@ -53,6 +53,8 @@ const BY_SCOPE = {
     ['patch', '/properties/checklist-documents/:docId/verify'], ['patch', '/properties/checklist-documents/:docId/reject'],
     ['post', '/properties/:id/mandates/:mandateId/owner-confirmation/request'], ['patch', '/properties/owner-confirmation/:confirmationId'],
     ['patch', '/properties/:id/approve'], ['patch', '/properties/:id/reject'], ['patch', '/properties/:id/request-changes'], ['patch', '/properties/:id'],
+    ['get', '/onboarding'], ['post', '/onboarding'], ['patch', '/onboarding/:id'], ['post', '/onboarding/:id/notes'], ['post', '/onboarding/:id/reopen'], ['post', '/onboarding/:id/revoke'], ['get', '/onboarding/:id/listing-preview'], ['post', '/onboarding/:id/convert'],
+    ['post', '/onboarding/:id/documents/:docKey'], ['delete', '/onboarding/:id/documents/:docId'],
     ['patch', '/projects/:id/approve'], ['patch', '/projects/:id/reject'], ['patch', '/projects/:id/request-changes'], ['patch', '/projects/:id/approvals/:item']],
   KYC: [['post', '/kyc/:userId/request-documents'], ['patch', '/documents/:id/verify']],
 };

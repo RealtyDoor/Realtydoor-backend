@@ -19,6 +19,7 @@ const b2bRoutes = require('../modules/b2b/b2b.routes');
 const configRoutes = require('../modules/config/config.routes');
 const projectRoutes = require('../modules/projects/project.routes');
 const micrositeRoutes = require('../modules/microsites/microsite.routes');
+const onboardingFormRoutes = require('../modules/onboarding/onboarding.routes');
 
 // Auth (sync on login, profile)
 router.use('/auth', authRoutes);
@@ -32,6 +33,7 @@ router.use('/blog', cmsRoutes);           // GET /api/blog and /api/blog/:slug
 router.use('/faqs', faqRoutes);           // GET /api/faqs and /api/faqs/:slug (content pre-parsed)
 router.use('/contact', contactRoutes);
 router.use('/nri-leads', nriLeadsRoutes);
+router.use('/onboarding-forms', onboardingFormRoutes); // build-out form: reached with a private link, no login
 router.use('/service-requests', serviceRequestsRoutes);
 router.use('/locality-insights', localityRoutes);
 router.use('/partner/b2b', b2bRoutes);

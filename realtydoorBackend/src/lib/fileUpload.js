@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand, CopyObjectCommand } = require('@aws-sdk/client-s3');
 const multer = require('multer');
 const { randomUUID } = require('crypto');
 const path = require('path');
@@ -152,6 +152,20 @@ const videoTourUploader      = buildUploader('video-tours', VIDEO_FORMATS, 500);
 const partnerProfilePhotoUploader = buildUploader('partners/profile-photos', IMAGE_FORMATS);
 // Money model phase 2 — a GST-registered partner's tax invoice for a deal.
 const taxInvoiceUploader = buildUploader('partners/tax-invoices', DOC_FORMATS);
+// Build-out (onboarding) form: documents, plans and photos sent through a private link.
+const onboardingDocUploader = buildUploader('onboarding', ALL_FORMATS, 15);
+
+// Copies a stored file into another folder of the same bucket (the original is kept) and returns where the copy lives. Used when a
+// build-out form becomes a listing: its files move from the private "onboarding/" folder to the listing's own folders.
+async function copyFile(srcKey, destFolder) {
+  const ext = path.extname(srcKey).toLowerCase();
+  const key = `${destFolder}/${randomUUID()}${ext}`;
+  await s3.send(new CopyObjectCommand({
+    Bucket: BUCKET, Key: key, CopySource: `${BUCKET}/${encodeURIComponent(srcKey).replace(/%2F/g, '/')}`,
+    ContentType: CONTENT_TYPE_BY_EXT[ext] || 'application/octet-stream', MetadataDirective: 'REPLACE',
+  }));
+  return { url: `https://${BUCKET}.s3.${REGION}.amazonaws.com/${key}`, key };
+}
 
 async function deleteFile(s3Key) {
   await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: s3Key }));
@@ -171,7 +185,9 @@ module.exports = {
   videoTourUploader,
   partnerProfilePhotoUploader,
   taxInvoiceUploader,
+  onboardingDocUploader,
   deleteFile,
+  copyFile,
   s3Upload,
   assertFileMatchesExtension,
   buildMulter,

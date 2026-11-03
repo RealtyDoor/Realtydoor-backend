@@ -1,0 +1,49 @@
+// ─── ONBOARDING REQUEST (build-out form) ──────────────────────────────────────
+// An admin creates a request for a builder / owner / channel partner / advisor and sends them a private link. They fill in a form for
+// the property type chosen and upload documents, with no login. It lands only in the admin Onboarding queue: it is NOT linked to any
+// user, listing or lead until an admin converts it. The link's secret is never stored, only its SHA-256 hash.
+
+enum OnboardingStatus {
+  SENT          // link created, waiting for the sender
+  RECEIVED      // the sender pressed Submit (they can still add more until an admin moves it on)
+  IN_DISCUSSION // admin is talking to them; the link is locked and the admin edits the details
+  READY         // details agreed, ready to become a listing or project
+  CONVERTED     // turned into a real listing / project
+  CLOSED        // dropped
+}
+
+model OnboardingRequest {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  tokenHash String @unique
+
+  propertyType PropertyType
+  title        String?
+
+  contactName  String
+  contactPhone String?
+  contactEmail String?
+  contactRole  String?
+
+  status OnboardingStatus @default(SENT)
+
+  // Answers keyed by form field; documents: [{ id, key, name, size, url, s3Key, uploadedAt, by }]; adminNotes: [{ at, adminId, text }]
+  data       Json
+  documents  Json
+  adminNotes Json
+
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  submittedAt DateTime?
+  lastSavedAt DateTime?
+
+  createdByAdminId String @db.ObjectId
+
+  convertedToType String?
+  convertedToId   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
