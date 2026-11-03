@@ -1,0 +1,38 @@
+// ─── LEAD SALES (qualification by BDEs, before a partner gets the lead) ───────
+
+enum LeadSalesStage {
+  NEW            // not touched yet (a lead with no stage set counts as this)
+  CONTACTED      // the BDE has reached the buyer
+  FOLLOW_UP      // waiting on the buyer; a next follow-up date is set
+  QUALIFIED      // real, serious and ready: a manager can hand it to a partner
+  NOT_QUALIFIED  // not going forward; a reason is recorded
+}
+
+enum LeadTemperature {
+  HOT
+  WARM
+  COLD
+}
+
+enum LeadNoteKind {
+  NOTE
+  CALL
+  WHATSAPP
+  MEETING
+  SYSTEM // written by the system when the stage, temperature or owner changes
+}
+
+// The history of what was said and done on a lead. Append-only: a note is never edited, so the timeline can be trusted.
+// leadId is a plain scalar (no relation), like Lead.relatedLeadId: a note must never block deleting a lead.
+model LeadNote {
+  id         String       @id @default(auto()) @map("_id") @db.ObjectId
+  leadId     String       @db.ObjectId
+  authorId   String?      @db.ObjectId
+  authorName String
+  kind       LeadNoteKind @default(NOTE)
+  text       String
+  createdAt  DateTime     @default(now())
+
+  @@index([leadId, createdAt])
+  @@index([authorId, createdAt])
+}

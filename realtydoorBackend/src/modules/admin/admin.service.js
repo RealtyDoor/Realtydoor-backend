@@ -1,4 +1,6 @@
 const prisma = require('../../lib/prisma');
+const leadSalesRules = require('../../lib/leadSales');
+const leadSales = require('../leadSales/leadSales.service');
 const { canonicalizeCity } = require('../../lib/cityAlias');
 const ApiError = require('../../utils/ApiError');
 const { createNotification, markNotificationsRead } = require('../../lib/notifications');
@@ -72,7 +74,20 @@ function flattenBuyerInquiryCount(lead) {
   return { ...lead, buyer, inquiryCount: _count?.buyerLeads ?? 0, ...stalled };
 }
 
-async function getLeadById(leadId) {
+// The original filters, for callers that have no signed-in admin to scope by.
+function listWhereLegacy(filters) {
+  const where = {};
+  if (filters.status) where.status = filters.status;
+  if (filters.partnerId) where.assignedPartnerId = filters.partnerId;
+  if (filters.search) where.OR = [
+    { refCode:    { contains: filters.search, mode: 'insensitive' } },
+    { buyerName:  { contains: filters.search, mode: 'insensitive' } },
+    { buyerEmail: { contains: filters.search, mode: 'insensitive' } },
+  ];
+  return where;
+}
+
+async function getLeadById(leadId, user = null) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
     include: {
@@ -82,19 +97,17 @@ async function getLeadById(leadId) {
       buyer: ADMIN_LEAD_BUYER_INCLUDE,
     },
   });
-  if (!lead) throw new ApiError(404, 'Lead not found');
-  return flattenBuyerInquiryCount(lead);
+  // A BDE only ever sees the leads they own; for anyone else this scope is empty.
+  const scope = user ? leadSalesRules.leadScope(user) : {};
+  if (!lead || (scope.ownerStaffId && lead.ownerStaffId !== scope.ownerStaffId)) throw new ApiError(404, 'Lead not found');
+  const owner = lead.ownerStaffId ? await prisma.user.findUnique({ where: { id: lead.ownerStaffId }, select: { name: true, email: true } }) : null;
+  return { ...flattenBuyerInquiryCount(lead), ownerStaffName: owner ? (owner.name || owner.email) : null };
 }
 
-async function getAllLeads(filters, skip, limit) {
-  const where = {};
-  if (filters.status) where.status = filters.status;
-  if (filters.partnerId) where.assignedPartnerId = filters.partnerId;
-  if (filters.search) where.OR = [
-    { refCode:    { contains: filters.search, mode: 'insensitive' } },
-    { buyerName:  { contains: filters.search, mode: 'insensitive' } },
-    { buyerEmail: { contains: filters.search, mode: 'insensitive' } },
-  ];
+async function getAllLeads(filters, skip, limit, user = null) {
+  // Status, partner and search filters as before, plus the sales filters (stage, temperature, owner, follow-up, source, dates) and,
+  // for a BDE, the scope that limits them to their own leads.
+  const where = user ? leadSales.listWhere(filters, user) : listWhereLegacy(filters);
 
   const [data, total] = await Promise.all([
     prisma.lead.findMany({
@@ -115,8 +128,9 @@ async function getAllLeads(filters, skip, limit) {
   ]);
 
   // The partner-added review queue shows, per lead, whether the partner would be credited (one mobile number is one buyer).
+  const ownerNames = await leadSales.nameMap(data.map((l) => l.ownerStaffId));
   const rows = await Promise.all(data.map(async (lead) => {
-    const row = flattenBuyerInquiryCount(lead);
+    const row = { ...flattenBuyerInquiryCount(lead), ownerStaffName: ownerNames[lead.ownerStaffId] || null };
     if (lead.status !== 'AWAITING_ADMIN' || !lead.addedByPartnerId) return row;
     const ownership = await evaluateBuyerOwnership(lead.buyerPhone, lead.addedByPartnerId, { excludeLeadId: lead.id, before: lead.createdAt });
     return { ...row, ownership: { ...ownership, note: OWNERSHIP_TEXT[ownership.reason] } };

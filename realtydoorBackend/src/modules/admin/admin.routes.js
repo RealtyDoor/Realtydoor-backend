@@ -19,6 +19,7 @@ const builderInvoiceCtrl = require('../projects/builderInvoice.controller');
 const micrositeCtrl = require('../microsites/microsite.controller');
 const partnerTicketCtrl = require('../partners/partnerTicket.admin.controller');
 const onboardingCtrl = require('../onboarding/onboarding.controller');
+const leadSalesCtrl = require('../leadSales/leadSales.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { requirePermission } = require('../../middleware/requirePermission');
@@ -66,6 +67,14 @@ router.get('/routing-rules',      ctrl.listRoutingRules);
 router.post('/routing-rules',     requirePermission('LEADS'), ctrl.createRoutingRule);
 router.patch('/routing-rules/:id', requirePermission('LEADS'), ctrl.updateRoutingRule);
 router.delete('/routing-rules/:id', requirePermission('LEADS'), ctrl.deleteRoutingRule);
+// Sales (BDE) layer on a lead: qualification stage, temperature, owner, follow-ups, note history. Static paths come before /leads/:id.
+// A BDE (SALES without LEADS) only ever sees and changes the leads they own; export and setting owners are for managers (LEADS).
+router.get('/leads/sales-summary',    requirePermission(['LEADS', 'SALES']), leadSalesCtrl.salesSummary);
+router.get('/leads/owners',           requirePermission(['LEADS', 'SALES']), leadSalesCtrl.owners);
+router.get('/leads/export',           requirePermission('LEADS'), leadSalesCtrl.exportLeads);
+router.get('/leads/:id/notes',        validateObjectId('id'), requirePermission(['LEADS', 'SALES']), leadSalesCtrl.listNotes);
+router.post('/leads/:id/notes',       validateObjectId('id'), requirePermission(['LEADS', 'SALES']), leadSalesCtrl.addNote);
+router.patch('/leads/:id/sales',      validateObjectId('id'), requirePermission(['LEADS', 'SALES']), leadSalesCtrl.updateSales);
 router.get('/leads/:id',    ctrl.getLeadById);
 router.patch('/leads/:id/assign',        requirePermission('LEADS'), ctrl.assignLead);
 router.post('/leads/:id/auto-assign',    requirePermission('LEADS'), ctrl.autoAssignLead);

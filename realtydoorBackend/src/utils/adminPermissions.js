@@ -3,7 +3,8 @@
 // purpose, matching how an actual support/finance/content team is usually
 // split, and easy to reason about in a directory UI.
 const ADMIN_PERMISSION_SCOPES = [
-  'LEADS',       // leads, auto-assign, inquiries
+  'LEADS',       // leads, auto-assign, inquiries; sees every lead, sets owners, exports
+  'SALES',       // BDE work on the leads they own: qualification stage, temperature, follow-ups, notes (cannot see other BDEs' leads)
   'LISTINGS',    // properties, projects, mandates/conflicts
   'KYC',         // partner KYC review
   'FINANCE',     // escrow release/refund, payouts, builder invoices
@@ -24,7 +25,7 @@ const ADMIN_PERMISSION_SCOPES = [
 
 // A named staffRole is just a convenient preset — adminPermissions is what
 // actually gets checked (SUPER_ADMIN bypasses it and always passes).
-const ADMIN_STAFF_ROLES = ['SUPER_ADMIN', 'SUPPORT', 'CRM_MANAGER', 'FINANCE_STAFF', 'CONTENT_MANAGER'];
+const ADMIN_STAFF_ROLES = ['SUPER_ADMIN', 'SUPPORT', 'CRM_MANAGER', 'FINANCE_STAFF', 'CONTENT_MANAGER', 'BDE'];
 
 const DEFAULT_PERMISSIONS_BY_STAFF_ROLE = {
   SUPER_ADMIN: ADMIN_PERMISSION_SCOPES, // unused in practice — SUPER_ADMIN bypasses the check — kept for directory display consistency.
@@ -33,6 +34,8 @@ const DEFAULT_PERMISSIONS_BY_STAFF_ROLE = {
   CRM_MANAGER: ['LEADS', 'LISTINGS', 'KYC', 'TICKETS', 'FINANCE_VIEW'],
   FINANCE_STAFF: ['FINANCE', 'COMMISSION'],
   CONTENT_MANAGER: ['CONTENT'],
+  // Business development executive: works only the leads a manager has given them, up to qualification.
+  BDE: ['SALES'],
 };
 
 // What the admin app needs to show only the screens and buttons this admin may use. `full` mirrors requirePermission:

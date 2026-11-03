@@ -60,6 +60,19 @@ model Lead {
   assignedAt        DateTime?
   adminNotes        String?
 
+  // ─── Sales qualification (BDE layer, before a lead is handed to a partner) ──
+  // Separate from `status` on purpose: status is the partner's site-visit flow (OTP, escrow, closing) and is untouched by this.
+  // A BDE works a lead until it is QUALIFIED (ready for a manager to assign to a partner) or NOT_QUALIFIED. null = not worked yet.
+  // ownerStaffId is a plain scalar (like addedByAdminId): the staff member working the lead, set by a manager.
+  salesStage         LeadSalesStage?
+  temperature        LeadTemperature?
+  ownerStaffId       String?   @db.ObjectId
+  ownerAssignedAt    DateTime?
+  nextFollowUpAt     DateTime?
+  lastContactedAt    DateTime?
+  qualifiedAt        DateTime?
+  notQualifiedReason String?
+
   // OTP anti-leakage (PRD §5 — Rules 1, 2, 3)
   siteVisitScheduledAt DateTime?
   siteVisitOTP         String? // cleared after verification
@@ -183,4 +196,6 @@ model Lead {
   @@index([propertyId, status])
   @@index([buyerId, createdAt])
   @@index([commissionStatus])
+  @@index([ownerStaffId, salesStage])
+  @@index([nextFollowUpAt])
 }

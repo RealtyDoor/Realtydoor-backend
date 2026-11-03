@@ -51,7 +51,7 @@ const ApiError = require('../../utils/ApiError');
 
 async function getLeadById(req, res, next) {
   try {
-    const lead = await service.getLeadById(req.params.id);
+    const lead = await service.getLeadById(req.params.id, req.user);
     success(res, lead);
   } catch (err) { next(err); }
 }
@@ -59,7 +59,7 @@ async function getLeadById(req, res, next) {
 async function getLeads(req, res, next) {
   try {
     const { page, limit, skip } = parsePagination(req.query);
-    const { data, total } = await service.getAllLeads(req.query, skip, limit);
+    const { data, total } = await service.getAllLeads(req.query, skip, limit, req.user);
     success(res, paginate(data, total, page, limit));
   } catch (err) { next(err); }
 }
