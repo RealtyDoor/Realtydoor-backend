@@ -2,6 +2,9 @@ const crypto = require('crypto');
 const prisma = require('../../lib/prisma');
 const logger = require('../../lib/logger');
 const li = require('../../lib/leadIntake');
+const { createNotification, notifyAdmins } = require('../../lib/notifications');
+
+const REPLY_ALERT_GAP_MS = 10 * 60 * 1000;
 
 // WhatsApp conversations: every message in or out as a thread per phone number, and inbound enquiries from numbers we do not know becoming leads
 // (through the same intake as the ad forms). Messages arrive from the WATI webhook; sends from the app are recorded by lib/wati.js.
@@ -18,8 +21,8 @@ const toPhone = (wa) => {
 function readMessage(body = {}) {
   const typeWord = String(body.type || body.messageType || '').toLowerCase();
   const kind = MEDIA_WORDS[typeWord] || (typeWord && typeWord !== 'text' ? 'OTHER' : 'TEXT');
-  const text = String(body.text || body.caption || '').trim() || MEDIA_PLACEHOLDER[kind] || (kind === 'OTHER' ? `[${typeWord}]` : '');
-  const ref = body.referral || (body.sourceId || body.sourceUrl ? { sourceId: body.sourceId, sourceUrl: body.sourceUrl, sourceType: body.sourceType, headline: body.sourceHeadline } : null);
+  const text = String(body.text || body.finalText || body.caption || '').trim() || MEDIA_PLACEHOLDER[kind] || (kind === 'OTHER' ? `[${typeWord}]` : '');
+  const ref = body.messageReferral || body.referral || (body.sourceId || body.sourceUrl ? { sourceId: body.sourceId, sourceUrl: body.sourceUrl, sourceType: body.sourceType, headline: body.sourceHeadline } : null);
   return {
     phone: toPhone(body.waId || body.whatsappNumber),
     text,
@@ -47,6 +50,20 @@ async function note(leadId, text) {
   await prisma.leadNote.create({ data: { leadId, authorName: 'WhatsApp', kind: 'WHATSAPP', text: String(text).slice(0, 800) } }).catch(() => null);
 }
 
+// A buyer who already has a lead wrote again: tell whoever owns the lead (or all admins if nobody does), but at most once every 10 minutes
+// per lead, so a burst of messages is one alert.
+async function alertReply(lead, m) {
+  try {
+    const link = `/admin/leads/${lead.id}`;
+    const recent = await prisma.notification.findFirst({ where: { linkUrl: link, title: 'Buyer replied on WhatsApp', createdAt: { gt: new Date(Date.now() - REPLY_ALERT_GAP_MS) } }, select: { id: true } });
+    if (recent) return;
+    const title = 'Buyer replied on WhatsApp';
+    const message = `${lead.refCode || 'A lead'}${lead.buyerName ? ` · ${lead.buyerName}` : ''}: ${String(m.text).slice(0, 120)}`;
+    if (lead.ownerStaffId) await createNotification({ userId: lead.ownerStaffId, title, message, type: 'LEAD_NEW', linkUrl: link });
+    else await notifyAdmins({ title, message, type: 'LEAD_NEW', linkUrl: link });
+  } catch (err) { logger.warn('[whatsappInbox] reply alert failed', { error: err.message }); }
+}
+
 /**
  * A message from the WATI webhook. Stored in the thread (once, by its WATI id). If it is from a number we do not know, it becomes a lead;
  * if the buyer already has a lead, a note goes on it; partners and staff messaging us are not leads.
@@ -62,7 +79,7 @@ async function recordMessage(body) {
   const eventType = String(body.eventType || '');
   if (m.fromUs && /template/i.test(eventType)) return { status: 'ignored' }; // sends from the app are already recorded, with their details
 
-  const lead = await prisma.lead.findFirst({ where: { buyerPhone: m.phone }, orderBy: { createdAt: 'desc' }, select: { id: true, status: true, refCode: true } });
+  const lead = await prisma.lead.findFirst({ where: { buyerPhone: m.phone }, orderBy: { createdAt: 'desc' }, select: { id: true, status: true, refCode: true, ownerStaffId: true, buyerName: true } });
   const row = await prisma.whatsAppMessage.create({
     data: {
       phone: m.phone, direction: m.fromUs ? 'OUT' : 'IN', kind: m.kind, text: m.text || null, mediaUrl: m.mediaUrl, senderName: m.senderName,
@@ -73,7 +90,10 @@ async function recordMessage(body) {
   if (m.fromUs) return { status: 'recorded', id: row.id };
 
   if (lead) {
-    if (!['CLOSED', 'DROPPED'].includes(lead.status)) await note(lead.id, `Buyer on WhatsApp: ${m.text}`);
+    if (!['CLOSED', 'DROPPED'].includes(lead.status)) {
+      await note(lead.id, `Buyer on WhatsApp: ${m.text}`);
+      await alertReply(lead, m);
+    }
     return { status: 'recorded', id: row.id, leadId: lead.id };
   }
   // A partner, staff member or admin writing to us is not an enquiry.
@@ -114,10 +134,36 @@ async function listConversations({ search, limit = 40 } = {}) {
   return maskedList(out);
 }
 
-/** One chat, oldest first, with the buyer's lead on the side. */
+/** The conversation as WATI holds it right now (read with the API key, nothing copied). Returns [] if WATI cannot be reached. */
+async function fetchLive(phoneDigits, max = 200) {
+  if (!process.env.WATI_API_ENDPOINT || !process.env.WATI_ACCESS_TOKEN) return null;
+  try {
+    const { liveMessages } = require('./watiImport.service');
+    return await liveMessages(phoneDigits, max);
+  } catch (err) {
+    logger.warn('[whatsappInbox] live read failed', { error: err.message });
+    return null;
+  }
+}
+
+/**
+ * One chat, oldest first, with the buyer's lead on the side. The messages are read live from WATI, so the whole history is always there and
+ * always current; what we stored (the details of what we sent, the lead link) is laid over it. If WATI cannot be reached, what we stored is shown.
+ */
 async function getThread(phoneDigits, limit = 300) {
   const phone = toPhone(phoneDigits);
   if (!phone) return { messages: [], lead: null };
+  const live = await fetchLive(phoneDigits, Math.min(limit, 200));
+  if (live) {
+    const stored = await prisma.whatsAppMessage.findMany({ where: { phone, watiMessageId: { in: live.map((m) => m.watiMessageId).filter(Boolean) } }, select: { id: true, watiMessageId: true, templateName: true, text: true, leadId: true } });
+    const byId = new Map(stored.map((s) => [s.watiMessageId, s]));
+    const lead = await prisma.lead.findFirst({ where: { buyerPhone: phone }, orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, campaign: true, projectId: true, createdAt: true } });
+    const messages = live.map((m, i) => {
+      const s = byId.get(m.watiMessageId);
+      return { id: s?.id || `live-${i}-${m.watiMessageId || ''}`, direction: m.direction, kind: m.kind, text: m.text || s?.text || null, templateName: s?.templateName || m.templateName || null, mediaUrl: m.mediaUrl, senderName: m.senderName, status: m.status, failureReason: m.failureReason || null, at: m.at, deliveredAt: null, readAt: null, leadId: s?.leadId || null, live: !s };
+    });
+    return { phone, lead, messages, source: 'wati-live' };
+  }
   const [messages, lead] = await Promise.all([
     prisma.whatsAppMessage.findMany({ where: { phone }, orderBy: { at: 'desc' }, take: Math.min(limit, 500), select: { id: true, direction: true, kind: true, text: true, templateName: true, mediaUrl: true, senderName: true, status: true, failureReason: true, at: true, deliveredAt: true, readAt: true, leadId: true } }),
     prisma.lead.findFirst({ where: { buyerPhone: phone }, orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, campaign: true, projectId: true, createdAt: true } }),
@@ -144,4 +190,22 @@ async function getLogDetail(id) {
   return { ...log, threadMessageId: thread?.id || null, lead };
 }
 
-module.exports = { getLogDetail, readMessage, recordMessage, listConversations, getThread, getMessageDetail, ensureIntegration, toPhone };
+/** Turn one existing chat into a lead, with the buyer's first message and the ad they came from when known. */
+async function createLeadFromChat(phoneDigits) {
+  const phone = toPhone(phoneDigits);
+  const existing = await prisma.lead.findFirst({ where: { buyerPhone: phone }, orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true } });
+  if (existing) return { status: 'EXISTS', leadId: existing.id, refCode: existing.refCode };
+  const first = await prisma.whatsAppMessage.findFirst({ where: { phone, direction: 'IN' }, orderBy: { at: 'asc' } });
+  const integration = await ensureIntegration();
+  const intake = require('../leadIntake/leadIntake.service');
+  const ref = first?.referral || null;
+  const out = await intake.ingest(integration, {
+    name: first?.senderName || 'WhatsApp contact', phone, message: first?.text || undefined, source: 'whatsapp',
+    externalId: `chat:${phoneDigits}`,
+    ...(ref && { campaign: ref.headline || ref.sourceId || ref.source_id, adName: ref.headline }),
+  });
+  if (out.leadId) await prisma.whatsAppMessage.updateMany({ where: { phone }, data: { leadId: out.leadId } }).catch(() => null);
+  return out;
+}
+
+module.exports = { createLeadFromChat, getLogDetail, readMessage, recordMessage, listConversations, getThread, getMessageDetail, ensureIntegration, toPhone };

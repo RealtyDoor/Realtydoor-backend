@@ -1599,6 +1599,37 @@ async function setLeadAdminNote(leadId, note, adminId, ip) {
   return updated;
 }
 
+// 5 Nov 2026: an admin can correct a lead's own details (the name WhatsApp gave, a missing email, the city, the budget, the message, the project).
+// The phone number is the buyer's identity, so it can change only on a lead no partner brought and that has no money on it and no verified visit.
+const LEAD_EDIT_FIELDS = ['buyerName', 'buyerEmail', 'buyerPhone', 'budget', 'city', 'buyerMessage', 'propertyInterest', 'projectId'];
+async function updateLeadDetails(leadId, patch, adminId, ip) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.status === 'CLOSED') throw new ApiError(409, 'A closed lead cannot be edited.', { code: 'LEAD_CLOSED' });
+
+  const data = {};
+  for (const k of LEAD_EDIT_FIELDS) if (patch[k] !== undefined) data[k] = patch[k] === '' ? (k === 'buyerEmail' ? '' : null) : patch[k];
+  if (data.buyerPhone !== undefined) {
+    const phone = normalizePhone(data.buyerPhone);
+    if (!phone) throw new ApiError(400, 'That phone number is not valid.', { code: 'INVALID_PHONE' });
+    if (phone === lead.buyerPhone) delete data.buyerPhone;
+    else {
+      const money = await prisma.escrowTransaction.count({ where: { leadId } });
+      if (lead.addedByPartnerId || lead.isOtpVerified || money > 0) {
+        throw new ApiError(409, 'The number cannot change on a lead a partner brought, or one with a verified visit or a payment on it.', { code: 'PHONE_LOCKED' });
+      }
+      data.buyerPhone = phone;
+    }
+  }
+  const before = {}; const after = {};
+  for (const k of Object.keys(data)) { if ((lead[k] ?? null) !== (data[k] ?? null)) { before[k] = lead[k] ?? null; after[k] = data[k] ?? null; } else delete data[k]; }
+  if (Object.keys(data).length === 0) return lead;
+
+  const updated = await prisma.lead.update({ where: { id: leadId }, data });
+  await createAuditLog({ adminId, action: 'LEAD_DETAILS_EDITED', targetType: 'Lead', targetId: leadId, before, after, ipAddress: ip });
+  return updated;
+}
+
 async function updateLoanStatus(loanId, status, adminNote, adminId, extraFields = {}) {
   const loan = await prisma.loanApplication.findUnique({
     where: { id: loanId },
@@ -2905,7 +2936,7 @@ module.exports = {
   getAuditLogs, getUserPrivacyEvents,
   getAllTickets, getTicketById, updateTicketStatus, getTicketStats, getRatingsSummary,
   dispatchTicket, resolveTicket, linkTicketToDeal, getAdminTicketComments, addAdminTicketComment,
-  getAllLoans, getLoanById, setLeadAdminNote,
+  getAllLoans, getLoanById, setLeadAdminNote, updateLeadDetails,
   updateLoanStatus, getLoanBankStats,
   getAllUsers, changeUserRole, suspendUser,
   listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,

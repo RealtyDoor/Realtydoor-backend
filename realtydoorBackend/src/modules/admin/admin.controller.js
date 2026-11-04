@@ -166,6 +166,25 @@ async function setLeadNote(req, res, next) {
   } catch (err) { next(err); }
 }
 
+const objectIdLike = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid id');
+const leadDetailsSchema = z.object({
+  buyerName: z.string().trim().min(2).max(80).optional(),
+  buyerEmail: z.union([z.literal(''), z.string().trim().email().max(120)]).optional(),
+  buyerPhone: z.string().trim().min(5).max(20).optional(),
+  budget: z.string().trim().max(60).optional(),
+  city: z.string().trim().max(60).optional(),
+  buyerMessage: z.string().trim().max(1500).optional(),
+  propertyInterest: z.string().trim().max(200).optional(),
+  projectId: z.union([objectIdLike, z.literal('')]).optional(),
+}).strict();
+
+async function updateLeadDetails(req, res, next) {
+  try {
+    const data = leadDetailsSchema.parse(req.body);
+    success(res, await service.updateLeadDetails(req.params.id, data, req.user.id, req.ip), 'Lead updated');
+  } catch (err) { next(err); }
+}
+
 async function overrideLeadOtp(req, res, next) {
   try {
     const { note } = overrideOtpSchema.parse(req.body ?? {});
@@ -806,7 +825,7 @@ module.exports = {
   listStaff, createStaffMember, updateStaffPermissions, removeStaffMember,
   getPartnerById,
   getPropertyById,
-  setLeadNote,
+  setLeadNote, updateLeadDetails,
   getKycById,
   listDocuments, verifyDocument,
   listContactMessages, markContactRead,

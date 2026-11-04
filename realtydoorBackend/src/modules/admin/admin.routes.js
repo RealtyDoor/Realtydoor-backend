@@ -88,6 +88,7 @@ router.post('/leads/:id/auto-assign',    requirePermission('LEADS'), ctrl.autoAs
 // in one step; passing a different partnerId is the reassign case.
 router.patch('/leads/:id/confirm',       requirePermission('LEADS'), ctrl.confirmLead);
 router.patch('/leads/:id/reject',        requirePermission('LEADS'), ctrl.rejectLead);
+router.patch('/leads/:id/details',       validateObjectId('id'), requirePermission('LEADS'), ctrl.updateLeadDetails);
 router.patch('/leads/:id/note',          requirePermission('LEADS'), validateObjectId('id'), ctrl.setLeadNote);
 // 6.6 — clear a locked site-visit OTP and issue a fresh code to the buyer.
 router.patch('/leads/:id/otp-override',  requirePermission('LEADS'), ctrl.overrideLeadOtp);
@@ -389,6 +390,8 @@ const templatesManagedInWati = (req, res, next) => (process.env.WATI_TEMPLATE_ED
 // WhatsApp chats: every message in and out as a thread per number, with full details of each message.
 router.get('/whatsapp/conversations',              requirePermission('LEADS'), whatsappInboxCtrl.conversations);
 router.get('/whatsapp/conversations/:phone',       requirePermission('LEADS'), whatsappInboxCtrl.thread);
+router.post('/whatsapp/import',                    requirePermission('LEADS'), whatsappInboxCtrl.importFromWati);
+router.post('/whatsapp/conversations/:phone/lead', requirePermission('LEADS'), whatsappInboxCtrl.makeLead);
 router.get('/whatsapp/messages/:id',               validateObjectId('id'), requirePermission('LEADS'), whatsappInboxCtrl.message);
 router.get('/wati/stats',                  watiCtrl.getStats);
 router.get('/wati/messages',               watiCtrl.listMessages);

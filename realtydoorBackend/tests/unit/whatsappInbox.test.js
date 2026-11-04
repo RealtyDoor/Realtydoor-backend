@@ -6,12 +6,17 @@ jest.mock('../../src/lib/prisma', () => ({
   user: { findFirst: jest.fn() },
   leadIntegration: { findFirst: jest.fn(), create: jest.fn() },
   watiMessageLog: { findFirst: jest.fn(), findUnique: jest.fn() },
+  notification: { findFirst: jest.fn() },
 }));
 jest.mock('../../src/modules/leadIntake/leadIntake.service', () => ({ ingest: jest.fn() }));
+jest.mock('../../src/modules/wati/watiImport.service', () => ({ liveMessages: jest.fn() }));
+jest.mock('../../src/lib/notifications', () => ({ createNotification: jest.fn().mockResolvedValue({}), notifyAdmins: jest.fn().mockResolvedValue({}) }));
+const { createNotification, notifyAdmins } = require('../../src/lib/notifications');
 
 const prisma = require('../../src/lib/prisma');
 const intake = require('../../src/modules/leadIntake/leadIntake.service');
 const inbox = require('../../src/modules/wati/whatsappInbox.service');
+const { liveMessages } = require('../../src/modules/wati/watiImport.service');
 
 const msg = (over = {}) => ({ waId: '919876500123', text: 'Hi, I am interested in Lakeview', senderName: 'Asha', id: 'wm-1', type: 'text', owner: false, timestamp: '1793000000', ...over });
 
@@ -24,6 +29,7 @@ beforeEach(() => {
   prisma.user.findFirst.mockResolvedValue(null);
   prisma.leadIntegration.findFirst.mockResolvedValue({ id: 'i1', kind: 'WHATSAPP', mappings: [] });
   intake.ingest.mockResolvedValue({ status: 'CREATED', leadId: 'L1' });
+  prisma.notification.findFirst.mockResolvedValue(null);
 });
 
 describe('readMessage', () => {
@@ -88,6 +94,31 @@ describe('recordMessage', () => {
   });
 });
 
+describe('a reply from a buyer who has a lead alerts someone', () => {
+  const open = { id: 'L9', status: 'ASSIGNED', refCode: 'RD-L-9', buyerName: 'Asha', ownerStaffId: null };
+  test('all admins when nobody owns the lead', async () => {
+    prisma.lead.findFirst.mockResolvedValue(open);
+    await inbox.recordMessage(msg());
+    expect(notifyAdmins).toHaveBeenCalledWith(expect.objectContaining({ title: 'Buyer replied on WhatsApp', linkUrl: '/admin/leads/L9' }));
+  });
+  test('the owner of the lead when there is one', async () => {
+    prisma.lead.findFirst.mockResolvedValue({ ...open, ownerStaffId: 'staff1' });
+    await inbox.recordMessage(msg({ id: 'wm-2' }));
+    expect(createNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: 'staff1', title: 'Buyer replied on WhatsApp' }));
+    expect(notifyAdmins).not.toHaveBeenCalled();
+  });
+  test('a burst of messages is one alert, and a closed lead gets none', async () => {
+    prisma.lead.findFirst.mockResolvedValue(open);
+    prisma.notification.findFirst.mockResolvedValue({ id: 'n1' });
+    await inbox.recordMessage(msg({ id: 'wm-3' }));
+    expect(notifyAdmins).not.toHaveBeenCalled();
+    prisma.notification.findFirst.mockResolvedValue(null);
+    prisma.lead.findFirst.mockResolvedValue({ ...open, status: 'CLOSED' });
+    await inbox.recordMessage(msg({ id: 'wm-4' }));
+    expect(notifyAdmins).not.toHaveBeenCalled();
+  });
+});
+
 describe('threads and details', () => {
   test('a thread reads oldest first and carries the lead', async () => {
     prisma.whatsAppMessage.findMany.mockResolvedValue([{ id: 'b', at: 2 }, { id: 'a', at: 1 }]);
@@ -118,5 +149,32 @@ describe('log detail', () => {
     expect(d).toMatchObject({ id: 'g1', recipientPhone: '+919876500123', threadMessageId: 'm1', lead: { refCode: 'RD-L-1' } });
     prisma.watiMessageLog.findUnique.mockResolvedValue(null);
     expect(await inbox.getLogDetail('x')).toBeNull();
+  });
+});
+
+describe('a thread is read live from WATI', () => {
+  afterEach(() => { delete process.env.WATI_API_ENDPOINT; delete process.env.WATI_ACCESS_TOKEN; });
+  test('the whole conversation comes from WATI, with what we stored laid over it', async () => {
+    process.env.WATI_API_ENDPOINT = 'https://wati.example'; process.env.WATI_ACCESS_TOKEN = 't';
+    liveMessages.mockResolvedValue([
+      { direction: 'IN', kind: 'TEXT', text: 'Hi', watiMessageId: 'w1', status: 'RECEIVED', at: new Date('2026-11-05T09:00:00Z') },
+      { direction: 'OUT', kind: 'TEMPLATE', text: 'Hello', watiMessageId: 'w2', status: 'READ', at: new Date('2026-11-05T09:01:00Z') },
+    ]);
+    prisma.whatsAppMessage.findMany.mockResolvedValue([{ id: 'row2', watiMessageId: 'w2', templateName: 'lead_registration_received', text: 'Hi Asha, thank you!', leadId: 'L1' }]);
+    prisma.lead.findFirst.mockResolvedValue({ id: 'L1', refCode: 'RD-L-1' });
+    const t = await inbox.getThread('919876500123');
+    expect(t.source).toBe('wati-live');
+    expect(t.messages).toHaveLength(2);
+    expect(t.messages[1]).toMatchObject({ id: 'row2', templateName: 'lead_registration_received', text: 'Hello', live: false });
+    expect(t.messages[0].live).toBe(true);
+  });
+  test('if WATI cannot be reached, what we stored is shown', async () => {
+    process.env.WATI_API_ENDPOINT = 'https://wati.example'; process.env.WATI_ACCESS_TOKEN = 't';
+    liveMessages.mockRejectedValue(new Error('timeout'));
+    prisma.whatsAppMessage.findMany.mockResolvedValue([{ id: 'a', at: 1 }]);
+    prisma.lead.findFirst.mockResolvedValue(null);
+    const t = await inbox.getThread('919876500123');
+    expect(t.messages.map((m) => m.id)).toEqual(['a']);
+    expect(t.source).toBeUndefined();
   });
 });

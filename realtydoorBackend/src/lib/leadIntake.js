@@ -94,6 +94,19 @@ function resolveMapping(mappings = [], f) {
   return null;
 }
 
+/** Everything the sender gave, as short question: answer pairs for the lead page. Secrets and keys are never kept. */
+function answersFrom(rawBody) {
+  const b = flattenGoogleColumns(rawBody && typeof rawBody === 'object' ? rawBody : {});
+  const out = {};
+  for (const [k, v] of Object.entries(b)) {
+    if (Object.keys(out).length >= 40) break;
+    if (/secret|token|password|authorization|google_key|^key$/i.test(k) || k === 'user_column_data') continue;
+    if (v === null || v === undefined || v === '') continue;
+    out[String(k).slice(0, 60)] = (typeof v === 'object' ? JSON.stringify(v) : String(v)).slice(0, 500);
+  }
+  return out;
+}
+
 /** Same lead sent twice must be one lead: the sender's own id when there is one, otherwise phone + campaign + day. */
 function externalIdFor(f, now = new Date()) {
   if (f.externalId) return String(f.externalId);
@@ -113,4 +126,4 @@ function secretMatches(secret, storedHash) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-module.exports = { SOURCE_WORDS, normalizeIncoming, resolveMapping, externalIdFor, hashSecret, newKeyId, newSecret, secretMatches };
+module.exports = { SOURCE_WORDS, answersFrom, normalizeIncoming, resolveMapping, externalIdFor, hashSecret, newKeyId, newSecret, secretMatches };

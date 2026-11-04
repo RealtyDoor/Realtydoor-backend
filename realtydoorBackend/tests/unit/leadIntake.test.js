@@ -58,6 +58,21 @@ describe('resolveMapping and externalId', () => {
   });
 });
 
+describe('what the buyer filled in is kept on the lead', () => {
+  test('answersFrom keeps the answers, flattens Google columns and never keeps secrets', () => {
+    expect(li.answersFrom({ name: 'A', phone: '9', budget: '80L', secret: 'x', google_key: 'k', authorization: 'z', user_column_data: [{ column_id: 'CITY', column_value: 'BLR' }], notes: { a: 1 } }))
+      .toEqual({ name: 'A', phone: '9', budget: '80L', city: 'BLR', notes: '{"a":1}' });
+  });
+  test('a created lead carries the answers', async () => {
+    jest.clearAllMocks();
+    prisma.leadIntakeEvent.create.mockResolvedValue({ id: 'e1' }); prisma.leadIntakeEvent.update.mockResolvedValue({}); prisma.leadIntegration.update.mockResolvedValue({});
+    prisma.lead.findFirst.mockResolvedValue(null); prisma.lead.create.mockImplementation(async ({ data }) => ({ id: 'L1', ...data }));
+    leadsService.evaluateBuyerOwnership.mockResolvedValue({ reason: 'NEW_BUYER' });
+    await service.ingest(integ(), { name: 'Asha', phone: '9876543210', lead_id: 'A1', what_do_you_need: '3BHK near Whitefield' });
+    expect(prisma.lead.create.mock.calls[0][0].data.intakeAnswers).toMatchObject({ what_do_you_need: '3BHK near Whitefield', name: 'Asha' });
+  });
+});
+
 describe('keyword mapping (WhatsApp)', () => {
   test('a keyword is matched inside the buyer\'s own words, after the exact matches', () => {
     const maps = [{ matchField: 'keyword', matchValue: 'Lakeview', projectId: 'p1' }, { matchField: 'project', matchValue: 'Greenpark', projectId: 'p2' }];

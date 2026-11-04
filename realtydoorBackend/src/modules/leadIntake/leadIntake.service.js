@@ -154,6 +154,7 @@ async function ingest(integration, body, { dryRun = false } = {}) {
         source, campaign, sourceDetail: f.formName || f.formId || f.adName || undefined,
         utmSource: f.utmSource, utmMedium: f.utmMedium, utmCampaign: f.utmCampaign, utmContent: f.utmContent, utmTerm: f.utmTerm, adClickId: f.adClickId,
         intakeIntegrationId: integration.id,
+        intakeAnswers: li.answersFrom(body),
         status: 'UNASSIGNED',
         ...((integration.consentAssumed || f.consent) && { buyerConsentAt: new Date() }),
         ...(earlier && { relatedLeadId: earlier.id }),

@@ -21,4 +21,22 @@ const logDetail = wrap(async (req, res) => {
   success(res, d);
 });
 
-module.exports = { conversations, thread, message, logDetail };
+const importer = require('./watiImport.service');
+const importFromWati = wrap(async (req, res) => {
+  const b = req.body || {};
+  const out = await importer.importSlice({
+    since: b.since ? String(b.since) : undefined,
+    startPage: Math.max(1, Number(b.startPage) || 1),
+    pages: Math.min(Math.max(Number(b.pages) || 2, 1), 5),
+    dryRun: b.dryRun === true,
+  });
+  success(res, out);
+});
+
+// A chat becomes a lead on purpose, with one click, using the buyer's first message. Old chats are never turned into leads by themselves.
+const makeLead = wrap(async (req, res) => {
+  if (!/^\d{8,15}$/.test(String(req.params.phone || ''))) throw new ApiError(400, 'Invalid phone');
+  success(res, await service.createLeadFromChat(req.params.phone), 'Lead created');
+});
+
+module.exports = { conversations, thread, message, logDetail, importFromWati, makeLead };
