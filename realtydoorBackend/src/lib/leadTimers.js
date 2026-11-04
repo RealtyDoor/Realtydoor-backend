@@ -23,6 +23,32 @@ function partnerResponseAction(lead, now, hours) {
   return 'none';
 }
 
+// A registered buyer can be held up to this many days longer, once, if admin agrees. Never more.
+const HOLD_EXTENSION_DAYS = 10;
+// The partner is reminded, and may ask, in the last days of the hold.
+const HOLD_REMINDER_DAYS = 5;
+
+/** The hold for one lead: the platform window plus any extension admin approved (at most 10 days). */
+function holdWindowDays(lead, windowDays) {
+  const extra = lead && lead.holdExtensionApproved ? Math.min(Math.max(Number(lead.holdExtensionDays) || 0, 0), HOLD_EXTENSION_DAYS) : 0;
+  return windowDays + extra;
+}
+
+/**
+ * Where a registered buyer's hold stands, for the partner who registered them. `state` is NONE, REQUESTED (waiting for admin), APPROVED or
+ * DECLINED. `canRequest` is true only in the last days of the hold, once ever, while the lead is open and not lapsed.
+ */
+function holdInfo(lead, now, windowDays) {
+  const total = holdWindowDays(lead, windowDays);
+  const endsAt = new Date(lastActivity(lead) + total * DAY);
+  const daysLeft = Math.ceil((endsAt.getTime() - now.getTime()) / DAY);
+  let state = 'NONE';
+  if (lead.holdExtensionRequestedAt) state = lead.holdExtensionDecidedAt ? (lead.holdExtensionApproved ? 'APPROVED' : 'DECLINED') : 'REQUESTED';
+  const open = !['CLOSED', 'DROPPED'].includes(lead.status) && !lead.registrationLapsedAt;
+  const canRequest = windowDays > 0 && open && !lead.holdExtensionRequestedAt && daysLeft > 0 && daysLeft <= HOLD_REMINDER_DAYS;
+  return { state, endsAt, daysLeft, canRequest, extensionDays: HOLD_EXTENSION_DAYS };
+}
+
 /**
  * A partner who registered a buyer holds them for `windowDays` after the last real activity. Warn once when `warnDays` or fewer
  * remain. Returns the days left, or null when no warning is due.
@@ -31,8 +57,28 @@ function windowWarning(lead, now, windowDays, warnDays = 15) {
   if (!windowDays || windowDays <= 0) return null;
   if (!lead.addedByPartnerId || ['CLOSED', 'DROPPED'].includes(lead.status) || lead.windowWarnedAt) return null;
   const idle = (now.getTime() - lastActivity(lead)) / DAY;
-  const left = Math.ceil(windowDays - idle);
+  const left = Math.ceil(holdWindowDays(lead, windowDays) - idle);
   return left > 0 && left <= warnDays ? left : null;
+}
+
+/**
+ * The proof window for a lead a partner registered. The partner has `hours` to show the buyer is real: the buyer signs up with that
+ * number (`buyerHasAccount`), a visit is booked or done, or money is held. Otherwise the registration lapses. A warning goes out once,
+ * when a third of the time is left. The clock starts when the lead became the partner's (confirmed by admin), or when it was added
+ * if it was never held up for review; a lead still waiting for admin is not timed, because the delay is ours, not the partner's.
+ * Returns 'lapse', 'warn' or 'none'.
+ */
+function proofAction(lead, now, hours, buyerHasAccount = false) {
+  if (!hours || hours <= 0) return 'none';
+  if (!lead.addedByPartnerId || lead.registrationLapsedAt) return 'none';
+  if (['CLOSED', 'DROPPED', 'AWAITING_ADMIN'].includes(lead.status)) return 'none';
+  if (lead.siteVisitScheduledAt || lead.isOtpVerified || buyerHasAccount) return 'none';
+  if ((lead.escrowTransactions || []).some((e) => MONEY.includes(e.status))) return 'none';
+  const since = new Date(lead.assignedAt || lead.createdAt).getTime();
+  const age = now.getTime() - since;
+  if (age >= hours * HOUR) return 'lapse';
+  if (age >= (hours * 2 / 3) * HOUR && !lead.proofWarnedAt) return 'warn';
+  return 'none';
 }
 
 const ATTEMPTS_BEFORE_DECISION = 5;
@@ -44,4 +90,4 @@ function needsDecision(lead, now) {
   return open && (lead.contactAttempts || 0) >= ATTEMPTS_BEFORE_DECISION && (now.getTime() - new Date(lead.createdAt).getTime()) >= DAYS_BEFORE_DECISION * DAY;
 }
 
-module.exports = { partnerResponseAction, windowWarning, needsDecision, ATTEMPTS_BEFORE_DECISION, DAYS_BEFORE_DECISION };
+module.exports = { HOLD_EXTENSION_DAYS, HOLD_REMINDER_DAYS, holdWindowDays, holdInfo, partnerResponseAction, proofAction, windowWarning, needsDecision, ATTEMPTS_BEFORE_DECISION, DAYS_BEFORE_DECISION };

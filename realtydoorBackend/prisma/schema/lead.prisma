@@ -85,6 +85,15 @@ model Lead {
   creditContestedAt  DateTime?
   creditContestNote  String?
   windowWarnedAt     DateTime?
+  // A partner-registered buyer who showed no sign of life within the proof window: the registration no longer counts and the buyer is free.
+  registrationLapsedAt DateTime?
+  proofWarnedAt        DateTime?
+  // One request, once, to hold a registered buyer up to 10 more days. Admin decides.
+  holdExtensionRequestedAt DateTime?
+  holdExtensionNote        String?
+  holdExtensionDecidedAt   DateTime?
+  holdExtensionApproved    Boolean?
+  holdExtensionDays        Int?
 
   // OTP anti-leakage (PRD §5 — Rules 1, 2, 3)
   siteVisitScheduledAt DateTime?

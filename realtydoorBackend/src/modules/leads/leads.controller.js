@@ -1,5 +1,5 @@
 const { success, created } = require('../../utils/ApiResponse');
-const { submitLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema, contestCreditSchema, updateVisitOutcomeSchema, partnerAddLeadSchema, closeLeadSchema } = require('./leads.validator');
+const { requestHoldExtensionSchema, submitLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema, contestCreditSchema, updateVisitOutcomeSchema, partnerAddLeadSchema, closeLeadSchema } = require('./leads.validator');
 const service = require('./leads.service');
 
 async function submit(req, res, next) {
@@ -86,6 +86,21 @@ async function requestDrop(req, res, next) {
   } catch (err) { next(err); }
 }
 
+async function requestHoldExtension(req, res, next) {
+  try {
+    const { note } = requestHoldExtensionSchema.parse(req.body);
+    success(res, await service.requestHoldExtension(req.params.id, req.user.id, note));
+  } catch (err) { next(err); }
+}
+
+async function approveHoldExtension(req, res, next) {
+  try { success(res, await service.adminDecideHoldExtension(req.params.id, true, req.user.id, req.ip), 'More time approved'); } catch (err) { next(err); }
+}
+
+async function declineHoldExtension(req, res, next) {
+  try { success(res, await service.adminDecideHoldExtension(req.params.id, false, req.user.id, req.ip), 'Request declined'); } catch (err) { next(err); }
+}
+
 async function getPooledLeads(req, res, next) {
   try { success(res, await service.getPooledLeads(req.user.id)); } catch (err) { next(err); }
 }
@@ -134,4 +149,4 @@ async function rejectDrop(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { getPooledLeads, contestCredit, submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, updateVisitOutcome, partnerAddLead, approveDrop, rejectDrop, verifyAllocationLetter };
+module.exports = { requestHoldExtension, approveHoldExtension, declineHoldExtension, getPooledLeads, contestCredit, submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, updateVisitOutcome, partnerAddLead, approveDrop, rejectDrop, verifyAllocationLetter };

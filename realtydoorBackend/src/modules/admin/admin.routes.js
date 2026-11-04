@@ -91,6 +91,8 @@ router.patch('/leads/:id/note',          requirePermission('LEADS'), validateObj
 router.patch('/leads/:id/otp-override',  requirePermission('LEADS'), ctrl.overrideLeadOtp);
 router.patch('/leads/:id/approve-drop',  requirePermission('LEADS'), leadsCtrl.approveDrop);
 router.patch('/leads/:id/reject-drop',   requirePermission('LEADS'), leadsCtrl.rejectDrop);
+router.patch('/leads/:id/approve-hold-extension', requirePermission('LEADS'), leadsCtrl.approveHoldExtension);
+router.patch('/leads/:id/decline-hold-extension', requirePermission('LEADS'), leadsCtrl.declineHoldExtension);
 router.patch('/leads/:id/allocation-letter/verify', validateObjectId('id'), requirePermission('FINANCE'), leadsCtrl.verifyAllocationLetter);
 
 // Property approval + admin edit

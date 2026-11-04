@@ -113,7 +113,7 @@ describe('the hourly job', () => {
   });
   test('warns a partner whose hold is running out, once', async () => {
     prisma.lead.findMany.mockImplementation(async ({ where }) => (where.addedByPartnerId ? [
-      { id: 'w1', refCode: 'RD-L-W', buyerName: 'Asha', status: 'ASSIGNED', addedByPartnerId: 'A', createdAt: day(50), escrowTransactions: [] },
+      { id: 'w1', refCode: 'RD-L-W', buyerName: 'Asha', status: 'ASSIGNED', addedByPartnerId: 'A', createdAt: day(57), escrowTransactions: [] },
       { id: 'w2', status: 'ASSIGNED', addedByPartnerId: 'A', createdAt: day(5), escrowTransactions: [] },
     ] : []));
     const out = await job.runOnce(NOW);

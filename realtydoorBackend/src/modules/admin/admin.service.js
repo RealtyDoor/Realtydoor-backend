@@ -84,6 +84,7 @@ function listWhereLegacy(filters) {
   if (filters.status) where.status = filters.status;
   if (filters.partnerId) where.assignedPartnerId = filters.partnerId;
   if (filters.dropRequested === '1') where.dropRequestedByPartner = true;
+  if (filters.holdExtension === '1') { where.holdExtensionRequestedAt = { isSet: true }; where.holdExtensionDecidedAt = { isSet: false }; }
   if (filters.search) where.OR = [
     { refCode:    { contains: filters.search, mode: 'insensitive' } },
     { buyerName:  { contains: filters.search, mode: 'insensitive' } },

@@ -9,6 +9,8 @@
 // A partner registration stays valid while there was real activity on it (a lead, site visit, token or close) within
 // `windowDays`. After that the buyer is free again, so a fresh registration is credited like a new buyer.
 const DAY_MS = 86_400_000;
+// The hold for one lead: the platform window plus any admin-approved extension (at most 10 days). Same rule as lib/leadTimers.js.
+const holdWindowDays = (lead, windowDays) => windowDays + (lead && lead.holdExtensionApproved ? Math.min(Math.max(Number(lead.holdExtensionDays) || 0, 0), 10) : 0);
 
 function lastActivity(lead) {
   const stamps = [
@@ -21,9 +23,11 @@ function lastActivity(lead) {
 
 function decideBuyerOwnership({ priorLeads = [], accountCreatedAt = null, partnerId, windowDays, asOf = new Date() }) {
   const now = new Date(asOf).getTime();
+  // A registration that lapsed (no sign of life in time) is as if it had never been made: it neither holds the buyer for the partner nor counts as ours.
+  priorLeads = priorLeads.filter((l) => !l.registrationLapsedAt);
   const partnerRegs = priorLeads
     .filter((l) => l.addedByPartnerId)
-    .filter((l) => now - lastActivity(l) <= windowDays * DAY_MS)
+    .filter((l) => now - lastActivity(l) <= holdWindowDays(l, windowDays) * DAY_MS)
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   const platformTimes = [
     ...priorLeads.filter((l) => !l.addedByPartnerId).map((l) => new Date(l.createdAt).getTime()),

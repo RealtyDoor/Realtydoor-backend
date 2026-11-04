@@ -91,6 +91,8 @@ function salesWhere(query = {}, meId, now = new Date()) {
   }
   // A partner has asked to drop the lead and admin has not decided yet (approving or rejecting clears the flag).
   if (query.dropRequested === '1') and.push({ dropRequestedByPartner: true });
+  // A partner has asked for more time on a buyer and admin has not decided yet.
+  if (query.holdExtension === '1') and.push({ holdExtensionRequestedAt: { isSet: true } }, { holdExtensionDecidedAt: { isSet: false } });
   if (query.source) and.push({ source: query.source });
   const created = {};
   if (query.from && !Number.isNaN(Date.parse(query.from))) created.gte = new Date(query.from);

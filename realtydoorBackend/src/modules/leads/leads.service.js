@@ -14,6 +14,7 @@ const { nextRefCode } = require('../../lib/refCode');
 const { assertLeadNotPaused } = require('../../lib/accountDeletion');
 const { buildPartnerQuote } = require('../../lib/commissionQuote');
 const { decideBuyerOwnership, OWNERSHIP_TEXT } = require('../../lib/leadOwnership');
+const { holdInfo, HOLD_EXTENSION_DAYS, HOLD_REMINDER_DAYS } = require('../../lib/leadTimers');
 const { canLinkLeadToUser } = require('../../lib/leadClaim');
 const { getMoneySettings } = require('../money/moneyConfig');
 
@@ -206,7 +207,7 @@ async function evaluateBuyerOwnership(phone, partnerId, { excludeLeadId, before 
         ...(before && { createdAt: { lt: before } }),
       },
       select: {
-        id: true, addedByPartnerId: true, createdAt: true, assignedAt: true, siteVisitScheduledAt: true,
+        id: true, addedByPartnerId: true, registrationLapsedAt: true, holdExtensionApproved: true, holdExtensionDays: true, createdAt: true, assignedAt: true, siteVisitScheduledAt: true,
         otpGeneratedAt: true, otpVerifiedAt: true, visitOutcomeAt: true, closedAt: true,
         escrowTransactions: { select: { createdAt: true, heldAt: true, releasedAt: true } },
       },
@@ -338,6 +339,12 @@ const PARTNER_LEAD_BUYER_SELECT = { select: { refCode: true, phoneVerified: true
 // stored flag would. A lead in a terminal state is never stalled.
 const STALLED_AFTER_DAYS = 5;
 
+// Where the hold on a buyer stands, for the partner who registered them (nothing for a lead someone else brought).
+function holdFor(lead, partnerId, settings) {
+  if (!lead.addedByPartnerId || String(lead.addedByPartnerId) !== String(partnerId)) return {};
+  return { hold: holdInfo(lead, new Date(), settings.partnerLeadWindowDays) };
+}
+
 function stalledInfoFor(lead) {
   if (['CLOSED', 'DROPPED', 'AWAITING_ADMIN'].includes(lead.status)) {
     return { isStalled: false, daysStalled: 0 };
@@ -375,7 +382,7 @@ function netAmountFor(lead, feePct) {
 
 async function getPartnerLeads(partnerId) {
   // Rule 2: Partner sees only their assigned leads
-  const [leads, feePct] = await Promise.all([
+  const [leads, feePct, settings] = await Promise.all([
     prisma.lead.findMany({
       where: { assignedPartnerId: partnerId },
       include: {
@@ -386,17 +393,20 @@ async function getPartnerLeads(partnerId) {
       orderBy: { createdAt: 'desc' },
     }),
     getConfigNumber(ESCROW_PLATFORM_FEE_PCT_KEY, DEFAULT_ESCROW_PLATFORM_FEE_PCT),
+    // The hold information is extra: if the settings cannot be read, the partner still gets their leads (without it).
+    getMoneySettings().catch(() => ({ partnerLeadWindowDays: 0 })),
   ]);
   return leads.map((lead) => ({
     ...sanitizeLeadForPartner(lead),
     commissionQuote: buildPartnerQuote(lead),
     netAmount: netAmountFor(lead, feePct),
     ...stalledInfoFor(lead),
+    ...holdFor(lead, partnerId, settings),
   }));
 }
 
 async function getPartnerLeadById(leadId, partnerId) {
-  const [lead, feePct] = await Promise.all([
+  const [lead, feePct, settings] = await Promise.all([
     prisma.lead.findFirst({
       where: { id: leadId, assignedPartnerId: partnerId },
       include: {
@@ -406,9 +416,11 @@ async function getPartnerLeadById(leadId, partnerId) {
       },
     }),
     getConfigNumber(ESCROW_PLATFORM_FEE_PCT_KEY, DEFAULT_ESCROW_PLATFORM_FEE_PCT),
+    // The hold information is extra: if the settings cannot be read, the partner still gets their leads (without it).
+    getMoneySettings().catch(() => ({ partnerLeadWindowDays: 0 })),
   ]);
   if (!lead) throw new ApiError(404, 'Lead not found');
-  return { ...sanitizeLeadForPartner(lead), commissionQuote: buildPartnerQuote(lead), netAmount: netAmountFor(lead, feePct), ...stalledInfoFor(lead) };
+  return { ...sanitizeLeadForPartner(lead), commissionQuote: buildPartnerQuote(lead), netAmount: netAmountFor(lead, feePct), ...stalledInfoFor(lead), ...holdFor(lead, partnerId, settings) };
 }
 
 const DO_NOT_CONTACT = 'The buyer has asked not to be contacted, so this cannot go ahead. Please contact the Realtydoor team.';
@@ -746,6 +758,53 @@ async function getPooledLeads(partnerId) {
 
 // A partner who brought the buyer and sees the lead sitting in the company pool can say so once; the admin is told and decides (assigning
 // the lead to anyone settles it). The partner is never told who else holds the buyer.
+// The registering partner asks, once, to hold the buyer up to 10 more days. Only in the last days of the hold. Admin decides.
+async function requestHoldExtension(leadId, partnerId, note) {
+  const lead = await prisma.lead.findFirst({
+    where: { id: leadId, addedByPartnerId: partnerId },
+    include: { escrowTransactions: { select: { createdAt: true, heldAt: true, releasedAt: true } } },
+  });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.holdExtensionRequestedAt) throw new ApiError(409, 'You have already asked for more time on this buyer. It can be asked for once.', { code: 'EXTENSION_ALREADY_ASKED' });
+  const settings = await getMoneySettings();
+  const info = holdInfo(lead, new Date(), settings.partnerLeadWindowDays);
+  if (!info.canRequest) {
+    throw new ApiError(400, `You can ask for more time only in the last ${HOLD_REMINDER_DAYS} days of the hold, while the lead is open.`, { code: 'EXTENSION_NOT_AVAILABLE' });
+  }
+  await prisma.lead.update({ where: { id: leadId }, data: { holdExtensionRequestedAt: new Date(), holdExtensionNote: note } });
+  await notifyAdmins({
+    title: 'Partner asks for more time on a buyer',
+    message: `${lead.refCode || 'A lead'}: the partner asks to hold the buyer ${HOLD_EXTENSION_DAYS} more days. Reason: ${note}`,
+    type: 'LEAD_EXTENSION_REQUESTED', linkUrl: `/admin/leads/${leadId}`,
+  }).catch(() => null);
+  return { message: `Sent to admin. If approved, you keep this buyer ${HOLD_EXTENSION_DAYS} more days.` };
+}
+
+// Admin's decision on that request. Approving adds the days; declining ends it. Either way the partner is told, and it is recorded.
+async function adminDecideHoldExtension(leadId, approve, adminId, ip) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!lead.holdExtensionRequestedAt || lead.holdExtensionDecidedAt) throw new ApiError(400, 'There is no pending request for more time on this lead');
+  const now = new Date();
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: { holdExtensionDecidedAt: now, holdExtensionApproved: !!approve, ...(approve ? { holdExtensionDays: HOLD_EXTENSION_DAYS } : {}) },
+  });
+  await createNotification({
+    userId: lead.addedByPartnerId,
+    title: approve ? 'More time approved' : 'More time declined',
+    message: approve
+      ? `${lead.refCode || 'Your lead'}: you keep this buyer ${HOLD_EXTENSION_DAYS} more days.`
+      : `${lead.refCode || 'Your lead'}: admin did not extend the hold, so it ends as planned.`,
+    type: 'LEAD_ASSIGNED', linkUrl: `/partners/leads/${leadId}`,
+  }).catch(() => null);
+  await createAuditLog({
+    adminId, action: approve ? 'HOLD_EXTENSION_APPROVED' : 'HOLD_EXTENSION_DECLINED', targetType: 'Lead', targetId: leadId,
+    after: { days: approve ? HOLD_EXTENSION_DAYS : 0 }, ipAddress: ip,
+  });
+  return { approved: !!approve };
+}
+
 async function contestCredit(leadId, partnerId, note) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, addedByPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
@@ -857,4 +916,4 @@ async function adminRejectDrop(leadId, adminId, ip) {
 }
 
 module.exports = {
-  contestCredit, getPooledLeads, evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };
+  requestHoldExtension, adminDecideHoldExtension, contestCredit, getPooledLeads, evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };
