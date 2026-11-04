@@ -12,10 +12,15 @@ const DAY_MS = 86_400_000;
 // The hold for one lead: the platform window plus any admin-approved extension (at most 10 days). Same rule as lib/leadTimers.js.
 const holdWindowDays = (lead, windowDays) => windowDays + (lead && lead.holdExtensionApproved ? Math.min(Math.max(Number(lead.holdExtensionDays) || 0, 0), 10) : 0);
 
-function lastActivity(lead) {
+// A booked visit nobody attends is flagged to admin this many days after its slot. It keeps counting as a sign of life until an admin confirms the no-show.
+const NO_SHOW_GRACE_DAYS = 7;
+
+function lastActivity(lead, now = new Date()) {
+  const attended = !!(lead.otpVerifiedAt || lead.visitOutcomeAt);
+  const bookedCounts = attended || !lead.visitNoShowConfirmedAt;
   const stamps = [
-    lead.createdAt, lead.assignedAt, lead.siteVisitScheduledAt, lead.otpGeneratedAt, lead.otpVerifiedAt, lead.visitOutcomeAt,
-    lead.closedAt,
+    lead.createdAt, lead.assignedAt, bookedCounts ? lead.siteVisitScheduledAt : null, bookedCounts ? lead.otpGeneratedAt : null,
+    lead.otpVerifiedAt, lead.visitOutcomeAt, lead.closedAt, lead.buyerSignedUpAt,
     ...(lead.escrowTransactions || []).flatMap((e) => [e.createdAt, e.heldAt, e.releasedAt]),
   ].filter(Boolean).map((d) => new Date(d).getTime());
   return Math.max(...stamps);
@@ -27,7 +32,7 @@ function decideBuyerOwnership({ priorLeads = [], accountCreatedAt = null, partne
   priorLeads = priorLeads.filter((l) => !l.registrationLapsedAt);
   const partnerRegs = priorLeads
     .filter((l) => l.addedByPartnerId)
-    .filter((l) => now - lastActivity(l) <= holdWindowDays(l, windowDays) * DAY_MS)
+    .filter((l) => now - lastActivity(l, asOf) <= holdWindowDays(l, windowDays) * DAY_MS)
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   const platformTimes = [
     ...priorLeads.filter((l) => !l.addedByPartnerId).map((l) => new Date(l.createdAt).getTime()),
@@ -54,4 +59,4 @@ const OWNERSHIP_TEXT = {
   EXISTING_BUYER: 'Already a RealtyDoor buyer, counted as our lead and not credited.',
 };
 
-module.exports = { decideBuyerOwnership, OWNERSHIP_TEXT, lastActivity };
+module.exports = { decideBuyerOwnership, OWNERSHIP_TEXT, lastActivity, NO_SHOW_GRACE_DAYS };

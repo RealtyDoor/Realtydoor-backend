@@ -95,7 +95,7 @@ describe('the hourly job', () => {
   test('with the response switch at 0 it never touches a partner\'s lead', async () => {
     const out = await job.runOnce(NOW);
     expect(out.returned).toBe(0);
-    expect(prisma.lead.findMany.mock.calls.every(([a]) => a.where.status !== 'ASSIGNED')).toBe(true);
+    expect(prisma.lead.findMany.mock.calls.every(([a]) => !(a.where.status === 'ASSIGNED' && a.where.addedByPartnerId === undefined))).toBe(true);
   });
   test('with it on: reminds, then returns, and tells the partner and the admins', async () => {
     getConfigNumber.mockResolvedValue(48);
@@ -112,7 +112,7 @@ describe('the hourly job', () => {
     expect(notifyAdmins).toHaveBeenCalledTimes(1);
   });
   test('warns a partner whose hold is running out, once', async () => {
-    prisma.lead.findMany.mockImplementation(async ({ where }) => (where.addedByPartnerId ? [
+    prisma.lead.findMany.mockImplementation(async ({ where }) => (where.addedByPartnerId || where.OR ? [
       { id: 'w1', refCode: 'RD-L-W', buyerName: 'Asha', status: 'ASSIGNED', addedByPartnerId: 'A', createdAt: day(57), escrowTransactions: [] },
       { id: 'w2', status: 'ASSIGNED', addedByPartnerId: 'A', createdAt: day(5), escrowTransactions: [] },
     ] : []));

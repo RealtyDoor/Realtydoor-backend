@@ -93,6 +93,16 @@ function salesWhere(query = {}, meId, now = new Date()) {
   if (query.dropRequested === '1') and.push({ dropRequestedByPartner: true });
   // A partner has asked for more time on a buyer and admin has not decided yet.
   if (query.holdExtension === '1') and.push({ holdExtensionRequestedAt: { isSet: true } }, { holdExtensionDecidedAt: { isSet: false } });
+  // Late: a registration waiting for admin, or an extension request undecided, for more than 48 hours.
+  if (query.late === '1') {
+    const cutoff = new Date(now.getTime() - 48 * 60 * 60 * 1000); // the 48-hour alert; the 5-day alert is the same list
+    and.push({ OR: [
+      { status: 'AWAITING_ADMIN', createdAt: { lt: cutoff } },
+      { holdExtensionRequestedAt: { lt: cutoff }, holdExtensionDecidedAt: { isSet: false } },
+    ] });
+  }
+  // A lead the company gave a partner that has gone quiet (nudged at day 20) or whose days are up: admin chases or reassigns.
+  if (query.given === '1') and.push({ status: 'ASSIGNED', addedByPartnerId: { isSet: false }, assignmentNudgedAt: { isSet: true } });
   if (query.source) and.push({ source: query.source });
   const created = {};
   if (query.from && !Number.isNaN(Date.parse(query.from))) created.gte = new Date(query.from);

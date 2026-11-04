@@ -2,6 +2,7 @@
 jest.mock('../../src/lib/prisma', () => ({
   lead: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), count: jest.fn() },
   user: { findFirst: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
+  escrowTransaction: { count: jest.fn().mockResolvedValue(0) },
 }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn().mockResolvedValue({}) }));
 jest.mock('../../src/lib/notifications', () => ({
@@ -28,7 +29,7 @@ describe('returnPartnerLeadsToPool: a partner who can no longer work their leads
   beforeEach(() => { jest.clearAllMocks(); prisma.lead.update.mockResolvedValue({}); });
 
   test('open, untouched leads go back to the pool; a booked visit is cancelled', async () => {
-    prisma.lead.findMany.mockResolvedValue([L(), L({ id: 'l2', refCode: 'RD-L-000002', status: 'SITE_VISIT_SCHEDULED', siteVisitScheduledAt: new Date() })]);
+    prisma.lead.findMany.mockResolvedValueOnce([L(), L({ id: 'l2', refCode: 'RD-L-000002', status: 'SITE_VISIT_SCHEDULED', siteVisitScheduledAt: new Date() })]).mockResolvedValue([]);
     const out = await returnPartnerLeadsToPool('P1', 'admin1', '1.1.1.1', 'suspended');
     expect(out).toEqual({ moved: 2, stuck: [] });
     expect(prisma.lead.update.mock.calls[0][0].data).toMatchObject({ assignedPartnerId: null, status: 'UNASSIGNED', assignedAt: null });
@@ -38,11 +39,11 @@ describe('returnPartnerLeadsToPool: a partner who can no longer work their leads
   });
 
   test('a lead with a token held or a verified visit stays with the partner and is listed for an admin', async () => {
-    prisma.lead.findMany.mockResolvedValue([
+    prisma.lead.findMany.mockResolvedValueOnce([
       L({ id: 'a', refCode: 'RD-L-A', escrowTransactions: [{ status: 'HELD' }] }),
       L({ id: 'b', refCode: 'RD-L-B', isOtpVerified: true, status: 'SITE_VISIT_DONE' }),
       L({ id: 'c', refCode: 'RD-L-C' }),
-    ]);
+    ]).mockResolvedValue([]);
     const out = await returnPartnerLeadsToPool('P1', 'admin1', '1.1.1.1', 'suspended');
     expect(out).toEqual({ moved: 1, stuck: ['RD-L-A', 'RD-L-B'] });
     expect(prisma.lead.update).toHaveBeenCalledTimes(1);
@@ -143,5 +144,93 @@ describe('drop reason codes', () => {
     expect(prisma.lead.update.mock.calls.at(-1)[0].data.droppedReasonCode).toBe('INVALID_NUMBER');
     await admin.rejectLead('l1', 'Looks fake', 'admin1', 'ip');
     expect(prisma.lead.update.mock.calls.at(-1)[0].data.droppedReasonCode).toBe('OTHER');
+  });
+});
+
+describe('an approved drop frees the buyer at once (4 Nov 2026)', () => {
+  const asked = (over = {}) => L({ addedByPartnerId: 'P1', dropRequestedByPartner: true, dropRequestNote: 'unreachable', ...over });
+  beforeEach(() => { jest.clearAllMocks(); prisma.lead.update.mockResolvedValue({}); prisma.escrowTransaction.count.mockResolvedValue(0); });
+  test('the registration lapses with the drop', async () => {
+    prisma.lead.findUnique.mockResolvedValue(asked());
+    await leadsSvc.adminApproveDrop('l1', 'admin1', '1.1.1.1');
+    expect(prisma.lead.update.mock.calls[0][0].data).toMatchObject({ status: 'DROPPED', registrationLapsedAt: expect.any(Date) });
+  });
+  test('not when a visit was verified or a token was paid: the owner settles those', async () => {
+    prisma.lead.findUnique.mockResolvedValue(asked({ isOtpVerified: true }));
+    await leadsSvc.adminApproveDrop('l1', 'admin1', '1.1.1.1');
+    expect(prisma.lead.update.mock.calls[0][0].data.registrationLapsedAt).toBeUndefined();
+    prisma.lead.update.mockClear();
+    prisma.lead.findUnique.mockResolvedValue(asked());
+    prisma.escrowTransaction.count.mockResolvedValue(1);
+    await leadsSvc.adminApproveDrop('l1', 'admin1', '1.1.1.1');
+    expect(prisma.lead.update.mock.calls[0][0].data.registrationLapsedAt).toBeUndefined();
+  });
+  test('a company-given lead has no registration to lapse', async () => {
+    prisma.lead.findUnique.mockResolvedValue(asked({ addedByPartnerId: undefined }));
+    await leadsSvc.adminApproveDrop('l1', 'admin1', '1.1.1.1');
+    expect(prisma.lead.update.mock.calls[0][0].data.registrationLapsedAt).toBeUndefined();
+  });
+});
+
+describe('suspending or deleting a partner lapses their registrations', () => {
+  beforeEach(() => { jest.clearAllMocks(); prisma.lead.update.mockResolvedValue({}); });
+  test('open registrations lapse; those with a token held or a verified visit stay for admin', async () => {
+    prisma.lead.findMany
+      .mockResolvedValueOnce([]) // leads assigned to the partner
+      .mockResolvedValueOnce([
+        L({ id: 'r1', assignedPartnerId: null, status: 'UNASSIGNED' }),
+        L({ id: 'r2', escrowTransactions: [{ status: 'HELD' }] }),
+        L({ id: 'r3', isOtpVerified: true }),
+      ]);
+    await returnPartnerLeadsToPool('P1', 'admin1', '1.1.1.1', 'suspended');
+    expect(prisma.lead.update).toHaveBeenCalledTimes(1);
+    expect(prisma.lead.update).toHaveBeenCalledWith({ where: { id: 'r1' }, data: { registrationLapsedAt: expect.any(Date) } });
+  });
+});
+
+describe('own leads versus company leads (4 Nov 2026)', () => {
+  beforeEach(() => { jest.clearAllMocks(); prisma.lead.update.mockResolvedValue({}); prisma.escrowTransaction.count.mockResolvedValue(0); });
+  test('a partner dropping a buyer they registered: dropped at once, buyer free, admin only told', async () => {
+    prisma.lead.findFirst = jest.fn().mockResolvedValue(L({ addedByPartnerId: 'P1' }));
+    const out = await leadsSvc.requestDrop('l1', 'P1', 'Buyer not interested', 'NOT_INTERESTED');
+    expect(out.dropped).toBe(true);
+    expect(prisma.lead.update.mock.calls[0][0].data).toMatchObject({ status: 'DROPPED', registrationLapsedAt: expect.any(Date) });
+    expect(notifyAdmins).toHaveBeenCalledWith(expect.objectContaining({ title: 'A partner dropped their own buyer' }));
+  });
+  test('a lead the company gave needs admin: it becomes a request, nothing is dropped', async () => {
+    prisma.lead.findFirst = jest.fn().mockResolvedValue(L());
+    prisma.user.findMany.mockResolvedValue([{ id: 'admin1' }]);
+    await leadsSvc.requestDrop('l1', 'P1', 'Cannot reach', 'UNREACHABLE');
+    expect(prisma.lead.update.mock.calls[0][0].data).toMatchObject({ dropRequestedByPartner: true });
+    expect(prisma.lead.update.mock.calls[0][0].data.status).toBeUndefined();
+  });
+  test('a verified visit on their own buyer still goes to admin', async () => {
+    prisma.lead.findFirst = jest.fn().mockResolvedValue(L({ addedByPartnerId: 'P1', isOtpVerified: true }));
+    prisma.user.findMany.mockResolvedValue([{ id: 'admin1' }]);
+    await leadsSvc.requestDrop('l1', 'P1', 'Changed mind', 'OTHER');
+    expect(prisma.lead.update.mock.calls[0][0].data).toMatchObject({ dropRequestedByPartner: true });
+  });
+  test('only the registering partner can confirm a no-show; admin confirms for company leads', async () => {
+    prisma.lead.findFirst = jest.fn().mockResolvedValue(L({ addedByPartnerId: 'P1', siteVisitScheduledAt: new Date(Date.now() - 3 * 86_400_000) }));
+    await expect(leadsSvc.partnerConfirmNoShow('l1', 'P1')).resolves.toEqual({ confirmed: true });
+    expect(prisma.lead.update.mock.calls[0][0].data).toEqual({ visitNoShowConfirmedAt: expect.any(Date) });
+    prisma.lead.findFirst = jest.fn().mockResolvedValue(null);
+    await expect(leadsSvc.partnerConfirmNoShow('l1', 'P2')).rejects.toMatchObject({ statusCode: 404 });
+    prisma.lead.findUnique.mockResolvedValue(L({ siteVisitScheduledAt: new Date(Date.now() - 9 * 86_400_000) }));
+    await expect(leadsSvc.adminConfirmNoShow('l1', 'admin1', '1.1.1.1')).resolves.toEqual({ confirmed: true });
+  });
+  test('admin can release a registration with a reason, but not one with a token or verified visit', async () => {
+    prisma.lead.findUnique.mockResolvedValue(L({ addedByPartnerId: 'P1', assignedPartnerId: 'P1' }));
+    await expect(leadsSvc.adminReleaseRegistration('l1', 'Partner account closed', 'admin1', '1.1.1.1')).resolves.toEqual({ released: true });
+    expect(prisma.lead.update.mock.calls[0][0].data).toMatchObject({ registrationLapsedAt: expect.any(Date), assignedPartnerId: null, status: 'UNASSIGNED' });
+    prisma.escrowTransaction.count.mockResolvedValue(1);
+    await expect(leadsSvc.adminReleaseRegistration('l1', 'x reason', 'admin1', '1.1.1.1')).rejects.toMatchObject({ statusCode: 409 });
+  });
+  test('an account deletion (no admin) does not lapse registrations; admins are told to release them', async () => {
+    prisma.lead.findMany.mockResolvedValue([]);
+    prisma.lead.count = jest.fn().mockResolvedValue(2);
+    await returnPartnerLeadsToPool('P1', null, null, 'account deleted');
+    expect(prisma.lead.update).not.toHaveBeenCalled();
+    expect(notifyAdmins).toHaveBeenCalledWith(expect.objectContaining({ title: 'A closed partner still holds buyers' }));
   });
 });

@@ -94,6 +94,17 @@ model Lead {
   holdExtensionDecidedAt   DateTime?
   holdExtensionApproved    Boolean?
   holdExtensionDays        Int?
+  holdExtensionEscalatedAt DateTime?
+  // Company-given leads: the day-20 nudge to admin, and the notice when the 30 days are up (admin decides; nothing moves by itself).
+  assignmentNudgedAt       DateTime?
+  assignmentDueNotifiedAt  DateTime?
+  // A registration that waited for admin more than 48 hours was escalated once.
+  lateNotifiedAt           DateTime?
+  lateEscalatedAt          DateTime?
+  holdExtensionEscalatedFiveAt DateTime?
+  // A booked visit nobody attended: flagged to admin 7 days after the slot; it stops counting only once an admin confirms the no-show.
+  noShowFlaggedAt          DateTime?
+  visitNoShowConfirmedAt   DateTime?
 
   // OTP anti-leakage (PRD §5 — Rules 1, 2, 3)
   siteVisitScheduledAt DateTime?

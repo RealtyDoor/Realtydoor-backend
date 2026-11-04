@@ -73,7 +73,7 @@ describe('requestHoldExtension', () => {
   test('in the last days: records it, tells admin, once', async () => {
     prisma.lead.findFirst.mockResolvedValue(lead({ createdAt: day(26) }));
     const out = await leads.requestHoldExtension('l1', 'A', 'Buyer travelling, back next week');
-    expect(prisma.lead.findFirst.mock.calls[0][0].where).toEqual({ id: 'l1', addedByPartnerId: 'A' });
+    expect(prisma.lead.findFirst.mock.calls[0][0].where).toEqual({ id: 'l1', OR: [{ addedByPartnerId: 'A' }, { assignedPartnerId: 'A', addedByPartnerId: { isSet: false } }] });
     expect(prisma.lead.update).toHaveBeenCalledWith({ where: { id: 'l1' }, data: { holdExtensionRequestedAt: expect.any(Date), holdExtensionNote: 'Buyer travelling, back next week' } });
     expect(notifyAdmins).toHaveBeenCalledWith(expect.objectContaining({ linkUrl: '/admin/leads/l1', message: expect.stringContaining('10 more days') }));
     expect(out.message).toMatch(/10 more days/);
@@ -156,11 +156,11 @@ describe('the partner\'s lead list carries the hold', () => {
   const { getMoneySettings } = require('../../src/modules/money/moneyConfig');
   const row = (over = {}) => ({ id: 'l1', refCode: 'RD-L-1', status: 'ASSIGNED', buyerName: 'Meena', buyerPhone: '+919000000001', buyerEmail: '', assignedPartnerId: 'A', addedByPartnerId: 'A', createdAt: day(26), isOtpVerified: false, escrowTransactions: [], property: { title: 'X' }, buyer: null, ...over });
   beforeEach(() => { jest.clearAllMocks(); getMoneySettings.mockResolvedValue({ partnerLeadWindowDays: 30, partnerLeadProofHours: 0 }); });
-  test('for a buyer the partner registered, with the end date and whether they can ask; nothing for a lead someone else brought', async () => {
+  test('for a buyer the partner registered, with the end date and whether they can ask; a company-given lead shows it too; nothing for a lead someone else brought', async () => {
     prisma.lead.findMany.mockResolvedValue([row(), row({ id: 'l2', addedByPartnerId: null }), row({ id: 'l3', addedByPartnerId: 'Z' })]);
     const out = await leads.getPartnerLeads('A');
     expect(out[0].hold).toMatchObject({ state: 'NONE', canRequest: true, extensionDays: 10 });
-    expect(out[1].hold).toBeUndefined();
+    expect(out[1].hold).toMatchObject({ state: 'NONE', canRequest: true });
     expect(out[2].hold).toBeUndefined();
   });
   test('if the settings cannot be read the partner still gets their leads, just without the hold', async () => {

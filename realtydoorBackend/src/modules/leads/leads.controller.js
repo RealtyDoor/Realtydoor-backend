@@ -1,5 +1,5 @@
 const { success, created } = require('../../utils/ApiResponse');
-const { requestHoldExtensionSchema, submitLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema, contestCreditSchema, updateVisitOutcomeSchema, partnerAddLeadSchema, closeLeadSchema } = require('./leads.validator');
+const { releaseRegistrationSchema, requestHoldExtensionSchema, submitLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema, contestCreditSchema, updateVisitOutcomeSchema, partnerAddLeadSchema, closeLeadSchema } = require('./leads.validator');
 const service = require('./leads.service');
 
 async function submit(req, res, next) {
@@ -101,6 +101,21 @@ async function declineHoldExtension(req, res, next) {
   try { success(res, await service.adminDecideHoldExtension(req.params.id, false, req.user.id, req.ip), 'Request declined'); } catch (err) { next(err); }
 }
 
+async function confirmNoShow(req, res, next) {
+  try { success(res, await service.adminConfirmNoShow(req.params.id, req.user.id, req.ip), 'No-show confirmed'); } catch (err) { next(err); }
+}
+
+async function partnerConfirmNoShow(req, res, next) {
+  try { success(res, await service.partnerConfirmNoShow(req.params.id, req.user.id), 'No-show recorded'); } catch (err) { next(err); }
+}
+
+async function releaseRegistration(req, res, next) {
+  try {
+    const { reason } = releaseRegistrationSchema.parse(req.body);
+    success(res, await service.adminReleaseRegistration(req.params.id, reason, req.user.id, req.ip), 'Buyer released');
+  } catch (err) { next(err); }
+}
+
 async function getPooledLeads(req, res, next) {
   try { success(res, await service.getPooledLeads(req.user.id)); } catch (err) { next(err); }
 }
@@ -149,4 +164,4 @@ async function rejectDrop(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { requestHoldExtension, approveHoldExtension, declineHoldExtension, getPooledLeads, contestCredit, submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, updateVisitOutcome, partnerAddLead, approveDrop, rejectDrop, verifyAllocationLetter };
+module.exports = { partnerConfirmNoShow, confirmNoShow, releaseRegistration, requestHoldExtension, approveHoldExtension, declineHoldExtension, getPooledLeads, contestCredit, submit, getMyLeads, getLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, updateVisitOutcome, partnerAddLead, approveDrop, rejectDrop, verifyAllocationLetter };

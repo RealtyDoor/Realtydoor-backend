@@ -241,6 +241,26 @@ async function addPartnerLeadLocked(partnerId, data) {
   });
   if (!property) throw new ApiError(404, 'Property not found among live listings');
 
+  // A partner cannot register their own number as a buyer: that is self-dealing.
+  const me = await prisma.user.findUnique({ where: { id: partnerId }, select: { phone: true } });
+  if (me?.phone && me.phone === data.buyerPhone) {
+    throw new ApiError(400, 'You cannot register your own number as a buyer.', { code: 'SELF_REGISTRATION' });
+  }
+
+  // Optional cap (off unless partner_max_unconfirmed is set): registrations with no sign of life yet, so mass registering cannot block buyers.
+  const { partnerMaxUnconfirmed } = await getMoneySettings();
+  if (partnerMaxUnconfirmed > 0) {
+    const open = await prisma.lead.count({
+      where: {
+        addedByPartnerId: partnerId, registrationLapsedAt: { isSet: false }, status: { notIn: ['CLOSED', 'DROPPED'] },
+        siteVisitScheduledAt: { isSet: false }, isOtpVerified: false, escrowTransactions: { none: {} },
+      },
+    });
+    if (open >= partnerMaxUnconfirmed) {
+      throw new ApiError(429, `You already have ${open} registered buyers with no visit or token yet. Get a visit booked on some of them, or wait for them to lapse, before adding more.`, { code: 'REGISTRATION_CAP' });
+    }
+  }
+
   // B3.2 — same buyer, same property, still active.
   const duplicate = await prisma.lead.findFirst({
     where: { propertyId: data.propertyId, buyerPhone: data.buyerPhone, status: ACTIVE_LEAD_STATUSES },
@@ -341,7 +361,9 @@ const STALLED_AFTER_DAYS = 5;
 
 // Where the hold on a buyer stands, for the partner who registered them (nothing for a lead someone else brought).
 function holdFor(lead, partnerId, settings) {
-  if (!lead.addedByPartnerId || String(lead.addedByPartnerId) !== String(partnerId)) return {};
+  // The partner who registered the buyer, or the partner a company lead (not partner-brought) was given to.
+  const mine = lead.addedByPartnerId ? String(lead.addedByPartnerId) === String(partnerId) : lead.assignedPartnerId && String(lead.assignedPartnerId) === String(partnerId);
+  if (!mine) return {};
   return { hold: holdInfo(lead, new Date(), settings.partnerLeadWindowDays) };
 }
 
@@ -723,6 +745,19 @@ async function requestDrop(leadId, partnerId, reason, reasonCode) {
   }
   if (lead.dropRequestedByPartner) throw new ApiError(400, 'A drop request is already pending for this lead');
 
+  // A buyer the partner registered themselves is theirs to give up: it drops at once and the buyer is free. Unless a visit was verified or a
+  // token paid, and never for a lead the company gave them: those need admin's approval.
+  if (lead.addedByPartnerId && String(lead.addedByPartnerId) === String(partnerId) && !lead.isOtpVerified && !(await hasHeldMoney(leadId))) {
+    const now = new Date();
+    await prisma.lead.update({
+      where: { id: leadId },
+      data: { status: 'DROPPED', droppedAt: now, droppedReason: reason, droppedReasonCode: reasonCode || 'OTHER', registrationLapsedAt: lead.registrationLapsedAt || now },
+    });
+    await createAuditLog({ adminId: null, actorRole: 'PARTNER', action: 'PARTNER_DROPPED_OWN_LEAD', targetType: 'Lead', targetId: leadId, after: { reason, reasonCode: reasonCode || 'OTHER' } }).catch(() => null);
+    await notifyAdmins({ title: 'A partner dropped their own buyer', message: `${lead.refCode || 'A lead'}: dropped by the partner who registered it. Reason: ${reason}`, type: 'LEAD_DROPPED', linkUrl: `/admin/leads/${leadId}` }).catch(() => null);
+    return { message: 'Dropped. This buyer is free again.', dropped: true };
+  }
+
   await prisma.lead.update({
     where: { id: leadId },
     data: { dropRequestedByPartner: true, dropRequestNote: reason, dropRequestReasonCode: reasonCode || 'OTHER', dropRequestedAt: new Date() },
@@ -761,7 +796,7 @@ async function getPooledLeads(partnerId) {
 // The registering partner asks, once, to hold the buyer up to 10 more days. Only in the last days of the hold. Admin decides.
 async function requestHoldExtension(leadId, partnerId, note) {
   const lead = await prisma.lead.findFirst({
-    where: { id: leadId, addedByPartnerId: partnerId },
+    where: { id: leadId, OR: [{ addedByPartnerId: partnerId }, { assignedPartnerId: partnerId, addedByPartnerId: { isSet: false } }] },
     include: { escrowTransactions: { select: { createdAt: true, heldAt: true, releasedAt: true } } },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
@@ -791,7 +826,7 @@ async function adminDecideHoldExtension(leadId, approve, adminId, ip) {
     data: { holdExtensionDecidedAt: now, holdExtensionApproved: !!approve, ...(approve ? { holdExtensionDays: HOLD_EXTENSION_DAYS } : {}) },
   });
   await createNotification({
-    userId: lead.addedByPartnerId,
+    userId: lead.addedByPartnerId || lead.assignedPartnerId,
     title: approve ? 'More time approved' : 'More time declined',
     message: approve
       ? `${lead.refCode || 'Your lead'}: you keep this buyer ${HOLD_EXTENSION_DAYS} more days.`
@@ -803,6 +838,47 @@ async function adminDecideHoldExtension(leadId, approve, adminId, ip) {
     after: { days: approve ? HOLD_EXTENSION_DAYS : 0 }, ipAddress: ip,
   });
   return { approved: !!approve };
+}
+
+// The partner who registered the buyer says the booked visit did not happen. It stops counting as a sign of life. Not for company-given leads.
+async function partnerConfirmNoShow(leadId, partnerId) {
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, addedByPartnerId: partnerId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!lead.siteVisitScheduledAt) throw new ApiError(400, 'No visit is booked on this lead');
+  if (lead.isOtpVerified || lead.otpVerifiedAt || lead.visitOutcomeAt) throw new ApiError(400, 'The visit was attended, so it cannot be marked a no-show');
+  if (new Date(lead.siteVisitScheduledAt) > new Date()) throw new ApiError(400, 'The visit has not happened yet');
+  if (lead.visitNoShowConfirmedAt) return { confirmed: true };
+  const now = new Date();
+  await prisma.lead.update({ where: { id: leadId }, data: { visitNoShowConfirmedAt: now } });
+  await createAuditLog({ adminId: null, actorRole: 'PARTNER', action: 'VISIT_NO_SHOW_CONFIRMED', targetType: 'Lead', targetId: leadId, after: { visitNoShowConfirmedAt: now } }).catch(() => null);
+  return { confirmed: true };
+}
+
+// Admin confirms that a booked visit was not attended. From then on it no longer counts as a sign of life for the hold. Recorded.
+async function adminConfirmNoShow(leadId, adminId, ip) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!lead.siteVisitScheduledAt) throw new ApiError(400, 'No visit is booked on this lead');
+  if (lead.isOtpVerified || lead.otpVerifiedAt || lead.visitOutcomeAt) throw new ApiError(400, 'The visit was attended, so it cannot be marked a no-show');
+  if (lead.visitNoShowConfirmedAt) return { confirmed: true };
+  const now = new Date();
+  await prisma.lead.update({ where: { id: leadId }, data: { visitNoShowConfirmedAt: now } });
+  await createAuditLog({ adminId, action: 'VISIT_NO_SHOW_CONFIRMED', targetType: 'Lead', targetId: leadId, after: { visitNoShowConfirmedAt: now }, ipAddress: ip });
+  return { confirmed: true };
+}
+
+// Admin releases a partner's registration: the buyer stops being held. Needs a reason. Not allowed while a token is held or a visit was verified.
+async function adminReleaseRegistration(leadId, reason, adminId, ip) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) throw new ApiError(404, 'Lead not found');
+  if (!lead.addedByPartnerId) throw new ApiError(400, 'This lead was not registered by a partner');
+  if (lead.registrationLapsedAt) return { released: true };
+  if (lead.isOtpVerified || await hasHeldMoney(leadId)) throw new ApiError(409, 'A visit was verified or a token was paid on this lead, so it has to be settled, not released.', { code: 'RELEASE_BLOCKED' });
+  const now = new Date();
+  const heldByAdder = lead.assignedPartnerId && String(lead.assignedPartnerId) === String(lead.addedByPartnerId);
+  await prisma.lead.update({ where: { id: leadId }, data: { registrationLapsedAt: now, ...(heldByAdder ? { assignedPartnerId: null, status: 'UNASSIGNED', assignedAt: null } : {}) } });
+  await createAuditLog({ adminId, action: 'PARTNER_REGISTRATION_RELEASED', targetType: 'Lead', targetId: leadId, after: { registrationLapsedAt: now, reason }, ipAddress: ip });
+  return { released: true };
 }
 
 async function contestCredit(leadId, partnerId, note) {
@@ -849,6 +925,11 @@ async function adminVerifyAllocationLetter(leadId, adminId, ip) {
   return updated;
 }
 
+async function hasHeldMoney(leadId) {
+  const n = await prisma.escrowTransaction.count({ where: { leadId, status: { in: ['HELD', 'HELD_PAYOUT_FAILED', 'FROZEN', 'RELEASED', 'PARTIALLY_REFUNDED'] } } });
+  return n > 0;
+}
+
 async function adminApproveDrop(leadId, adminId, ip) {
   const lead = await prisma.lead.findUnique({ where: { id: leadId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
@@ -864,6 +945,8 @@ async function adminApproveDrop(leadId, adminId, ip) {
       droppedReason: lead.dropRequestNote,
       droppedReasonCode: lead.dropRequestReasonCode || 'OTHER',
       dropRequestedByPartner: false,
+      // A dropped registration stops holding the buyer at once, unless a visit was verified or a token was paid (then the owner settles it).
+      ...(lead.addedByPartnerId && !lead.registrationLapsedAt && !lead.isOtpVerified && !(await hasHeldMoney(leadId)) ? { registrationLapsedAt: new Date() } : {}),
     },
   });
 
@@ -916,4 +999,4 @@ async function adminRejectDrop(leadId, adminId, ip) {
 }
 
 module.exports = {
-  requestHoldExtension, adminDecideHoldExtension, contestCredit, getPooledLeads, evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };
+  requestHoldExtension, adminDecideHoldExtension, adminConfirmNoShow, adminReleaseRegistration, partnerConfirmNoShow, contestCredit, getPooledLeads, evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };

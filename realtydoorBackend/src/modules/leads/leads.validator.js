@@ -78,8 +78,9 @@ const requestDropSchema = z.object({
   reasonCode: z.enum(DROP_REASON_CODES).optional(),
 });
 
+const releaseRegistrationSchema = z.object({ reason: z.string().trim().min(5, 'Say why, in a few words').max(500) });
 const requestHoldExtensionSchema = z.object({ note: z.string().trim().min(5, 'Say why you need more time, in a few words').max(500) });
 
 const contestCreditSchema = z.object({ note: z.string().trim().min(5, 'Say why in a few words').max(500) });
 
-module.exports = { requestHoldExtensionSchema, contestCreditSchema, submitLeadSchema, partnerAddLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema, updateVisitOutcomeSchema, closeLeadSchema };
+module.exports = { requestHoldExtensionSchema, releaseRegistrationSchema, contestCreditSchema, submitLeadSchema, partnerAddLeadSchema, scheduleVisitSchema, verifyOtpSchema, uploadDocsSchema, requestDropSchema, updateVisitOutcomeSchema, closeLeadSchema };

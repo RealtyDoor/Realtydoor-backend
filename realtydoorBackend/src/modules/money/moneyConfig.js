@@ -32,7 +32,11 @@ const DEFINITIONS = {
 
   // Partner-added leads: how long a partner keeps a buyer they registered (restarts on a site visit, token or closed deal).
   partner_lead_window_days:  [30, 'Days a partner keeps a buyer they registered, counted from the last activity on it (lead, site visit, token, closed deal). After that the buyer is free and a fresh registration is credited again.'],
-  partner_lead_proof_hours:  [72, 'Hours a partner has to show the buyer is real after registering them: the buyer signs up with that number, a site visit is booked, or a token is paid. Without that the registration lapses and the buyer is free. 0 = off.'],
+  partner_lead_proof_hours:  [0, 'Optional short check: hours a partner has to show the buyer is real after registering them (sign-up, visit booked, or token). 0 = off. Since 4 Nov 2026 the one rule is the hold window above (30 days), so this is off by default.'],
+  partner_lead_nudge_days:   [20, 'Company-given leads: days with the assigned partner before admin gets a nudge to chase or reassign. The partner keeps the lead for partner_lead_window_days; nothing moves by itself.'],
+  partner_max_unconfirmed:   [50, 'Most registrations one partner may have with no sign of life yet (no visit booked, no token). 0 = no cap. Set at 50 on 4 Nov 2026.'],
+  lead_late_escalate_days:   [5, 'Days a registration may wait for admin, or an extension request sit undecided, before a second, stronger alert goes to admins. 0 = off.'],
+  lead_late_hours:           [48, 'Hours a registration may wait for admin, or an extension request may sit undecided, before the owner is alerted.'],
 
   // TDS on partner commission (s.194H; section label under the Income-tax Act 2025 is open with the CA)
   tds_rate_pct:              [2, 'TDS % withheld from partner commission (excluding GST).'],
@@ -80,6 +84,10 @@ function parseSettings(rows) {
     tokenPlatformFeePct: num('escrow_token_platform_fee_pct'),
     partnerLeadWindowDays: num('partner_lead_window_days'),
     partnerLeadProofHours: num('partner_lead_proof_hours'),
+    partnerLeadNudgeDays: num('partner_lead_nudge_days'),
+    partnerMaxUnconfirmed: num('partner_max_unconfirmed'),
+    leadLateHours: num('lead_late_hours'),
+    leadLateEscalateDays: num('lead_late_escalate_days'),
     company: {
       gstin: str('company_gstin').trim().toUpperCase(),
       legalName: str('company_legal_name'),

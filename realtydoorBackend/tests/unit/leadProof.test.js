@@ -132,6 +132,6 @@ describe('the hourly job: proof window', () => {
     PROOF_ROWS = [lead({ assignedAt: ago(500) })];
     const out = await job.runOnce(NOW);
     expect(out.lapsed).toBe(0);
-    expect(prisma.lead.findMany.mock.calls.some(([a]) => a.where.registrationLapsedAt)).toBe(false);
+    expect(prisma.lead.findMany.mock.calls.some(([a]) => a.where.status && a.where.status.in)).toBe(false);
   });
 });

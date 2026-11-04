@@ -1,7 +1,7 @@
 jest.mock('../../src/lib/prisma', () => ({
-  lead: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
+  lead: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn(), count: jest.fn().mockResolvedValue(0) },
   property: { findFirst: jest.fn() },
-  user: { findFirst: jest.fn(), findMany: jest.fn() },
+  user: { findFirst: jest.fn(), findMany: jest.fn(), findUnique: jest.fn().mockResolvedValue(null) },
   // the per-buyer-and-property lock (lib/keyLock.js)
   counter: { create: jest.fn().mockResolvedValue({}), deleteMany: jest.fn().mockResolvedValue({}), findUnique: jest.fn(), updateMany: jest.fn() },
 }));
@@ -102,5 +102,29 @@ describe('partnerAddLead: any live listing (28 Oct 2026, owner decision)', () =>
     const err = await leads.partnerAddLead('A', data).catch((e) => e);
     expect(err.statusCode).toBe(404);
     expect(err.message).toBe('Property not found among live listings');
+  });
+});
+
+describe('partnerAddLead: self-registration and the cap on buyers with no sign of life', () => {
+  const { getMoneySettings } = require('../../src/modules/money/moneyConfig');
+  afterEach(() => { getMoneySettings.mockResolvedValue({ partnerLeadWindowDays: 60 }); prisma.lead.count.mockResolvedValue(0); prisma.user.findUnique.mockResolvedValue(null); });
+  test('a partner cannot register their own number', async () => {
+    prisma.user.findUnique.mockResolvedValue({ phone: PHONE });
+    await expect(leads.partnerAddLead('A', data)).rejects.toMatchObject({ statusCode: 400, data: { code: 'SELF_REGISTRATION' } });
+    expect(prisma.lead.create).not.toHaveBeenCalled();
+  });
+  test('at the cap (50) a new registration is refused with a clear message', async () => {
+    getMoneySettings.mockResolvedValue({ partnerLeadWindowDays: 60, partnerMaxUnconfirmed: 50 });
+    prisma.lead.count.mockResolvedValue(50);
+    await expect(leads.partnerAddLead('A', data)).rejects.toMatchObject({ statusCode: 429, data: { code: 'REGISTRATION_CAP' } });
+    expect(prisma.lead.count.mock.calls[0][0].where).toMatchObject({ addedByPartnerId: 'A', registrationLapsedAt: { isSet: false }, escrowTransactions: { none: {} } });
+  });
+  test('under the cap, or with the cap at 0, it goes through', async () => {
+    getMoneySettings.mockResolvedValue({ partnerLeadWindowDays: 60, partnerMaxUnconfirmed: 50 });
+    prisma.lead.count.mockResolvedValue(49);
+    await expect(leads.partnerAddLead('A', data)).resolves.toBeDefined();
+    getMoneySettings.mockResolvedValue({ partnerLeadWindowDays: 60, partnerMaxUnconfirmed: 0 });
+    prisma.lead.count.mockResolvedValue(500);
+    await expect(leads.partnerAddLead('A', { ...data, buyerPhone: '+919000000098' })).resolves.toBeDefined();
   });
 });

@@ -33,6 +33,25 @@ async function returnPartnerLeadsToPool(partnerId, adminId, ip, why) {
     }).catch((err) => logger.warn('[partnerHandover] audit failed', { error: err.message }));
     moved += 1;
   }
+  // Their registrations stop holding buyers too, at the same moment (not those with a token held or a verified visit: admin settles those).
+  // An admin suspending is the approval. A deletion started by the partner is not: those registrations are left for an admin to release.
+  const added = !adminId ? [] : await prisma.lead.findMany({
+    where: { addedByPartnerId: partnerId, registrationLapsedAt: { isSet: false }, status: { notIn: ['CLOSED', 'DROPPED'] } },
+    include: { escrowTransactions: { select: { status: true } } },
+  });
+  const now = new Date();
+  for (const l of added) {
+    if (l.isOtpVerified || reassignCheck(l, l.escrowTransactions, `partner ${why}`).ok === false) continue;
+    await prisma.lead.update({ where: { id: l.id }, data: { registrationLapsedAt: now } });
+    await createAuditLog({
+      adminId: adminId || null, actorRole: adminId ? 'ADMIN' : 'SYSTEM', action: 'PARTNER_REGISTRATION_LAPSED', targetType: 'Lead', targetId: l.id,
+      after: { registrationLapsedAt: now, why: `partner ${why}` }, ipAddress: ip,
+    }).catch((err) => logger.warn('[partnerHandover] audit failed', { error: err.message }));
+  }
+  const openRegs = adminId ? 0 : await prisma.lead.count({ where: { addedByPartnerId: partnerId, registrationLapsedAt: { isSet: false }, status: { notIn: ['CLOSED', 'DROPPED'] } } });
+  if (openRegs) {
+    await notifyAdmins({ title: 'A closed partner still holds buyers', message: `Partner ${why}: ${openRegs} registration(s) still hold buyers. Open each lead and release the buyer if it should be free.`, type: 'LEAD_NEW', linkUrl: '/admin/leads/partner-added' }).catch(() => null);
+  }
   if (moved || stuck.length) {
     await notifyAdmins({
       title: 'A partner\'s leads need attention',

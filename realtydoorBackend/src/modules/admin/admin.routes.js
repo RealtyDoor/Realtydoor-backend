@@ -93,6 +93,8 @@ router.patch('/leads/:id/approve-drop',  requirePermission('LEADS'), leadsCtrl.a
 router.patch('/leads/:id/reject-drop',   requirePermission('LEADS'), leadsCtrl.rejectDrop);
 router.patch('/leads/:id/approve-hold-extension', requirePermission('LEADS'), leadsCtrl.approveHoldExtension);
 router.patch('/leads/:id/decline-hold-extension', requirePermission('LEADS'), leadsCtrl.declineHoldExtension);
+router.patch('/leads/:id/confirm-no-show', requirePermission('LEADS'), leadsCtrl.confirmNoShow);
+router.patch('/leads/:id/release-registration', requirePermission('LEADS'), leadsCtrl.releaseRegistration);
 router.patch('/leads/:id/allocation-letter/verify', validateObjectId('id'), requirePermission('FINANCE'), leadsCtrl.verifyAllocationLetter);
 
 // Property approval + admin edit

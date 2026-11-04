@@ -40,7 +40,7 @@ function holdWindowDays(lead, windowDays) {
  */
 function holdInfo(lead, now, windowDays) {
   const total = holdWindowDays(lead, windowDays);
-  const endsAt = new Date(lastActivity(lead) + total * DAY);
+  const endsAt = new Date(lastActivity(lead, now) + total * DAY);
   const daysLeft = Math.ceil((endsAt.getTime() - now.getTime()) / DAY);
   let state = 'NONE';
   if (lead.holdExtensionRequestedAt) state = lead.holdExtensionDecidedAt ? (lead.holdExtensionApproved ? 'APPROVED' : 'DECLINED') : 'REQUESTED';
@@ -55,8 +55,8 @@ function holdInfo(lead, now, windowDays) {
  */
 function windowWarning(lead, now, windowDays, warnDays = 15) {
   if (!windowDays || windowDays <= 0) return null;
-  if (!lead.addedByPartnerId || ['CLOSED', 'DROPPED'].includes(lead.status) || lead.windowWarnedAt) return null;
-  const idle = (now.getTime() - lastActivity(lead)) / DAY;
+  if (!(lead.addedByPartnerId || lead.assignedPartnerId) || ['CLOSED', 'DROPPED'].includes(lead.status) || lead.windowWarnedAt) return null;
+  const idle = (now.getTime() - lastActivity(lead, now)) / DAY;
   const left = Math.ceil(holdWindowDays(lead, windowDays) - idle);
   return left > 0 && left <= warnDays ? left : null;
 }
@@ -81,6 +81,46 @@ function proofAction(lead, now, hours, buyerHasAccount = false) {
   return 'none';
 }
 
+const hasMoney = (lead) => (lead.escrowTransactions || []).some((e) => MONEY.includes(e.status));
+const PENDING = (lead) => !!lead.holdExtensionRequestedAt && !lead.holdExtensionDecidedAt;
+
+/**
+ * The one rule for a buyer a partner registered: they keep the buyer for the hold window (30 days) from the last real activity, plus an
+ * approved extension. Past that with no token the registration lapses. While an extension request waits for admin the clock is paused,
+ * so a slow admin never costs the partner the buyer. Returns 'lapse' or 'none'.
+ */
+function holdAction(lead, now, windowDays) {
+  if (!windowDays || windowDays <= 0) return 'none';
+  if (!lead.addedByPartnerId || lead.registrationLapsedAt) return 'none';
+  if (['CLOSED', 'DROPPED', 'AWAITING_ADMIN'].includes(lead.status)) return 'none';
+  if (hasMoney(lead) || PENDING(lead)) return 'none';
+  const idle = (now.getTime() - lastActivity(lead, now)) / DAY;
+  return idle >= holdWindowDays(lead, windowDays) ? 'lapse' : 'none';
+}
+
+/**
+ * A lead the company gave a partner (not one the partner brought). They have the hold window (30 days) from the last real activity.
+ * At `nudgeDays` with no activity admin gets one nudge to chase or reassign; when the window (plus any approved extension) is over admin
+ * is told once. Nothing moves by itself. Returns 'nudge', 'due' or 'none'.
+ */
+function assignedLeadAction(lead, now, windowDays, nudgeDays) {
+  if (!windowDays || windowDays <= 0) return 'none';
+  if (lead.addedByPartnerId || !lead.assignedPartnerId || lead.status !== 'ASSIGNED') return 'none';
+  if (hasMoney(lead) || PENDING(lead)) return 'none';
+  const idle = (now.getTime() - lastActivity(lead, now)) / DAY;
+  if (idle >= holdWindowDays(lead, windowDays)) return lead.assignmentDueNotifiedAt ? 'none' : 'due';
+  if (nudgeDays > 0 && idle >= nudgeDays && !lead.assignmentNudgedAt) return 'nudge';
+  return 'none';
+}
+
+/** A booked visit whose slot passed `graceDays` ago with nobody attending: flag it to admin once. Admin confirms the no-show; nothing changes by itself. */
+function noShowAction(lead, now, graceDays = 7) {
+  if (!lead.siteVisitScheduledAt || lead.noShowFlaggedAt || lead.visitNoShowConfirmedAt) return 'none';
+  if (lead.otpVerifiedAt || lead.isOtpVerified || lead.visitOutcomeAt) return 'none';
+  if (['CLOSED', 'DROPPED'].includes(lead.status)) return 'none';
+  return now.getTime() >= new Date(lead.siteVisitScheduledAt).getTime() + graceDays * DAY ? 'flag' : 'none';
+}
+
 const ATTEMPTS_BEFORE_DECISION = 5;
 const DAYS_BEFORE_DECISION = 14;
 
@@ -90,4 +130,4 @@ function needsDecision(lead, now) {
   return open && (lead.contactAttempts || 0) >= ATTEMPTS_BEFORE_DECISION && (now.getTime() - new Date(lead.createdAt).getTime()) >= DAYS_BEFORE_DECISION * DAY;
 }
 
-module.exports = { HOLD_EXTENSION_DAYS, HOLD_REMINDER_DAYS, holdWindowDays, holdInfo, partnerResponseAction, proofAction, windowWarning, needsDecision, ATTEMPTS_BEFORE_DECISION, DAYS_BEFORE_DECISION };
+module.exports = { noShowAction, holdAction, assignedLeadAction, HOLD_EXTENSION_DAYS, HOLD_REMINDER_DAYS, holdWindowDays, holdInfo, partnerResponseAction, proofAction, windowWarning, needsDecision, ATTEMPTS_BEFORE_DECISION, DAYS_BEFORE_DECISION };
