@@ -21,6 +21,7 @@ const partnerTicketCtrl = require('../partners/partnerTicket.admin.controller');
 const onboardingCtrl = require('../onboarding/onboarding.controller');
 const leadSalesCtrl = require('../leadSales/leadSales.controller');
 const leadIntakeCtrl = require('../leadIntake/leadIntake.controller');
+const whatsappInboxCtrl = require('../wati/whatsappInbox.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { requirePermission } = require('../../middleware/requirePermission');
@@ -382,16 +383,24 @@ router.get('/reviews',                ctrl.listReviews);
 router.patch('/reviews/:id/moderate', ctrl.moderateReview);
 
 // WhatsApp (WATI) — templates, delivery log, spend (docs 12.1-12.6)
+// 4 Nov 2026: templates are created, edited and submitted in the WATI dashboard, not here. The write routes stay closed unless
+// WATI_TEMPLATE_EDITING=true is set, so nothing here can change what WATI sends.
+const templatesManagedInWati = (req, res, next) => (process.env.WATI_TEMPLATE_EDITING === 'true' ? next() : next(new ApiError(403, 'Templates are managed in the WATI dashboard.')));
+// WhatsApp chats: every message in and out as a thread per number, with full details of each message.
+router.get('/whatsapp/conversations',              requirePermission('LEADS'), whatsappInboxCtrl.conversations);
+router.get('/whatsapp/conversations/:phone',       requirePermission('LEADS'), whatsappInboxCtrl.thread);
+router.get('/whatsapp/messages/:id',               validateObjectId('id'), requirePermission('LEADS'), whatsappInboxCtrl.message);
 router.get('/wati/stats',                  watiCtrl.getStats);
 router.get('/wati/messages',               watiCtrl.listMessages);
+router.get('/wati/messages/:id',           validateObjectId('id'), requirePermission(['LEADS', 'CONTENT']), whatsappInboxCtrl.logDetail);
 router.get('/wati/templates',              watiCtrl.listTemplates);
-router.post('/wati/templates',             requirePermission('CONTENT'), watiCtrl.createTemplate);
+router.post('/wati/templates',             templatesManagedInWati, requirePermission('CONTENT'), watiCtrl.createTemplate);
 router.get('/wati/templates/:id',          watiCtrl.getTemplate);
-router.patch('/wati/templates/:id',        requirePermission('CONTENT'), watiCtrl.updateTemplate);
-router.delete('/wati/templates/:id',       requirePermission('CONTENT'), watiCtrl.deleteTemplate);
-router.post('/wati/templates/:id/submit',  requirePermission('CONTENT'), watiCtrl.submitTemplate);
-router.patch('/wati/templates/:id/status', requirePermission('CONTENT'), watiCtrl.syncStatus);
-router.post('/wati/templates/:id/test-send', requirePermission('CONTENT'), watiCtrl.testSend);
+router.patch('/wati/templates/:id',        templatesManagedInWati, requirePermission('CONTENT'), watiCtrl.updateTemplate);
+router.delete('/wati/templates/:id',       templatesManagedInWati, requirePermission('CONTENT'), watiCtrl.deleteTemplate);
+router.post('/wati/templates/:id/submit',  templatesManagedInWati, requirePermission('CONTENT'), watiCtrl.submitTemplate);
+router.patch('/wati/templates/:id/status', templatesManagedInWati, requirePermission('CONTENT'), watiCtrl.syncStatus);
+router.post('/wati/templates/:id/test-send', templatesManagedInWati, requirePermission('CONTENT'), watiCtrl.testSend);
 
 // B2B network oversight (B5.10) — admin watches these connections to catch
 // offline bypass, so unlike the partner views this one does include contacts.

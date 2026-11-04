@@ -3,6 +3,8 @@
 // only the final controller for a stub. So a 200 here means "this role got past every gate", and nothing touches a database,
 // Clerk, WATI, Razorpay or S3.
 process.env.NODE_ENV = 'test';
+// The WATI template write routes are closed in production (templates are managed in WATI); this test is about who passes the role gates.
+process.env.WATI_TEMPLATE_EDITING = 'true';
 // Never reach a real database: point Prisma at a dead local address and replace the client, so any stray query fails loudly.
 process.env.DATABASE_URL = 'mongodb://127.0.0.1:1/never';
 jest.mock('../../../src/lib/prisma', () => new Proxy({}, { get: () => new Proxy(() => {}, { get: () => () => Promise.reject(new Error('database access in a route test')), apply: () => Promise.reject(new Error('database access in a route test')) }) }));

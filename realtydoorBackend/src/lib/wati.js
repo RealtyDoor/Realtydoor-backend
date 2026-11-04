@@ -29,9 +29,40 @@ function isRecipientAllowed(phone, env = process.env) {
 // Logging must never break a send: a notification going out matters more than
 // our record of it, so a logging failure is swallowed with a warning. The
 // webhook later updates the row in place as WATI reports delivered/read.
+// The message as the buyer saw it: the catalogue body with {{variables}} filled, when we hold that template's text.
+async function renderTemplate(templateName, parameters = []) {
+  try {
+    const tpl = await prisma.watiTemplate.findUnique({ where: { name: templateName }, select: { body: true } });
+    if (!tpl?.body) return null;
+    const values = Object.fromEntries((parameters || []).map((p) => [String(p.name), String(p.value)]));
+    return tpl.body.replace(/\{\{\s*([\w]+)\s*\}\}/g, (m, k) => (values[k] !== undefined ? values[k] : m));
+  } catch { return null; }
+}
+
 async function logSend(fields) {
   try {
-    return await prisma.watiMessageLog.create({ data: fields });
+    const { parameters, ...rest } = fields;
+    const renderedText = parameters ? await renderTemplate(fields.templateName, parameters) : null;
+    const row = await prisma.watiMessageLog.create({
+      data: {
+        ...rest,
+        ...(parameters && { parameters: Object.fromEntries(parameters.map((p) => [String(p.name), String(p.value)])) }),
+        ...(renderedText && { renderedText }),
+        eventHistory: [{ status: fields.status, at: new Date().toISOString(), ...(fields.failureReason && { reason: fields.failureReason }) }],
+      },
+    });
+    // The same message goes into the chat thread, so a buyer's conversation reads in one place.
+    await prisma.whatsAppMessage.create({
+      data: {
+        phone: String(fields.recipientPhone).startsWith('+') ? fields.recipientPhone : `+${String(fields.recipientPhone).replace(/\D/g, '')}`,
+        direction: 'OUT', kind: 'TEMPLATE', templateName: fields.templateName, text: renderedText || null,
+        ...(parameters && { parameters: Object.fromEntries(parameters.map((p) => [String(p.name), String(p.value)])) }),
+        watiMessageId: fields.messageId || null, status: fields.status,
+        ...(fields.failureReason && { failureReason: fields.failureReason }),
+        ...(fields.leadId && { leadId: fields.leadId }), ...(fields.userId && { userId: fields.userId }), ...(fields.ticketId && { ticketId: fields.ticketId }),
+      },
+    }).catch((err) => logger.warn('[WATI] thread write failed', { error: err.message }));
+    return row;
   } catch (err) {
     logger.warn('[WATI] message log write failed', { templateName: fields.templateName, error: err.message });
     return null;
@@ -63,6 +94,7 @@ async function sendTemplateMessage(phone, templateName, parameters = [], context
     });
 
     await logSend({
+      parameters,
       // WATI's response shape varies by account/version, so probe the known
       // spots rather than assuming one. Null is fine — the row is still the
       // record that a send happened.
@@ -81,6 +113,7 @@ async function sendTemplateMessage(phone, templateName, parameters = [], context
     logger.error(`[WATI] ${templateName} → ${phone} failed: HTTP ${status} — ${data}`);
 
     await logSend({
+      parameters,
       templateName,
       recipientPhone: phone,
       status: 'FAILED',

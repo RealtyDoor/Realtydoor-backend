@@ -1,0 +1,33 @@
+// WhatsApp conversations (4 Nov 2026): every message in or out, per phone number, so a buyer's chat can be read as a thread next to their lead.
+// Outbound sends from the app are also recorded here (WatiMessageLog stays the delivery and spend log); inbound messages and the replies staff send
+// from the WATI inbox arrive through the WATI webhook.
+
+model WhatsAppMessage {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  phone         String    // E.164 with +
+  direction     String    // IN | OUT
+  kind          String    @default("TEXT") // TEXT | TEMPLATE | IMAGE | DOCUMENT | AUDIO | VIDEO | LOCATION | BUTTON | OTHER
+  text          String?
+  templateName  String?
+  parameters    Json?
+  mediaUrl      String?
+  senderName    String?   // the contact's WhatsApp name, or the staff member who replied
+  watiMessageId String?
+  // IN: RECEIVED. OUT: SENT | DELIVERED | READ | RESPONDED | FAILED
+  status        String    @default("RECEIVED")
+  failureReason String?
+  leadId        String?   @db.ObjectId
+  userId        String?   @db.ObjectId
+  ticketId      String?   @db.ObjectId
+  // Click-to-WhatsApp ad details when WATI passes them on (ad id, headline, link).
+  referral      Json?
+  raw           Json?
+  at            DateTime  @default(now())
+  deliveredAt   DateTime?
+  readAt        DateTime?
+
+  @@index([phone, at])
+  @@index([leadId, at])
+  @@index([watiMessageId])
+  @@index([at])
+}

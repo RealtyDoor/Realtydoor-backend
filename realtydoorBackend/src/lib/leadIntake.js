@@ -85,6 +85,12 @@ function resolveMapping(mappings = [], f) {
     const hit = mappings.find((m) => m.matchField === field && lower(m.matchValue) === lower(value));
     if (hit) return hit;
   }
+  // A keyword is matched inside the buyer's own words, for WhatsApp ("Hi, I'm interested in Lakeview").
+  if (f.message) {
+    const said = lower(f.message);
+    const hit = mappings.find((m) => m.matchField === 'keyword' && lower(m.matchValue) && said.includes(lower(m.matchValue)));
+    if (hit) return hit;
+  }
   return null;
 }
 

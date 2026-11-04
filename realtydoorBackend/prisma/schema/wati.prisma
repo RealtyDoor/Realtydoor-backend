@@ -64,6 +64,11 @@ model WatiMessageLog {
   readAt        DateTime?
   respondedAt   DateTime?
 
+  // Full details (4 Nov 2026): what was sent, and every status event WATI reported, in order.
+  parameters    Json?     // the variable values the template was filled with
+  renderedText  String?   // the message as the buyer saw it, when the template body is known
+  eventHistory  Json?     // [{ status, at, reason? }]
+
   @@index([templateName])
   @@index([status])
   @@index([recipientPhone])

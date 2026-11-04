@@ -24,7 +24,7 @@ const updateSchema = z.object({
   consentAssumed: z.boolean().optional(),
 });
 const mappingSchema = z.object({
-  matchField: z.enum(['formId', 'campaign', 'utmCampaign', 'adName', 'project']),
+  matchField: z.enum(['formId', 'campaign', 'utmCampaign', 'adName', 'project', 'keyword']),
   matchValue: z.string().trim().min(1).max(200),
   projectId: objectId.optional(),
   propertyId: objectId.optional(),

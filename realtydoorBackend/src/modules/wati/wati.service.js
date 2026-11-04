@@ -286,19 +286,33 @@ async function recordDeliveryEvent({ messageId, phone, status, failureReason }) 
   }
   if (!row) return null;
 
+  // Every event is kept in order, even one that arrives late; only the headline status never walks backwards.
+  const history = [...(Array.isArray(row.eventHistory) ? row.eventHistory : []), { status, at: new Date().toISOString(), ...(failureReason && { reason: failureReason }) }];
+
   // Never walk a message backwards: a late DELIVERED callback must not
   // overwrite a READ/RESPONDED that already landed.
   const RANK = { SENT: 0, DELIVERED: 1, READ: 2, RESPONDED: 3, FAILED: 1 };
-  if ((RANK[status] ?? 0) < (RANK[row.status] ?? 0)) return row;
+  if ((RANK[status] ?? 0) < (RANK[row.status] ?? 0)) {
+    return prisma.watiMessageLog.update({ where: { id: row.id }, data: { eventHistory: history } });
+  }
 
-  return prisma.watiMessageLog.update({
+  const updated = await prisma.watiMessageLog.update({
     where: { id: row.id },
     data: {
       status,
+      eventHistory: history,
       ...(STATUS_FIELD[status] ? { [STATUS_FIELD[status]]: new Date() } : {}),
       ...(failureReason && { failureReason }),
     },
   });
+  // The chat thread shows the same ticks.
+  if (row.messageId) {
+    await prisma.whatsAppMessage.updateMany({
+      where: { watiMessageId: row.messageId, direction: 'OUT' },
+      data: { status, ...(status === 'DELIVERED' ? { deliveredAt: new Date() } : {}), ...(status === 'READ' ? { readAt: new Date() } : {}), ...(failureReason && { failureReason }) },
+    }).catch(() => null);
+  }
+  return updated;
 }
 
 module.exports = {

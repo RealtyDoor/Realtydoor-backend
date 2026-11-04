@@ -58,6 +58,15 @@ describe('resolveMapping and externalId', () => {
   });
 });
 
+describe('keyword mapping (WhatsApp)', () => {
+  test('a keyword is matched inside the buyer\'s own words, after the exact matches', () => {
+    const maps = [{ matchField: 'keyword', matchValue: 'Lakeview', projectId: 'p1' }, { matchField: 'project', matchValue: 'Greenpark', projectId: 'p2' }];
+    expect(li.resolveMapping(maps, { message: "Hi, I'm interested in LAKEVIEW phase 2" }).projectId).toBe('p1');
+    expect(li.resolveMapping(maps, { message: 'hello', projectWord: 'Greenpark' }).projectId).toBe('p2');
+    expect(li.resolveMapping(maps, { message: 'hello there' })).toBeNull();
+  });
+});
+
 describe('keys', () => {
   test('the secret matches only its own hash, and a wrong or empty one never does', () => {
     const s = li.newSecret();
@@ -182,5 +191,16 @@ describe('admin input rules', () => {
     expect(() => ctrl._schemas.mappingSchema.parse({ matchField: 'formId', matchValue: 'F1' })).toThrow();
     expect(ctrl._schemas.mappingSchema.parse({ matchField: 'formId', matchValue: 'F1', projectId: 'a'.repeat(24) })).toBeTruthy();
     expect(() => ctrl._schemas.mappingSchema.parse({ matchField: 'nonsense', matchValue: 'x', campaignLabel: 'c' })).toThrow();
+  });
+});
+
+describe('WATI template write routes are closed unless switched on', () => {
+  test('the guard refuses with 403 by default', () => {
+    const src = require('fs').readFileSync(require('path').join(__dirname, '../../src/modules/admin/admin.routes.js'), 'utf8');
+    expect(src).toContain("process.env.WATI_TEMPLATE_EDITING === 'true'");
+    for (const route of ["router.post('/wati/templates',", "router.patch('/wati/templates/:id',", "router.delete('/wati/templates/:id',", "router.post('/wati/templates/:id/submit',", "router.patch('/wati/templates/:id/status',", "router.post('/wati/templates/:id/test-send',"]) {
+      const line = src.split('\n').find((l) => l.startsWith(route));
+      expect(`${route} ${line}`).toContain('templatesManagedInWati');
+    }
   });
 });

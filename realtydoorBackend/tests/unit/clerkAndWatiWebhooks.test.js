@@ -6,6 +6,8 @@ jest.mock('../../src/lib/prisma', () => ({
 }));
 jest.mock('../../src/lib/clerkAdmin', () => ({ setUserRole: jest.fn().mockResolvedValue() }));
 jest.mock('../../src/modules/wati/wati.service', () => ({ recordDeliveryEvent: jest.fn().mockResolvedValue() }));
+// The chat thread and enquiry intake are covered in whatsappInbox.test.js; here only the feedback replies are under test.
+jest.mock('../../src/modules/wati/whatsappInbox.service', () => ({ recordMessage: jest.fn().mockResolvedValue({ status: 'ignored' }) }));
 
 const prisma = require('../../src/lib/prisma');
 const { setUserRole } = require('../../src/lib/clerkAdmin');

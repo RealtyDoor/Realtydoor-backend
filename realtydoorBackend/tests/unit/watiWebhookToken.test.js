@@ -1,6 +1,7 @@
 jest.mock('../../src/lib/prisma', () => ({}));
 jest.mock('../../src/lib/logger', () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }));
 jest.mock('../../src/modules/wati/wati.service', () => ({ recordDeliveryEvent: jest.fn() }));
+jest.mock('../../src/modules/wati/whatsappInbox.service', () => ({ recordMessage: jest.fn().mockResolvedValue({ status: 'ignored' }) }));
 
 const { watiWebhook } = require('../../src/modules/webhooks/wati.handler');
 

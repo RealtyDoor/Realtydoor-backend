@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const prisma = require('../../lib/prisma');
 const logger = require('../../lib/logger');
 const { recordDeliveryEvent } = require('../wati/wati.service');
+const inbox = require('../wati/whatsappInbox.service');
 
 // Security fix, 2026-10-13 (B2) — plain !== leaks timing information a
 // byte at a time; same constant-time-compare pattern as
@@ -89,6 +90,9 @@ async function watiWebhook(req, res) {
       });
       return res.json({ status: 'ok', recorded: deliveryStatus });
     }
+
+    // Every message goes into the chat thread, and an enquiry from a number we do not know becomes a lead. A failure here never breaks the rest.
+    try { await inbox.recordMessage(req.body || {}); } catch (err) { logger.warn('[watiWebhook] chat record failed', { error: err.message }); }
 
     if (!waId || !text) return res.json({ status: 'ignored' });
 
