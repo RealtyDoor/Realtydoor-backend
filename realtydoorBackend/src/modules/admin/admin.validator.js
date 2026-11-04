@@ -27,6 +27,8 @@ const createLeadSchema = z.object({
   buyerPhone:       phoneField,
   buyerEmail:       z.string().email().optional(),
   source:           z.enum(['PHONE', 'WALK_IN', 'REFERRAL', 'EMAIL', 'OTHER']),
+  // The campaign this lead came from. A lead with a campaign is the only kind the automatic picker assigns, in rotation.
+  campaign:         z.string().trim().min(2).max(60).optional(),
   propertyId:       objectId.optional(),
   propertyInterest: z.string().max(300).optional(),
   // backend-work-still-open.md #3 — required when propertyId is absent, so

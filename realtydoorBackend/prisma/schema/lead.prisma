@@ -27,6 +27,8 @@ model Lead {
   city              String?
   budget            String?
   source            LeadSource @default(WEBSITE)
+  // The marketing campaign this lead came from, typed by whoever logged it. Only campaign leads are assigned automatically, in rotation.
+  campaign          String?
   status            LeadStatus @default(UNASSIGNED)
 
   // Manual entry provenance — exactly one of these is set (neither, for a

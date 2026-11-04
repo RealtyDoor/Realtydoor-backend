@@ -144,6 +144,8 @@ async function getProfile(partnerId) {
       id: true, name: true, email: true, phone: true, companyName: true,
       bio: true, profileImageUrl: true, websiteUrl: true, partnerSubType: true,
       kycStatus: true, kycRejectionNote: true, kycVerifiedAt: true, kycConsentAt: true, createdAt: true,
+      // When admin has asked for specific documents instead of rejecting (status DOCUMENTS_REQUESTED): the checklist, the note and the due date.
+      kycRequestedDocuments: true, kycRequestedNote: true, kycRequestedAt: true, kycRequestedDueAt: true,
       reraNumber: true, gstin: true, coverageAreas: true, address: true,
       partnerTermsVersion: true, partnerTermsAcceptedAt: true,
     },

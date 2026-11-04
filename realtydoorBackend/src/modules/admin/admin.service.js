@@ -1,4 +1,5 @@
 const prisma = require('../../lib/prisma');
+const { isPartnerBrought, isCampaignLead, rotationOrder } = require('../../lib/leadAssignRules');
 const leadSalesRules = require('../../lib/leadSales');
 const leadSales = require('../leadSales/leadSales.service');
 const { canonicalizeCity } = require('../../lib/cityAlias');
@@ -208,6 +209,7 @@ async function createLead(data, adminId, ip) {
       // city is always used instead once one exists.
       city: data.propertyId ? null : data.city,
       source: data.source,
+      ...(data.campaign && { campaign: data.campaign }),
       addedByAdminId: adminId,
       // The validator only accepts the literal boolean true, so by the time
       // this runs consent was given — recorded as the timestamp admin
@@ -777,8 +779,17 @@ async function rankCandidatePartners(lead) {
       ...c,
       activeLeads: await prisma.lead.count({ where: { assignedPartnerId: c.id, status: ACTIVE_LEAD_STATUSES } }),
     })));
-    withLoad.sort((a, b) => a.activeLeads - b.activeLeads);
-    return [...routed, ...withLoad.filter((c) => c.id !== routed[0]?.id)];
+    // Rotation, not load: whoever went longest without a campaign lead is next.
+    const lastAt = {};
+    await Promise.all(withLoad.map(async (c) => {
+      const latest = await prisma.lead.findFirst({
+        where: { assignedPartnerId: c.id, campaign: { isSet: true } },
+        orderBy: { assignedAt: 'desc' },
+        select: { assignedAt: true },
+      });
+      if (latest?.assignedAt) lastAt[c.id] = latest.assignedAt;
+    }));
+    return [...routed, ...rotationOrder(withLoad, lastAt).filter((c) => c.id !== routed[0]?.id)];
   }
   return routed;
 }
@@ -796,6 +807,14 @@ async function autoAssignLead(leadId, adminId, ip) {
   if (lead.assignedPartnerId) throw new ApiError(409, 'Lead is already assigned to a partner');
   if (UNASSIGNABLE_LEAD_STATUSES.includes(lead.status)) {
     throw new ApiError(400, `Cannot assign a ${lead.status.toLowerCase()} lead`);
+  }
+  // A lead a partner brought is theirs: never handed to someone else automatically (confirm it, or assign it by hand).
+  if (isPartnerBrought(lead)) {
+    throw new ApiError(409, 'A partner brought this lead, so it is not auto-assigned to anyone else. Confirm it or assign it yourself.', { code: 'PARTNER_LEAD' });
+  }
+  // Only campaign leads go through the automatic picker; website inquiries and the rest are assigned by hand.
+  if (!isCampaignLead(lead)) {
+    throw new ApiError(409, 'Only leads logged for a campaign are auto-assigned. Assign this one yourself.', { code: 'NOT_CAMPAIGN_LEAD' });
   }
 
   const candidates = await rankCandidatePartners(lead);
@@ -834,7 +853,8 @@ async function autoAssignLead(leadId, adminId, ip) {
 // failure (e.g. no eligible partner for its locality) does not stop the
 // rest; the response reports both lists so nothing is silently dropped.
 async function autoAssignUnassignedLeads(query, adminId, ip) {
-  const where = { status: 'UNASSIGNED', assignedPartnerId: { isSet: false } };
+  // Only campaign leads are in the batch; partner-brought leads are left out entirely (see leadAssignRules), not reported as failures.
+  const where = { status: 'UNASSIGNED', assignedPartnerId: { isSet: false }, addedByPartnerId: { isSet: false }, source: { not: 'PARTNER' }, campaign: { isSet: true } };
   if (query.propertyId) where.propertyId = query.propertyId;
   if (query.city) where.property = { city: { equals: query.city, mode: 'insensitive' } };
 
@@ -1273,6 +1293,8 @@ async function verifyKyc(userId, action, note, adminId, ip) {
       kycStatus,
       kycVerifiedAt: action === 'APPROVE' ? new Date() : null,
       kycRejectionNote: note || null,
+      // A decision closes any open request for documents: the old checklist must not follow the partner into the new status.
+      kycRequestedDocuments: [], kycRequestedNote: null, kycRequestedAt: null, kycRequestedDueAt: null, kycRequestedByAdminId: null,
     },
     select: { id: true, name: true, email: true, kycStatus: true, kycVerifiedAt: true, kycRejectionNote: true },
   });
