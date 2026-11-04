@@ -140,6 +140,14 @@ const LIVE_TEMPLATES = new Set([
   ...(process.env.WATI_LIVE_TEMPLATES || '').split(',').map((t) => t.trim()).filter(Boolean),
 ]);
 
+// WhatsApp copies of the lead-rule messages (4 Nov 2026). Not sent until each name is added to WATI_LIVE_TEMPLATES once Meta approves it.
+// Wording and variables: admin-nextjs/docs/WHATSAPP_TEMPLATES.md.
+const LEAD_RULE_TEMPLATES = [
+  'lead_registration_received', 'lead_registration_confirmed', 'lead_registration_not_credited', 'lead_registration_rejected',
+  'lead_hold_ending', 'lead_registration_lapsed', 'lead_extension_approved', 'lead_extension_declined',
+  'lead_drop_approved', 'lead_drop_rejected', 'lead_given_checkin',
+];
+
 // Fire-and-forget WhatsApp copy of an in-app notification. Looks up the user's
 // phone and notifWhatsapp preference itself (OPERATIONAL category), never
 // throws; pass '$userName' as a value to insert the recipient's own name — a failed WhatsApp must not break the action that triggered it.
@@ -177,7 +185,7 @@ async function sendTicketVendorDispatched(userId, ticketSubject, vendorName, tic
   }, { ticketId });
 }
 
-module.exports = {
+module.exports = { LEAD_RULE_TEMPLATES,
   sendTemplateMessage,
   sendSiteVisitOtp,
   sendLeadAssignedNotice,

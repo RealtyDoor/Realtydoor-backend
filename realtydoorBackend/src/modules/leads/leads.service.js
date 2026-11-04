@@ -2,7 +2,8 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { formatContact, maskPhone, maskEmail } = require('../../lib/phoneUtils');
 const { generate, expiresAt, isExpired, isLocked, lockUntil, maxAttemptsReached, MAX_ATTEMPTS } = require('../../lib/otp');
-const { sendSiteVisitOtp } = require('../../lib/wati');
+const { sendSiteVisitOtp, notifyUser } = require('../../lib/wati');
+const wa = (...args) => Promise.resolve(notifyUser?.(...args)).catch(() => null); // WhatsApp copy; skipped until the template is approved (lib/wati.js LIVE_TEMPLATES)
 const { createNotification, broadcastNotification, notifyAdmins } = require('../../lib/notifications');
 const logger = require('../../lib/logger');
 const { sendLeadAssigned, sendVisitScheduled } = require('../../lib/email');
@@ -307,6 +308,7 @@ async function addPartnerLeadLocked(partnerId, data) {
     },
   });
 
+  wa(partnerId, 'lead_registration_received', { name: '$userName', lead_ref: lead.refCode || 'your lead' });
   const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
   await Promise.all(admins.map((admin) => createNotification({
     userId: admin.id,
@@ -825,6 +827,8 @@ async function adminDecideHoldExtension(leadId, approve, adminId, ip) {
     where: { id: leadId },
     data: { holdExtensionDecidedAt: now, holdExtensionApproved: !!approve, ...(approve ? { holdExtensionDays: HOLD_EXTENSION_DAYS } : {}) },
   });
+  wa(lead.addedByPartnerId || lead.assignedPartnerId, approve ? 'lead_extension_approved' : 'lead_extension_declined',
+    approve ? { name: '$userName', lead_ref: lead.refCode || 'your lead', days: HOLD_EXTENSION_DAYS } : { name: '$userName', lead_ref: lead.refCode || 'your lead' });
   await createNotification({
     userId: lead.addedByPartnerId || lead.assignedPartnerId,
     title: approve ? 'More time approved' : 'More time declined',
@@ -951,6 +955,7 @@ async function adminApproveDrop(leadId, adminId, ip) {
   });
 
   if (lead.assignedPartnerId) {
+    wa(lead.assignedPartnerId, 'lead_drop_approved', { name: '$userName', lead_ref: lead.refCode || 'your lead' });
     await createNotification({
       userId: lead.assignedPartnerId,
       title: 'Drop Request Approved',
@@ -981,6 +986,7 @@ async function adminRejectDrop(leadId, adminId, ip) {
   });
 
   if (lead.assignedPartnerId) {
+    wa(lead.assignedPartnerId, 'lead_drop_rejected', { name: '$userName', lead_ref: lead.refCode || 'your lead' });
     await createNotification({
       userId: lead.assignedPartnerId,
       title: 'Drop Request Rejected',

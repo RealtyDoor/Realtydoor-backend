@@ -280,6 +280,8 @@ async function prefillCommissionTermsSafely(leadId, adminId, ip) {
 // 6.3 — admin vets a partner-added lead. Confirming moves it out of
 // AWAITING_ADMIN into the normal pipeline, optionally assigning in one step
 // (passing a different partnerId is the "reassign" case).
+const wa = (...args) => Promise.resolve(notifyUser?.(...args)).catch(() => null); // WhatsApp copy; skipped until the template is approved (lib/wati.js LIVE_TEMPLATES)
+
 async function confirmLead(leadId, partnerId, adminId, ip) {
   const lead = await prisma.lead.findUnique({ where: { id: leadId }, include: { property: { select: { title: true } } } });
   if (!lead) throw new ApiError(404, 'Lead not found');
@@ -340,6 +342,7 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
   }
 
   if (partner) {
+    wa(partner.id, 'lead_registration_confirmed', { name: '$userName', lead_ref: lead.refCode || 'your lead', buyer_name: lead.buyerName || 'your buyer' });
     await createNotification({
       userId: partner.id,
       title: 'Lead Confirmed',
@@ -348,6 +351,9 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
       linkUrl: `/partners/leads/${leadId}`,
     });
   } else if (lead.addedByPartnerId) {
+    wa(lead.addedByPartnerId, creditAdder ? 'lead_registration_confirmed' : 'lead_registration_not_credited', creditAdder
+      ? { name: '$userName', lead_ref: lead.refCode || 'your lead', buyer_name: lead.buyerName || 'your buyer' }
+      : { name: '$userName', lead_ref: lead.refCode || 'your lead' });
     await createNotification({
       userId: lead.addedByPartnerId,
       title: 'Lead Confirmed',
@@ -462,6 +468,7 @@ async function rejectLead(leadId, reason, adminId, ip, reasonCode) {
   });
 
   if (lead.addedByPartnerId) {
+    wa(lead.addedByPartnerId, 'lead_registration_rejected', { name: '$userName', lead_ref: lead.refCode || 'your lead', reason: String(reason || 'see the app').slice(0, 120) });
     await createNotification({
       userId: lead.addedByPartnerId,
       title: 'Lead Not Accepted',

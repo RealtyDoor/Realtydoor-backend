@@ -1,4 +1,6 @@
 const cron = require('node-cron');
+const { notifyUser } = require('../lib/wati');
+const wa = (...args) => Promise.resolve(notifyUser?.(...args)).catch(() => null); // WhatsApp copy; skipped until the template is approved
 const prisma = require('../lib/prisma');
 const logger = require('../lib/logger');
 const { createNotification, notifyAdmins } = require('../lib/notifications');
@@ -24,6 +26,7 @@ async function lapseRegistration(lead, now, why) {
     where: { id: lead.id },
     data: { registrationLapsedAt: now, ...(heldByAdder ? { assignedPartnerId: null, status: 'UNASSIGNED', assignedAt: null, responseReminderAt: null } : {}) },
   });
+  wa(lead.addedByPartnerId, 'lead_registration_lapsed', { name: '$userName', lead_ref: lead.refCode || 'your lead' });
   await createNotification({
     userId: lead.addedByPartnerId, title: 'Registration lapsed',
     message: `${lead.refCode || 'A lead'} · ${lead.buyerName || 'your buyer'}: ${why}, so the registration no longer holds this buyer.`,
@@ -133,6 +136,7 @@ async function runOnce(now = new Date()) {
       const action = assignedLeadAction(lead, now, partnerLeadWindowDays, partnerLeadNudgeDays);
       if (action === 'nudge') {
         await notifyAdmins({ title: 'A given lead has gone quiet', message: `${lead.refCode || 'A lead'} has been with its partner for ${partnerLeadNudgeDays}+ days with no visit or token. Chase the partner or reassign it.`, type: 'LEAD_NEW', linkUrl: `/admin/leads/${lead.id}` }).catch(() => null);
+        wa(lead.assignedPartnerId, 'lead_given_checkin', { name: '$userName', lead_ref: lead.refCode || 'your lead', days: partnerLeadNudgeDays });
         await prisma.lead.update({ where: { id: lead.id }, data: { assignmentNudgedAt: now } });
         out.nudged += 1;
       } else if (action === 'due') {
@@ -199,6 +203,7 @@ async function runOnce(now = new Date()) {
     for (const lead of registered) {
       const left = windowWarning(lead, now, partnerLeadWindowDays, WARN_DAYS);
       if (left === null) continue;
+      wa(lead.addedByPartnerId || lead.assignedPartnerId, 'lead_hold_ending', { name: '$userName', lead_ref: lead.refCode || 'your lead', days_left: left, extension_days: HOLD_EXTENSION_DAYS });
       await createNotification({
         userId: lead.addedByPartnerId || lead.assignedPartnerId, title: 'Your hold on a buyer is running out',
         message: `${lead.refCode || 'A lead'} · ${lead.buyerName || 'your buyer'}: about ${left} day(s) left. With no site visit, token or deal by then, ${lead.addedByPartnerId ? 'the buyer is free for anyone to register' : 'admin may reassign this lead'}.${lead.holdExtensionRequestedAt ? '' : ` You can ask admin for up to ${HOLD_EXTENSION_DAYS} more days, once: open the lead and choose Ask for more time.`}`,

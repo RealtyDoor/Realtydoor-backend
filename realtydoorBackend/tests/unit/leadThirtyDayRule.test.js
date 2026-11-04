@@ -178,3 +178,18 @@ describe('no-show is confirmed by a person (4 Nov 2026)', () => {
     expect(t.noShowAction({ ...l, visitNoShowConfirmedAt: day(1) }, NOW)).toBe('none');
   });
 });
+
+describe('WhatsApp copies (skipped until the template is approved)', () => {
+  const { LEAD_RULE_TEMPLATES } = require('../../src/lib/wati');
+  test('every lead-rule template name is listed once and the docs name them all', () => {
+    expect(new Set(LEAD_RULE_TEMPLATES).size).toBe(LEAD_RULE_TEMPLATES.length);
+    const file = require('path').join(__dirname, '../../../../admin-nextjs/docs/WHATSAPP_TEMPLATES.md');
+    if (!require('fs').existsSync(file)) return; // the docs live in the frontend repo
+    const doc = require('fs').readFileSync(file, 'utf8');
+    for (const name of LEAD_RULE_TEMPLATES) expect(doc).toContain(`\`${name}\``);
+  });
+  test('none of them is live until WATI_LIVE_TEMPLATES says so, so notifyUser sends nothing', async () => {
+    const { notifyUser } = require('../../src/lib/wati');
+    for (const name of LEAD_RULE_TEMPLATES) await expect(notifyUser('u1', name, { name: '$userName' })).resolves.toBeNull();
+  });
+});
