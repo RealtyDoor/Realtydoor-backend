@@ -3,6 +3,7 @@ const router  = express.Router();
 const ctrl    = require('./webhooks.controller');
 const { clerkWebhook } = require('./clerk.handler');
 const { watiWebhook }  = require('./wati.handler');
+const leadIntake = require('../leadIntake/leadIntake.controller');
 
 // Both routes use express.raw() — safe because this router is mounted in app.js
 // BEFORE express.json(), so the stream has not been consumed yet.
@@ -22,5 +23,7 @@ const rawBody = (req, res, next) => {
 router.post('/razorpay', rawBody, ctrl.razorpay);
 router.post('/clerk',    rawBody, clerkWebhook);
 router.post('/wati',     rawBody, watiWebhook);
+// Lead integrations: any outside source posts leads here with its own key (see modules/leadIntake).
+router.post('/leads/:keyId', rawBody, leadIntake.webhook);
 
 module.exports = router;

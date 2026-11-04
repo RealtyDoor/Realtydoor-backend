@@ -19,7 +19,7 @@ const createPropertySchema = z.object({
   price: z.number().positive().optional(),
   monthlyRent: z.number().positive().optional(),
   priceNegotiable: z.boolean().optional(),
-  propertyType: z.enum(['FLAT', 'INDEPENDENT_HOUSE', 'VILLA', 'PLOT', 'COMMERCIAL_OFFICE', 'RETAIL_SHOP', 'NEW_PROJECT']),
+  propertyType: z.enum(['FLAT', 'INDEPENDENT_HOUSE', 'VILLA', 'PLOT', 'COMMERCIAL_OFFICE', 'RETAIL_SHOP', 'INDUSTRIAL', 'WAREHOUSE', 'AGRICULTURAL', 'NEW_PROJECT']),
   listingType: z.enum(['SALE', 'RENT', 'LEASE']),
   // SOLD/RENTED are deliberately not partner-settable here — same as before,
   // only PRE_LAUNCH is newly added for project-status reporting.

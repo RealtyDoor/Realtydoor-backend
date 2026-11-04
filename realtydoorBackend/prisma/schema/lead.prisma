@@ -95,6 +95,17 @@ model Lead {
   holdExtensionApproved    Boolean?
   holdExtensionDays        Int?
   holdExtensionEscalatedAt DateTime?
+  // Where an ad or form lead came from (lead integrations). `campaign` above is reused as the campaign label.
+  sourceDetail     String?  // the form, ad or channel name
+  utmSource        String?
+  utmMedium        String?
+  utmCampaign      String?
+  utmContent       String?
+  utmTerm          String?
+  adClickId        String?  // gclid / fbclid
+  intakeIntegrationId String? @db.ObjectId
+  // The builder project this lead is about (set from a source mapping or the form), for splitting leads per project.
+  projectId        String?  @db.ObjectId
   // Company-given leads: the day-20 nudge to admin, and the notice when the 30 days are up (admin decides; nothing moves by itself).
   assignmentNudgedAt       DateTime?
   assignmentDueNotifiedAt  DateTime?

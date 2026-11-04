@@ -20,6 +20,7 @@ const micrositeCtrl = require('../microsites/microsite.controller');
 const partnerTicketCtrl = require('../partners/partnerTicket.admin.controller');
 const onboardingCtrl = require('../onboarding/onboarding.controller');
 const leadSalesCtrl = require('../leadSales/leadSales.controller');
+const leadIntakeCtrl = require('../leadIntake/leadIntake.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin } = require('../../middleware/requireRole');
 const { requirePermission } = require('../../middleware/requirePermission');
@@ -93,6 +94,15 @@ router.patch('/leads/:id/approve-drop',  requirePermission('LEADS'), leadsCtrl.a
 router.patch('/leads/:id/reject-drop',   requirePermission('LEADS'), leadsCtrl.rejectDrop);
 router.patch('/leads/:id/approve-hold-extension', requirePermission('LEADS'), leadsCtrl.approveHoldExtension);
 router.patch('/leads/:id/decline-hold-extension', requirePermission('LEADS'), leadsCtrl.declineHoldExtension);
+// Lead integrations (Instagram, Google Ads, WhatsApp, website, webhooks): connect a source, map its forms to projects, see what arrived.
+router.get('/lead-integrations',                                 requirePermission('LEADS'), leadIntakeCtrl.list);
+router.post('/lead-integrations',                                requirePermission('LEADS'), leadIntakeCtrl.create);
+router.patch('/lead-integrations/:id',            validateObjectId('id'), requirePermission('LEADS'), leadIntakeCtrl.update);
+router.post('/lead-integrations/:id/rotate-secret', validateObjectId('id'), requirePermission('LEADS'), leadIntakeCtrl.rotate);
+router.post('/lead-integrations/:id/test',        validateObjectId('id'), requirePermission('LEADS'), leadIntakeCtrl.test);
+router.get('/lead-integrations/:id/events',       validateObjectId('id'), requirePermission('LEADS'), leadIntakeCtrl.events);
+router.post('/lead-integrations/:id/mappings',    validateObjectId('id'), requirePermission('LEADS'), leadIntakeCtrl.addMapping);
+router.delete('/lead-integrations/:id/mappings/:mappingId', validateObjectId('id'), validateObjectId('mappingId'), requirePermission('LEADS'), leadIntakeCtrl.deleteMapping);
 router.patch('/leads/:id/confirm-no-show', requirePermission('LEADS'), leadsCtrl.confirmNoShow);
 router.patch('/leads/:id/release-registration', requirePermission('LEADS'), leadsCtrl.releaseRegistration);
 router.patch('/leads/:id/allocation-letter/verify', validateObjectId('id'), requirePermission('FINANCE'), leadsCtrl.verifyAllocationLetter);

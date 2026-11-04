@@ -1,0 +1,69 @@
+// Lead integrations (4 Nov 2026): every place leads come from outside the app (Meta and Instagram lead forms, Google Ads and YouTube forms,
+// WhatsApp, website forms, anything that can post a webhook) is one LeadIntegration with its own key. Each form or campaign can be mapped to a
+// project, so leads are split per project. Every incoming lead is logged as a LeadIntakeEvent: repeats are ignored, errors are visible.
+
+enum LeadIntegrationKind {
+  GENERIC
+  META
+  GOOGLE_ADS
+  WHATSAPP
+  WEBSITE
+}
+
+model LeadIntegration {
+  id             String              @id @default(auto()) @map("_id") @db.ObjectId
+  name           String
+  kind           LeadIntegrationKind @default(GENERIC)
+  // The public part of the key goes in the webhook address; only a hash of the secret is stored, and it is shown once.
+  keyId          String              @unique
+  secretHash     String
+  isActive       Boolean             @default(true)
+  defaultSource  LeadSource          @default(OTHER)
+  defaultCampaign String?
+  defaultProjectId String?           @db.ObjectId
+  // Ad forms carry their own consent wording, so a lead from one counts as consented unless the integration says otherwise.
+  consentAssumed Boolean             @default(true)
+  createdByAdminId String?           @db.ObjectId
+  lastLeadAt     DateTime?
+  leadCount      Int                 @default(0)
+  lastError      String?
+  lastErrorAt    DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  mappings       LeadSourceMapping[]
+  events         LeadIntakeEvent[]
+}
+
+// One form, campaign or UTM campaign value, and what it means: which project, listing and campaign label, and which source name.
+model LeadSourceMapping {
+  id            String          @id @default(auto()) @map("_id") @db.ObjectId
+  integrationId String          @db.ObjectId
+  integration   LeadIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  // formId | campaign | utmCampaign | adName | project (the project name or code the form itself sends)
+  matchField    String
+  matchValue    String
+  projectId     String?         @db.ObjectId
+  propertyId    String?         @db.ObjectId
+  campaignLabel String?
+  source        LeadSource?
+  createdAt     DateTime        @default(now())
+
+  @@index([integrationId, matchField, matchValue])
+}
+
+model LeadIntakeEvent {
+  id            String          @id @default(auto()) @map("_id") @db.ObjectId
+  integrationId String          @db.ObjectId
+  integration   LeadIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  // The sender's own id for the lead, or a stand-in made from phone, campaign and day, so the same lead sent twice is one lead.
+  externalId    String
+  // CREATED | DUPLICATE | HELD_BY_PARTNER | REJECTED | ERROR | DRY_RUN
+  status        String
+  leadId        String?         @db.ObjectId
+  reason        String?
+  payload       Json?
+  createdAt     DateTime        @default(now())
+
+  @@unique([integrationId, externalId])
+  @@index([integrationId, createdAt])
+}

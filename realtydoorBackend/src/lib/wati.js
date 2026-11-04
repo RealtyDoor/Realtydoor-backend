@@ -45,6 +45,7 @@ async function logSend(fields) {
 // sending unconditionally exactly as before this gate existed, since there's
 // no toggle to respect without a user in scope.
 async function sendTemplateMessage(phone, templateName, parameters = [], context = {}, user, category) {
+  templateName = resolveTemplate(templateName);
   if (!canSend({ user, channel: 'WHATSAPP', category })) return null;
 
   if (!isRecipientAllowed(phone)) {
@@ -134,11 +135,54 @@ async function sendVoucherOtp(phone, otp, voucherNumber, context = {}) {
 // that is still a draft would just log a FAILED row, so notifyUser() skips
 // anything not listed here. Once Meta approves a new template, add its name to
 // WATI_LIVE_TEMPLATES (comma-separated) in the env — no code change needed.
-const LIVE_TEMPLATES = new Set([
+const DEFAULT_LIVE = [
   'site_visit_otp', 'phone_verification_otp', 'lead_assigned_notice',
   'buyer_feedback_request', 'contact_reply', 'ticket_vendor_dispatched',
-  ...(process.env.WATI_LIVE_TEMPLATES || '').split(',').map((t) => t.trim()).filter(Boolean),
-]);
+];
+const liveSet = (env = process.env) => new Set([...DEFAULT_LIVE, ...String(env.WATI_LIVE_TEMPLATES || '').split(',').map((t) => t.trim()).filter(Boolean)]);
+const LIVE_TEMPLATES = liveSet();
+
+// The new look (4 Nov 2026: footer "This is sent by Realtydoor", a smile, bold details). Approved templates cannot be edited in WATI, so each
+// has a new version. A template resolves to its new version only once that version is listed in WATI_LIVE_TEMPLATES (i.e. Meta approved it);
+// until then the old one keeps being sent, so nothing stops while Meta reviews. Variable names are identical in old and new.
+// Wording and status: admin-nextjs/docs/WHATSAPP_TEMPLATES_REFRESH.md.
+const TEMPLATE_UPGRADES = {
+  visit_reminder_v2: 'visit_reminder_v3',
+  partner_token_held: 'partner_token_held_v2',
+  partner_payout_failed: 'partner_payout_failed_v2',
+  partner_buyer_cancelled: 'partner_buyer_cancelled_v2',
+  partner_support_reply: 'partner_support_reply_v2',
+  partner_tax_invoice_needed: 'partner_tax_invoice_needed_v2',
+  partner_tax_invoice_accepted: 'partner_tax_invoice_accepted_v2',
+  partner_tax_invoice_rejected: 'partner_tax_invoice_rejected_v2',
+  buyer_feedback_request: 'buyer_feedback_request_v3',
+  buyer_feedback_request_v2: 'buyer_feedback_request_v3',
+  escrow_token_received: 'escrow_token_received_v2',
+  escrow_released: 'escrow_released_v2',
+  escrow_refunded: 'escrow_refunded_v2',
+  escrow_payment_failed: 'escrow_payment_failed_v2',
+  buyer_ticket_update: 'buyer_ticket_update_v2',
+  dispute_update: 'dispute_update_v2',
+  loan_status_update: 'loan_status_update_v2',
+  contact_reply: 'contact_reply_v2',
+  listing_approved: 'listing_approved_v2',
+  listing_rejected: 'listing_rejected_v2',
+  listing_changes_requested: 'listing_changes_requested_v2',
+  kyc_approved: 'kyc_approved_v2',
+  kyc_rejected: 'kyc_rejected_v2',
+  ticket_vendor_dispatched: 'ticket_vendor_dispatched_v3',
+  ticket_vendor_dispatched_v2: 'ticket_vendor_dispatched_v3',
+  lead_assigned_notice: 'lead_assigned_notice_v2',
+  nri_video_tour_scheduled: 'nri_video_tour_scheduled_v2',
+  lead_registration_received: 'lead_registration_received_v2',
+  lead_registration_confirmed: 'lead_registration_confirmed_v2',
+};
+
+/** The template to actually send: the new version when it is live, otherwise the name as asked for. */
+function resolveTemplate(name, live = LIVE_TEMPLATES) {
+  const upgraded = TEMPLATE_UPGRADES[name];
+  return upgraded && live.has(upgraded) ? upgraded : name;
+}
 
 // WhatsApp copies of the lead-rule messages (4 Nov 2026). Not sent until each name is added to WATI_LIVE_TEMPLATES once Meta approves it.
 // Wording and variables: admin-nextjs/docs/WHATSAPP_TEMPLATES.md.
@@ -153,6 +197,7 @@ const LEAD_RULE_TEMPLATES = [
 // throws; pass '$userName' as a value to insert the recipient's own name — a failed WhatsApp must not break the action that triggered it.
 async function notifyUser(userId, templateName, parameters, context = {}) {
   try {
+    templateName = resolveTemplate(templateName);
     if (!LIVE_TEMPLATES.has(templateName)) return null;
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -185,7 +230,7 @@ async function sendTicketVendorDispatched(userId, ticketSubject, vendorName, tic
   }, { ticketId });
 }
 
-module.exports = { LEAD_RULE_TEMPLATES,
+module.exports = { LEAD_RULE_TEMPLATES, TEMPLATE_UPGRADES, resolveTemplate, liveSet,
   sendTemplateMessage,
   sendSiteVisitOtp,
   sendLeadAssignedNotice,
