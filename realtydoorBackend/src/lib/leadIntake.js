@@ -41,9 +41,34 @@ function flattenGoogleColumns(body) {
   return out;
 }
 
+// Meta (Facebook and Instagram) lead forms send the answers as field_data: [{ name, values: [..] }]; some tools send a plain { question: answer } object.
+function flattenMetaFields(body) {
+  const fd = body.field_data;
+  if (!fd || typeof fd !== 'object') return body;
+  const pairs = Array.isArray(fd)
+    ? fd.map((f) => [f && f.name, f && (Array.isArray(f.values) ? f.values.join(', ') : f.value ?? f.values)])
+    : Object.entries(fd);
+  const out = { ...body };
+  // Multiple-choice answers come as lists of slugs (["within_this_month"]); keep them readable: within this month.
+  const readable = (v) => {
+    const text = (Array.isArray(v) ? v.join(', ') : String(v ?? '')).trim();
+    return /^[a-z0-9_, ]+$/.test(text) ? text.replace(/_/g, ' ') : text;
+  };
+  for (const [name, value] of pairs) {
+    const key = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const text = readable(value);
+    if (!key || !text) continue;
+    if (out[key] === undefined) out[key] = text;
+  }
+  if (!out.name && !out.full_name && (out.first_name || out.last_name)) out.name = [out.first_name, out.last_name].filter(Boolean).join(' ');
+  return out;
+}
+
+const flattenIncoming = (body) => flattenMetaFields(flattenGoogleColumns(body));
+
 /** The flat, known fields of one incoming lead, from the many names senders use. Never throws; a missing phone is reported by the caller. */
 function normalizeIncoming(rawBody) {
-  const b = flattenGoogleColumns(rawBody && typeof rawBody === 'object' ? rawBody : {});
+  const b = flattenIncoming(rawBody && typeof rawBody === 'object' ? rawBody : {});
   const phoneRaw = first(b, ['phone', 'mobile', 'phone_number', 'phoneNumber', 'mobile_number', 'whatsapp', 'contact', 'buyerPhone']);
   const srcWord = String(first(b, ['source', 'platform', 'channel']) || '').toLowerCase().replace(/[\s-]+/g, '_');
   const consent = b.consent ?? b.consent_given ?? b.optin;
@@ -96,11 +121,11 @@ function resolveMapping(mappings = [], f) {
 
 /** Everything the sender gave, as short question: answer pairs for the lead page. Secrets and keys are never kept. */
 function answersFrom(rawBody) {
-  const b = flattenGoogleColumns(rawBody && typeof rawBody === 'object' ? rawBody : {});
+  const b = flattenIncoming(rawBody && typeof rawBody === 'object' ? rawBody : {});
   const out = {};
   for (const [k, v] of Object.entries(b)) {
     if (Object.keys(out).length >= 40) break;
-    if (/secret|token|password|authorization|google_key|^key$/i.test(k) || k === 'user_column_data') continue;
+    if (/secret|token|password|authorization|google_key|^key$/i.test(k) || k === 'user_column_data' || k === 'field_data') continue;
     if (v === null || v === undefined || v === '') continue;
     out[String(k).slice(0, 60)] = (typeof v === 'object' ? JSON.stringify(v) : String(v)).slice(0, 500);
   }

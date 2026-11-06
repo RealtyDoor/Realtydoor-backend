@@ -1,3 +1,4 @@
+const { PropertyType, ListingType } = require('@prisma/client');
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { paginate } = require('../../utils/pagination');
@@ -59,8 +60,15 @@ async function searchProperties(query, skip, limit, page) {
     where.AND.push({ OR: cityAliasQueryGroup(query.city).map((v) => ({ city: { equals: v, mode: 'insensitive' } })) });
   }
   if (query.locality) where.locality = { contains: query.locality, mode: 'insensitive' };
-  if (query.propertyType) where.propertyType = query.propertyType;
-  if (query.listingType) where.listingType = query.listingType;
+  // A made-up value used to reach Prisma and come back as a 500; say what is wrong instead.
+  if (query.propertyType) {
+    if (!Object.prototype.hasOwnProperty.call(PropertyType, query.propertyType)) throw new ApiError(400, `Unknown propertyType. Use one of: ${Object.keys(PropertyType).join(', ')}`);
+    where.propertyType = query.propertyType;
+  }
+  if (query.listingType) {
+    if (!Object.prototype.hasOwnProperty.call(ListingType, query.listingType)) throw new ApiError(400, `Unknown listingType. Use one of: ${Object.keys(ListingType).join(', ')}`);
+    where.listingType = query.listingType;
+  }
   if (query.bhk) where.bhk = Number(query.bhk);
   if (query.minPrice || query.maxPrice) {
     // RENT/LEASE listings price on monthlyRent, not price — filtering price

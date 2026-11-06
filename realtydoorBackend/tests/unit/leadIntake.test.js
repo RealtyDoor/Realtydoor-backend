@@ -22,6 +22,34 @@ const ctrl = require('../../src/modules/leadIntake/leadIntake.controller');
 const integ = (over = {}) => ({ id: 'i1', name: 'Meta Lakeview', kind: 'META', isActive: true, defaultSource: 'OTHER', defaultCampaign: null, defaultProjectId: null, consentAssumed: true, mappings: [], ...over });
 
 describe('normalizeIncoming', () => {
+  test('reads Meta field_data answers (name and values list)', () => {
+    const f = li.normalizeIncoming({
+      form_id: '123', platform: 'instagram', ad_name: 'Villa ad',
+      field_data: [{ name: 'full_name', values: ['Asha Rao'] }, { name: 'phone_number', values: ['+919876543210'] }, { name: 'email', values: ['a@b.com'] }, { name: 'Which project?', values: ['Lakeview'] }],
+    });
+    expect(f.name).toBe('Asha Rao');
+    expect(f.phone).toBeTruthy();
+    expect(f.email).toBe('a@b.com');
+    expect(f.formId).toBe('123');
+    expect(f.sourceWord).toBe('INSTAGRAM');
+  });
+  test('reads field_data sent as a plain object, and joins first and last name', () => {
+    const f = li.normalizeIncoming({ field_data: { first_name: 'Asha', last_name: 'Rao', phone_number: '9876543210' } });
+    expect(f.name).toBe('Asha Rao');
+    expect(f.phone).toBeTruthy();
+  });
+  test('shows multiple-choice answers as plain words, not a slug list', () => {
+    const a = li.answersFrom({ field_data: { 'When are you planning for a site visit?': ['within_this_month'], phone_number: '+917022229579', company_name: 'Construction work' } });
+    expect(a.when_are_you_planning_for_a_site_visit).toBe('within this month');
+    expect(a.phone_number).toBe('+917022229579');
+    expect(a.company_name).toBe('Construction work');
+  });
+  test('keeps field_data answers in the saved answers but not the raw list', () => {
+    const a = li.answersFrom({ field_data: [{ name: 'Budget', values: ['80L'] }], secret: 'x' });
+    expect(a.budget).toBe('80L');
+    expect(a.field_data).toBeUndefined();
+    expect(a.secret).toBeUndefined();
+  });
   test('accepts the many names senders use and cleans the phone', () => {
     const f = li.normalizeIncoming({ full_name: 'Asha K', mobile: '98765 43210', email: 'a@x.com', form_id: 'F1', campaign_name: 'Lakeview', utm_source: 'ig', gclid: 'g1', lead_id: 'L7', source: 'Instagram' });
     expect(f).toMatchObject({ name: 'Asha K', phone: '+919876543210', email: 'a@x.com', formId: 'F1', campaign: 'Lakeview', adClickId: 'g1', externalId: 'L7', sourceWord: 'INSTAGRAM' });
