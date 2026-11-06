@@ -99,6 +99,8 @@ async function getLeadById(leadId, user = null) {
     include: {
       property:        { select: { title: true, slug: true, city: true, locality: true } },
       assignedPartner: { select: { name: true, email: true, phone: true, companyName: true } },
+      // The lead page needs to know a partner brought the buyer: it decides "Release this buyer" and whether the phone can be edited.
+      addedByPartner:  { select: { name: true, companyName: true } },
       escrowTransactions: { orderBy: { createdAt: 'desc' } },
       buyer: ADMIN_LEAD_BUYER_INCLUDE,
     },

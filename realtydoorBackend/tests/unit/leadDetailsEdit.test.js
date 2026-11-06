@@ -65,3 +65,13 @@ describe('updateLeadDetails', () => {
     await expect(admin.updateLeadDetails('l1', { buyerName: 'Abc' }, 'a', 'ip')).rejects.toMatchObject({ statusCode: 409 });
   });
 });
+
+describe('getLeadById', () => {
+  test('returns who added the lead, so the page can offer "Release this buyer" and lock the phone', async () => {
+    prisma.lead.findUnique.mockResolvedValue({ id: 'l1', ownerStaffId: null, status: 'AWAITING_ADMIN', addedByPartner: { name: 'Developer One', companyName: null } });
+    prisma.user.findUnique.mockResolvedValue(null);
+    const lead = await admin.getLeadById('l1');
+    expect(prisma.lead.findUnique.mock.calls.pop()[0].include.addedByPartner).toEqual({ select: { name: true, companyName: true } });
+    expect(lead.addedByPartner).toMatchObject({ name: 'Developer One' });
+  });
+});
