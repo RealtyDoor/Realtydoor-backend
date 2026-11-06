@@ -9,14 +9,14 @@ jest.mock('../../src/lib/prisma', () => ({
   notification: { findFirst: jest.fn() },
 }));
 jest.mock('../../src/modules/leadIntake/leadIntake.service', () => ({ ingest: jest.fn() }));
-jest.mock('../../src/modules/wati/watiImport.service', () => ({ liveMessages: jest.fn() }));
+jest.mock('../../src/modules/wati/watiImport.service', () => ({ liveMessages: jest.fn(), recentChats: jest.fn() }));
 jest.mock('../../src/lib/notifications', () => ({ createNotification: jest.fn().mockResolvedValue({}), notifyAdmins: jest.fn().mockResolvedValue({}) }));
 const { createNotification, notifyAdmins } = require('../../src/lib/notifications');
 
 const prisma = require('../../src/lib/prisma');
 const intake = require('../../src/modules/leadIntake/leadIntake.service');
 const inbox = require('../../src/modules/wati/whatsappInbox.service');
-const { liveMessages } = require('../../src/modules/wati/watiImport.service');
+const { liveMessages, recentChats } = require('../../src/modules/wati/watiImport.service');
 
 const msg = (over = {}) => ({ waId: '919876500123', text: 'Hi, I am interested in Lakeview', senderName: 'Asha', id: 'wm-1', type: 'text', owner: false, timestamp: '1793000000', ...over });
 
@@ -176,5 +176,42 @@ describe('a thread is read live from WATI', () => {
     const t = await inbox.getThread('919876500123');
     expect(t.messages.map((m) => m.id)).toEqual(['a']);
     expect(t.source).toBeUndefined();
+  });
+});
+
+describe('chat list reads live from WATI', () => {
+  const OLD_ENV = process.env;
+  beforeEach(() => { process.env = { ...OLD_ENV, WATI_API_ENDPOINT: 'https://wati.test', WATI_ACCESS_TOKEN: 'x' }; });
+  afterEach(() => { process.env = OLD_ENV; });
+  const last = (text, at) => ({ direction: 'IN', kind: 'TEXT', text, status: 'RECEIVED', at: new Date(at) });
+
+  test('live chats come first, the stored history fills in after, and a buyer with a lead is named', async () => {
+    recentChats.mockResolvedValue([{ phone: '+919800000001', name: 'Live Name', last: last('Hello today', '2026-11-06T10:00:00Z'), lastAt: new Date('2026-11-06T10:00:00Z') }]);
+    prisma.lead.findMany.mockResolvedValue([{ id: 'L1', refCode: 'RD-L-1', buyerName: 'Asha Rao', status: 'UNASSIGNED', source: 'FACEBOOK', projectId: null, buyerPhone: '+919800000001' }]);
+    prisma.whatsAppMessage.groupBy.mockResolvedValue([{ phone: '+919800000009', _max: { at: new Date('2026-11-04T10:00:00Z') }, _count: { _all: 3 } }]);
+    prisma.whatsAppMessage.findFirst.mockResolvedValue({ direction: 'OUT', kind: 'TEXT', text: 'old', status: 'SENT', at: new Date('2026-11-04T10:00:00Z') });
+    prisma.lead.findFirst.mockResolvedValue(null);
+    const list = await inbox.listConversations({});
+    expect(list.map((c) => c.phone)).toEqual(['+919800000001', '+919800000009']);
+    expect(list[0]).toMatchObject({ name: 'Asha Rao', lead: { refCode: 'RD-L-1' } });
+  });
+  test('a chat both live and stored appears once', async () => {
+    recentChats.mockResolvedValue([{ phone: '+919800000001', name: null, last: last('now', '2026-11-06T10:00:00Z'), lastAt: new Date('2026-11-06T10:00:00Z') }]);
+    prisma.lead.findMany.mockResolvedValue([]);
+    prisma.whatsAppMessage.groupBy.mockResolvedValue([{ phone: '+919800000001', _max: { at: new Date('2026-11-04T10:00:00Z') }, _count: { _all: 3 } }]);
+    const list = await inbox.listConversations({});
+    expect(list).toHaveLength(1);
+  });
+  test('if WATI fails the stored chats are still shown', async () => {
+    recentChats.mockRejectedValue(new Error('down'));
+    prisma.whatsAppMessage.groupBy.mockResolvedValue([{ phone: '+919800000009', _max: { at: new Date('2026-11-04T10:00:00Z') }, _count: { _all: 3 } }]);
+    prisma.whatsAppMessage.findFirst.mockResolvedValue({ direction: 'OUT', kind: 'TEXT', text: 'old', status: 'SENT', at: new Date('2026-11-04T10:00:00Z') });
+    prisma.lead.findFirst.mockResolvedValue(null);
+    expect((await inbox.listConversations({})).map((c) => c.phone)).toEqual(['+919800000009']);
+  });
+  test('a search stays on the stored history and does not call WATI', async () => {
+    prisma.whatsAppMessage.groupBy.mockResolvedValue([]);
+    await inbox.listConversations({ search: '9800' });
+    expect(recentChats).not.toHaveBeenCalled();
   });
 });

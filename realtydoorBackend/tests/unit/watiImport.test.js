@@ -7,6 +7,7 @@ jest.mock('../../src/lib/prisma', () => ({
 
 const axios = require('axios');
 const prisma = require('../../src/lib/prisma');
+jest.mock('../../src/lib/cache', () => ({ withCache: (key, ttl, fn) => fn() }));
 const imp = require('../../src/modules/wati/watiImport.service');
 
 describe('parseContactDate and statusOf', () => {
@@ -61,5 +62,30 @@ describe('importSlice', () => {
   test('refuses when WATI is not connected', async () => {
     delete process.env.WATI_ACCESS_TOKEN;
     await expect(imp.importSlice({})).rejects.toMatchObject({ statusCode: 400 });
+  });
+});
+
+describe('recentChats (live chat list)', () => {
+  const contact = (phone, name) => ({ wAid: phone, fullName: name });
+  test('keeps contacts who wrote, newest first, and drops broadcast-only contacts', async () => {
+    const get = jest.fn(async (url) => {
+      if (url === '/api/v1/getContacts') return { data: { contact_list: [contact('919800000001', 'Asha'), contact('919800000002', 'Broadcast only'), contact('919800000003', 'Ravi')] } };
+      if (url.endsWith('919800000001')) return { data: { messages: { items: [{ owner: false, text: 'Interested', id: 'a', created: '2026-11-06T10:00:00Z' }] } } };
+      if (url.endsWith('919800000002')) return { data: { messages: { items: [{ owner: true, eventType: 'broadcastMessage', finalText: 'Offer', id: 'b', created: '2026-11-06T12:00:00Z' }] } } };
+      return { data: { messages: { items: [{ owner: false, text: 'Hello', id: 'c', created: '2026-11-06T11:00:00Z' }, { owner: true, text: 'Hi Ravi', id: 'd', created: '2026-11-06T11:05:00Z' }] } } };
+    });
+    axios.create.mockReturnValue({ get });
+    const chats = await imp.recentChats();
+    expect(chats.map((c) => c.name)).toEqual(['Ravi', 'Asha']);
+    expect(chats[0].last).toMatchObject({ direction: 'OUT', text: 'Hi Ravi' });
+    expect(chats[0].phone).toBe('+919800000003');
+  });
+  test('a contact whose messages return 404 is skipped, not an error', async () => {
+    const get = jest.fn(async (url) => {
+      if (url === '/api/v1/getContacts') return { data: { contact_list: [contact('919800000004', 'Gone')] } };
+      const err = new Error('nf'); err.response = { status: 404 }; throw err;
+    });
+    axios.create.mockReturnValue({ get });
+    expect(await imp.recentChats()).toEqual([]);
   });
 });

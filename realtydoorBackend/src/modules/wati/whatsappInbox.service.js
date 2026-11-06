@@ -122,16 +122,32 @@ async function listConversations({ search, limit = 40 } = {}) {
     phones = leads.map((l) => l.buyerPhone);
   }
   const where = digits ? { phone: { contains: digits } } : phones ? { phone: { in: phones } } : {};
+  // With no search, the newest chats come live from WATI (stored history alone goes stale, because nothing webhooks into it yet); a failed
+  // read falls back to what is stored. Searches stay on the stored history.
+  let live = [];
+  if (!search && process.env.WATI_API_ENDPOINT && process.env.WATI_ACCESS_TOKEN) {
+    live = await require('./watiImport.service').recentChats().catch((err) => { logger.warn('[whatsapp] live chat list failed, using stored chats', { error: err.message }); return []; });
+  }
   const groups = await prisma.whatsAppMessage.groupBy({ by: ['phone'], where, _max: { at: true }, _count: { _all: true }, orderBy: { _max: { at: 'desc' } }, take: Math.min(limit, 100) });
   const out = [];
+  const liveItems = live.slice(0, Math.min(limit, 100));
+  const liveLeads = liveItems.length ? await prisma.lead.findMany({ where: { buyerPhone: { in: liveItems.map((c) => c.phone) } }, orderBy: { createdAt: 'asc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, projectId: true, buyerPhone: true } }) : [];
+  const leadByPhone = new Map(liveLeads.map((l) => [l.buyerPhone, l]));   // oldest first, so a buyer's newest lead wins
+  for (const c of liveItems) {
+    const lead = leadByPhone.get(c.phone) || null;
+    out.push({ phone: c.phone, name: lead?.buyerName || c.name || null, messages: null, lastAt: c.lastAt, last: { direction: c.last.direction, kind: c.last.kind, text: c.last.text, templateName: c.last.templateName || null, status: c.last.status, at: c.last.at }, lead });
+  }
+  const seen = new Set(out.map((c) => c.phone));
   for (const g of groups) {
+    if (seen.has(g.phone)) continue;
     const [last, lead] = await Promise.all([
       prisma.whatsAppMessage.findFirst({ where: { phone: g.phone }, orderBy: { at: 'desc' }, select: { direction: true, kind: true, text: true, templateName: true, status: true, at: true } }),
       prisma.lead.findFirst({ where: { buyerPhone: g.phone }, orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, projectId: true } }),
     ]);
     out.push({ phone: g.phone, name: lead?.buyerName || null, messages: g._count._all, lastAt: g._max.at, last, lead });
   }
-  return maskedList(out);
+  out.sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
+  return maskedList(out.slice(0, Math.min(limit, 100)));
 }
 
 /** The conversation as WATI holds it right now (read with the API key, nothing copied). Returns [] if WATI cannot be reached. */

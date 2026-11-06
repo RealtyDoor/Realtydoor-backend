@@ -132,4 +132,36 @@ async function liveMessages(phoneDigits, max = 200) {
   return items.map((i) => toRow(i, phone)).filter(Boolean).sort((a, b) => a.at - b.at).slice(-max);
 }
 
-module.exports = { liveMessages, importSlice, parseContactDate, toRow, statusOf, CONTACTS_PER_PAGE };
+const { withCache } = require('../../lib/cache');
+
+/**
+ * The newest chats, read live from WATI (nothing stored): the most recently active contacts, each with its latest messages, kept when the buyer
+ * wrote at least once. Broadcast-only contacts are left out. Cached for a minute so the page does not hit WATI on every open.
+ */
+async function recentChats({ contacts = 60, perContact = 10, concurrency = 6 } = {}) {
+  return withCache(`wati:recentChats:${contacts}`, 60, async () => {
+    const http = client();
+    const res = await http.get('/api/v1/getContacts', { params: { pageSize: contacts, pageNumber: 1 } });
+    const list = (res.data?.contact_list || []).filter((c) => String(c.wAid || c.phone || '').replace(/\D/g, '').length >= 8);
+    const out = [];
+    let next = 0;
+    const worker = async () => {
+      while (next < list.length) {
+        const c = list[next]; next += 1;
+        const digits = String(c.wAid || c.phone || '').replace(/\D/g, '');
+        try {
+          const m = await http.get(`/api/v1/getMessages/${digits}`, { params: { pageSize: perContact, pageNumber: 1 } });
+          const rows = (m?.data?.messages?.items || []).map((i) => toRow(i, `+${digits}`)).filter(Boolean).sort((a, b) => a.at - b.at);
+          if (!rows.some((r) => r.direction === 'IN')) continue;
+          out.push({ phone: `+${digits}`, name: c.fullName || c.firstName || null, last: rows[rows.length - 1], lastAt: rows[rows.length - 1].at });
+        } catch (err) {
+          if (err.response?.status !== 404) logger.warn('[watiImport] recent chat read failed', { error: err.message });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, worker));
+    return out.sort((a, b) => b.lastAt - a.lastAt);
+  });
+}
+
+module.exports = { recentChats, liveMessages, importSlice, parseContactDate, toRow, statusOf, CONTACTS_PER_PAGE };
