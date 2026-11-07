@@ -34,7 +34,7 @@ const updateSchema = z.object({
   convertedToId: optional(z.string().trim().max(60)),
 });
 
-const convertSchema = z.object({ partnerId: z.string().regex(/^[a-f\d]{24}$/i, 'Choose a partner') });
+const convertSchema = z.object({ partnerId: z.string().regex(/^[a-f\d]{24}$/i, 'Choose a partner'), createProject: z.boolean().optional() });
 const noteSchema = z.object({ text: z.string().trim().min(1).max(2000) });
 const reopenSchema = z.object({ expiresInDays: z.number().int().min(1).max(f.MAX_EXPIRY_DAYS).optional() });
 
@@ -134,5 +134,5 @@ module.exports = {
   listingPreview, convert,
   requireLink, senderGet, senderSave, senderSubmit, senderUpload, senderRemoveFile,
   list, get, create, update, addNote, reopen, revoke, validateDocKey, adminUpload, adminRemoveFile,
-  createSchema, updateSchema,
+  createSchema, updateSchema, convertSchema,
 };

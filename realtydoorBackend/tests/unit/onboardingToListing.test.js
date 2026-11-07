@@ -1,6 +1,7 @@
 jest.mock('../../src/lib/prisma', () => ({
   onboardingRequest: { findUnique: jest.fn(), update: jest.fn() },
   user: { findFirst: jest.fn() },
+  project: { create: jest.fn(), delete: jest.fn() },
 }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn().mockResolvedValue({}) }));
 jest.mock('../../src/lib/notifications', () => ({ notifyAdmins: jest.fn() }));
@@ -10,7 +11,7 @@ jest.mock('../../src/modules/properties/properties.service', () => ({ createProp
 const prisma = require('../../src/lib/prisma');
 const { copyFile, deleteFile } = require('../../src/lib/fileUpload');
 const { createProperty } = require('../../src/modules/properties/properties.service');
-const { buildListing, bhkOf } = require('../../src/lib/onboardingToListing');
+const { buildListing, buildProject, bhkOf } = require('../../src/lib/onboardingToListing');
 const service = require('../../src/modules/onboarding/onboarding.service');
 
 const where = { addressLine: '12 Main Road', locality: 'Jigani', city: 'Bengaluru', state: 'Karnataka', pincode: '560105' };
@@ -159,5 +160,108 @@ describe('converting', () => {
     prisma.onboardingRequest.findUnique.mockResolvedValue(ready({ status: 'RECEIVED' }));
     expect((await service.listingPreview('r1')).canConvert).toBe(false);
     expect(createProperty).not.toHaveBeenCalled();
+  });
+});
+
+describe('the builder project record', () => {
+  const answers = { ...where, projectName: 'Green Park', developerName: 'Asha Builders', launchStatus: 'Under construction', reraNumber: 'PRM/KA/RERA/1251/1', escrowBank: 'HDFC Bank, Jayanagar', description: 'A gated community near the Jigani industrial belt.', unitTypes: [{ kind: 'Apartment', config: '2 BHK', priceFrom: 6000000, count: 100, available: 40 }], priceMin: 6000000, accountNumber: '123456789012', ifsc: 'HDFC0000001' };
+  const files = [doc('approved_plan', 'plan.pdf', 'p1'), doc('commencement_certificate', 'cc.pdf', 'p2'), doc('land_title', 'title.pdf', 'p3'), doc('brochure', 'b.pdf', 'p4'), doc('photos', 'a.jpg', 'p5')];
+  const newProject = (over = {}) => req('NEW_PROJECT', answers, { documents: files, ...over });
+
+  test('carries the registration, bank name and the three approvals, and no units and no account numbers', () => {
+    const { project } = buildListing(newProject());
+    expect(project.available).toBe(true);
+    expect(project.canCreate).toBe(true);
+    expect(project.fields).toEqual({
+      title: 'Green Park', description: expect.stringContaining('gated community'), address: '12 Main Road', locality: 'Jigani', city: 'Bengaluru', state: 'Karnataka', pincode: '560105',
+      reraProjectNumber: 'PRM/KA/RERA/1251/1', designatedAccountBankName: 'HDFC Bank, Jayanagar',
+    });
+    expect(Object.keys(project.docs).sort()).toEqual(['approvedPlanUrl', 'commencementCertificateUrl', 'landTitleDocUrl']);
+    expect(project.carries).toEqual({ reraNumber: true, designatedAccountBank: true, approvedPlan: true, commencementCertificate: true, landTitle: true });
+    expect(JSON.stringify(project)).not.toMatch(/accountNumber|ifsc|123456789012|HDFC0000001|units/i);
+  });
+  test('a project can be made with some approvals still to come', () => {
+    const { project } = buildListing(newProject({ documents: [doc('approved_plan', 'plan.pdf', 'p1')] }));
+    expect(project.canCreate).toBe(true);
+    expect(project.carries).toMatchObject({ approvedPlan: true, commencementCertificate: false, landTitle: false });
+  });
+  test('only a new project can become one', () => {
+    expect(buildListing(req('FLAT', answers)).project).toMatchObject({ available: false });
+    expect(buildProject(req('PLOT', answers), {}, { documents: [] }).available).toBe(false);
+  });
+
+  describe('converting with it', () => {
+    beforeEach(() => {
+      jest.clearAllMocks();
+      prisma.user.findFirst.mockResolvedValue({ id: 'p1', name: 'Dev One' });
+      copyFile.mockImplementation(async (key, folder) => ({ url: `https://b/${folder}/${key.split('/').pop()}`, key: `${folder}/${key.split('/').pop()}` }));
+      createProperty.mockResolvedValue({ id: 'prop1', slug: 'green-park-1' });
+      prisma.project.create.mockResolvedValue({ id: 'proj1' });
+      prisma.project.delete.mockResolvedValue({});
+      prisma.onboardingRequest.update.mockResolvedValue({});
+    });
+
+    test('creates the project first, links the listing to it, reuses the copied private files, and notes the project id', async () => {
+      prisma.onboardingRequest.findUnique.mockResolvedValue(newProject({ adminNotes: [] }));
+      const out = await service.convertToListing('a1', 'r1', { partnerId: 'p1', createProject: true }, '1.1.1.1');
+      expect(out).toEqual({ propertyId: 'prop1', slug: 'green-park-1', partnerName: 'Dev One', projectId: 'proj1' });
+      const made = prisma.project.create.mock.calls[0][0].data;
+      expect(made).toMatchObject({ title: 'Green Park', builderId: 'p1', publishStatus: 'PENDING_APPROVAL', reraProjectNumber: 'PRM/KA/RERA/1251/1', designatedAccountBankName: 'HDFC Bank, Jayanagar' });
+      expect(made.slug).toMatch(/^green-park-\d+$/);
+      expect(made.approvedPlanUrl).toBe('https://b/properties/documents/p1-plan.pdf');
+      expect(made.commencementCertificateUrl).toBe('https://b/properties/documents/p2-cc.pdf');
+      expect(made.landTitleDocUrl).toBe('https://b/properties/documents/p3-title.pdf');
+      expect(prisma.project.create.mock.invocationCallOrder[0]).toBeLessThan(createProperty.mock.invocationCallOrder[0]);
+      expect(createProperty.mock.calls[0][0].projectId).toBe('proj1');
+      // four papers and one photo copied once each: the project did not copy anything again
+      expect(copyFile).toHaveBeenCalledTimes(5);
+      const upd = prisma.onboardingRequest.update.mock.calls[0][0].data;
+      expect(upd).toMatchObject({ status: 'CONVERTED', convertedToId: 'prop1' });
+      expect(upd.adminNotes[0].text).toContain('proj1');
+    });
+    test('without the flag no project is made', async () => {
+      prisma.onboardingRequest.findUnique.mockResolvedValue(newProject());
+      const out = await service.convertToListing('a1', 'r1', { partnerId: 'p1' });
+      expect(prisma.project.create).not.toHaveBeenCalled();
+      expect(out.projectId).toBeUndefined();
+      expect(createProperty.mock.calls[0][0].projectId).toBeUndefined();
+      expect(prisma.onboardingRequest.update.mock.calls[0][0].data.adminNotes).toBeUndefined();
+    });
+    test('asking for a project on anything but a new project is refused before any file is copied', async () => {
+      prisma.onboardingRequest.findUnique.mockResolvedValue(req('FLAT', { ...where, projectName: 'Sobha', askingPrice: 9500000, description: 'Bright east-facing flat with a clear view.' }));
+      await expect(service.convertToListing('a1', 'r1', { partnerId: 'p1', createProject: true })).rejects.toMatchObject({ statusCode: 400, data: { code: 'PROJECT_ONLY_FOR_NEW_PROJECT' } });
+      expect(copyFile).not.toHaveBeenCalled();
+      expect(prisma.project.create).not.toHaveBeenCalled();
+    });
+    test('if the listing cannot be created the project is deleted too, the copies are removed, and the request is untouched', async () => {
+      prisma.onboardingRequest.findUnique.mockResolvedValue(newProject());
+      createProperty.mockRejectedValue(new Error('db down'));
+      await expect(service.convertToListing('a1', 'r1', { partnerId: 'p1', createProject: true })).rejects.toThrow('db down');
+      expect(prisma.project.delete).toHaveBeenCalledWith({ where: { id: 'proj1' } });
+      expect(deleteFile).toHaveBeenCalledTimes(5);
+      expect(prisma.onboardingRequest.update).not.toHaveBeenCalled();
+    });
+    test('if the project cannot be created nothing else is left behind', async () => {
+      prisma.onboardingRequest.findUnique.mockResolvedValue(newProject());
+      prisma.project.create.mockRejectedValue(new Error('project failed'));
+      await expect(service.convertToListing('a1', 'r1', { partnerId: 'p1', createProject: true })).rejects.toThrow('project failed');
+      expect(prisma.project.delete).not.toHaveBeenCalled();
+      expect(createProperty).not.toHaveBeenCalled();
+      expect(deleteFile).toHaveBeenCalledTimes(5);
+      expect(prisma.onboardingRequest.update).not.toHaveBeenCalled();
+    });
+    test('one-shot still holds: a converted request cannot make another project', async () => {
+      prisma.onboardingRequest.findUnique.mockResolvedValue(newProject({ status: 'READY', convertedToId: 'prop0' }));
+      await expect(service.convertToListing('a1', 'r1', { partnerId: 'p1', createProject: true })).rejects.toMatchObject({ data: { code: 'ALREADY_CONVERTED' } });
+      expect(prisma.project.create).not.toHaveBeenCalled();
+    });
+    test('the preview says what a project would carry, with no files and no units', async () => {
+      prisma.onboardingRequest.findUnique.mockResolvedValue(newProject());
+      const p = await service.listingPreview('r1');
+      expect(p.project).toMatchObject({ available: true, canCreate: true, carries: { approvedPlan: true, landTitle: true } });
+      expect(JSON.stringify(p.project)).not.toMatch(/s3Key|onboarding\//);
+      prisma.onboardingRequest.findUnique.mockResolvedValue(req('FLAT', answers));
+      expect((await service.listingPreview('r1')).project).toMatchObject({ available: false });
+    });
   });
 });

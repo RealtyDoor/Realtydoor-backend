@@ -129,6 +129,48 @@ function planFiles(request) {
   return { images, floorPlan, documents };
 }
 
+// The form's document keys that become the builder project's three approvals (the model keeps one link for each).
+const PROJECT_DOC_KEYS = { approved_plan: 'approvedPlanUrl', commencement_certificate: 'commencementCertificateUrl', land_title: 'landTitleDocUrl' };
+
+/**
+ * The builder's Project record a NEW_PROJECT request can also become. `fields` is everything except the three approval links, which
+ * need the files copied first: `docs` says which form file feeds which link. No units are made: the form only has unit-type summary rows,
+ * and a unit needs a real number (A-1203), so the project starts with none and units are added later. Never carries account
+ * numbers or IFSC: only the name of the designated-account bank.
+ */
+function buildProject(request, listingPayload, files) {
+  if (request.propertyType !== 'NEW_PROJECT') return { available: false, reason: 'Only a new project can also become a builder project record.' };
+  const a = request.data || {};
+  const fields = {
+    title: listingPayload.title,
+    description: listingPayload.description,
+    address: listingPayload.address,
+    locality: listingPayload.locality,
+    city: listingPayload.city,
+    state: listingPayload.state,
+    pincode: listingPayload.pincode,
+    reraProjectNumber: str(a.reraNumber),
+    designatedAccountBankName: str(a.escrowBank)?.slice(0, 200),
+  };
+  const docs = {};
+  for (const d of files.documents) {
+    const field = PROJECT_DOC_KEYS[d.key];
+    if (field && !docs[field]) docs[field] = d;
+  }
+  const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined && v !== ''));
+  const complete = ['title', 'description', 'address', 'locality', 'city', 'state', 'pincode'].every((k) => clean[k]);
+  return {
+    available: true,
+    fields: clean,
+    docs,
+    carries: {
+      reraNumber: !!clean.reraProjectNumber, designatedAccountBank: !!clean.designatedAccountBankName,
+      approvedPlan: !!docs.approvedPlanUrl, commencementCertificate: !!docs.commencementCertificateUrl, landTitle: !!docs.landTitleDocUrl,
+    },
+    canCreate: complete,
+  };
+}
+
 /**
  * The listing a request would become, what is still missing, what is not copied, and how many files go across.
  * `problems` is empty only when the listing can be created as is.
@@ -158,7 +200,8 @@ function buildListing(request) {
     notCopied,
     counts: { photos: files.images.length, documents: files.documents.length + (files.floorPlan ? 1 : 0), floorPlan: !!files.floorPlan },
     files,
+    project: buildProject(request, parsed.success ? parsed.data : payload, files),
   };
 }
 
-module.exports = { buildListing, buildPayload, planFiles, bhkOf, FIELD_LABEL };
+module.exports = { buildListing, buildPayload, buildProject, planFiles, bhkOf, FIELD_LABEL, PROJECT_DOC_KEYS };

@@ -207,21 +207,26 @@ async function adminRevoke(adminId, id, ip) {
 // ─── Convert to a listing ─────────────────────────────────────────────────────
 
 const CONVERTIBLE = ['READY'];
+const projectSlug = (title) => `${String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}-${Date.now()}`; // same shape as project.service.js
 
 /** What the request would become as a listing, and what is still missing. Nothing is written. */
 async function listingPreview(id) {
   const row = await prisma.onboardingRequest.findUnique({ where: { id } });
   if (!row) throw new ApiError(404, 'Onboarding request not found');
-  const { payload, problems, notCopied, counts } = buildListing(row);
-  return { status: row.status, canConvert: CONVERTIBLE.includes(row.status) && problems.length === 0, payload, problems, notCopied, counts, convertedToId: row.convertedToId || null };
+  const { payload, problems, notCopied, counts, project } = buildListing(row);
+  // What the optional builder project would carry (never the file objects or bucket keys).
+  const projectView = project.available ? { available: true, canCreate: project.canCreate && problems.length === 0, carries: project.carries, units: 'none: units are added later by the builder or an admin' } : { available: false, reason: project.reason };
+  return { status: row.status, canConvert: CONVERTIBLE.includes(row.status) && problems.length === 0, payload, problems, notCopied, counts, project: projectView, convertedToId: row.convertedToId || null };
 }
 
 /**
  * Creates the listing from a READY request, owned by the chosen partner and sent to the normal review queue (PENDING_APPROVAL).
  * Files are copied out of the private onboarding folder first (photos to the listing's pictures, papers to its private documents);
  * if the listing cannot be created the copies are removed again, and the request is left untouched.
+ * With createProject (new projects only) the builder's Project record is made first and the listing is created already linked to it;
+ * if the listing then fails, that project is deleted too. The project starts with no units.
  */
-async function convertToListing(adminId, id, { partnerId }, ip) {
+async function convertToListing(adminId, id, { partnerId, createProject = false }, ip) {
   const row = await prisma.onboardingRequest.findUnique({ where: { id } });
   if (!row) throw new ApiError(404, 'Onboarding request not found');
   // Checked on the link to the listing as well as the status, so a request that was somehow moved back can never make a second listing.
@@ -230,8 +235,10 @@ async function convertToListing(adminId, id, { partnerId }, ip) {
   const partner = await prisma.user.findFirst({ where: { id: partnerId, role: 'PARTNER', deletedAt: { isSet: false } }, select: { id: true, name: true } });
   if (!partner) throw new ApiError(400, 'Choose the partner account that will own this listing.', { code: 'PARTNER_REQUIRED' });
 
-  const { payload, problems, files } = buildListing(row);
+  if (createProject && row.propertyType !== 'NEW_PROJECT') throw new ApiError(400, 'Only a new project can also become a builder project record.', { code: 'PROJECT_ONLY_FOR_NEW_PROJECT' });
+  const { payload, problems, files, project: projectPlan } = buildListing(row);
   if (problems.length) throw new ApiError(400, 'Some details are still missing for a listing.', { code: 'CONVERT_INCOMPLETE', problems });
+  if (createProject && !projectPlan.canCreate) throw new ApiError(400, 'The project record needs the address, locality, city, state, pincode and a description first.', { code: 'PROJECT_INCOMPLETE' });
 
   const copied = [];
   const carry = async (doc, folder) => {
@@ -240,28 +247,42 @@ async function convertToListing(adminId, id, { partnerId }, ip) {
     return out;
   };
   let property;
+  let project = null;
   try {
     const images = [];
     for (const d of files.images) images.push((await carry(d, 'properties')).url);
     const documents = [];
+    const urlOf = new Map(); // the private copy made for each file, so the project's approval links reuse it instead of copying twice
     for (const d of files.documents) {
       const out = await carry(d, 'properties/documents');
+      urlOf.set(d.id, out.url);
       documents.push({ name: d.name, url: out.url, uploadedAt: new Date().toISOString() });
     }
     const floorPlanUrl = files.floorPlan ? (await carry(files.floorPlan, 'properties')).url : undefined;
+    if (createProject) {
+      const links = Object.fromEntries(Object.entries(projectPlan.docs).map(([field, d]) => [field, urlOf.get(d.id)]).filter(([, url]) => url));
+      project = await prisma.project.create({
+        data: { ...projectPlan.fields, ...links, slug: projectSlug(projectPlan.fields.title), builderId: partner.id, publishStatus: 'PENDING_APPROVAL' },
+      });
+    }
     const { createProperty } = require('../properties/properties.service');
-    property = await createProperty({ ...payload, images, documents, ...(floorPlanUrl && { floorPlanUrl }) }, partner.id);
+    property = await createProperty({ ...payload, images, documents, ...(floorPlanUrl && { floorPlanUrl }), ...(project && { projectId: project.id }) }, partner.id);
   } catch (err) {
+    if (project) await prisma.project.delete({ where: { id: project.id } }).catch((e) => logger.warn('[onboarding] could not remove the project after a failed convert', { error: e.message }));
     await Promise.all(copied.map((k) => deleteFile(k).catch(() => {})));
     throw err;
   }
 
+  // The project's id is kept on the request as a system note, so it can still be found after the answer screen is gone.
+  const notes = project
+    ? [...asList(row.adminNotes), { at: new Date().toISOString(), adminId, text: `Builder project record created (id ${project.id}), with no units yet. Units are added later by the builder or an admin.` }].slice(-200)
+    : undefined;
   await prisma.onboardingRequest.update({
     where: { id },
-    data: { status: 'CONVERTED', convertedToType: 'PROPERTY', convertedToId: property.id, lastSavedAt: new Date() },
+    data: { status: 'CONVERTED', convertedToType: 'PROPERTY', convertedToId: property.id, lastSavedAt: new Date(), ...(notes && { adminNotes: notes }) },
   });
-  await audit(adminId, 'ONBOARDING_CONVERTED', id, { propertyId: property.id, partnerId: partner.id }, ip);
-  return { propertyId: property.id, slug: property.slug, partnerName: partner.name };
+  await audit(adminId, 'ONBOARDING_CONVERTED', id, { propertyId: property.id, partnerId: partner.id, ...(project && { projectId: project.id }) }, ip);
+  return { propertyId: property.id, slug: property.slug, partnerName: partner.name, ...(project && { projectId: project.id }) };
 }
 
 module.exports = {

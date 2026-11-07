@@ -10,7 +10,7 @@ const { notifyAdmins } = require('../../src/lib/notifications');
 const { deleteFile } = require('../../src/lib/fileUpload');
 const f = require('../../src/lib/onboardingForm');
 const service = require('../../src/modules/onboarding/onboarding.service');
-const { createSchema } = require('../../src/modules/onboarding/onboarding.controller');
+const { createSchema, convertSchema } = require('../../src/modules/onboarding/onboarding.controller');
 
 const row = (over = {}) => ({
   id: 'r1', tokenHash: 'h', propertyType: 'NEW_PROJECT', title: 'Green Park', contactName: 'Asha', status: 'SENT',
@@ -190,6 +190,13 @@ describe('admin side', () => {
     expect(v.tokenHash).toBeUndefined();
     expect(JSON.stringify(v)).not.toContain('s3Key');
     expect(v.documents[0].url).toBe('https://b/x');
+  });
+  test('convert input: a partner id, and createProject only as a real boolean', () => {
+    const id = '64b000000000000000000001';
+    expect(convertSchema.parse({ partnerId: id })).toEqual({ partnerId: id });
+    expect(convertSchema.parse({ partnerId: id, createProject: true }).createProject).toBe(true);
+    expect(() => convertSchema.parse({ partnerId: id, createProject: 'yes' })).toThrow();
+    expect(() => convertSchema.parse({ partnerId: 'nope' })).toThrow();
   });
   test('create input is validated', () => {
     expect(() => createSchema.parse({ propertyType: 'CASTLE', contactName: 'Ravi' })).toThrow();
