@@ -1351,6 +1351,8 @@ async function refund(escrowId, adminId, ip, opts = {}) {
       data: { status: 'HELD', refundedAt: null },
     });
     // BE-16 — Razorpay throws a plain {statusCode, error} object, not an ApiError.
+    // The friendly text can be a bare "invalid request sent"; keep Razorpay's own code, description, field and reason for whoever debugs it.
+    logger.error('[escrow] Razorpay refund failed', { escrowId, paymentId: escrow.razorpayPaymentId, amountPaise: amountInPaise, statusCode: err?.statusCode, razorpayError: err?.error || err?.message });
     throw new ApiError(502, `Razorpay refund failed: ${razorpayErrorText(err)}`, { code: 'RAZORPAY_ERROR' });
   }
 
