@@ -263,7 +263,7 @@ async function buildLocalitiesList() {
     prisma.localityInsight.findMany({
       select: {
         city: true, locality: true, avgPricePerSqftPaise: true,
-        priceChangeLastMonthPct: true, priceTrends: true, localityScore: true, subtitle: true,
+        priceChangeLastMonthPct: true, priceTrends: true, localityScore: true, subtitle: true, avgRentYieldPct: true,
       },
       orderBy: [{ city: 'asc' }, { locality: 'asc' }],
     }),
@@ -286,6 +286,8 @@ async function buildLocalitiesList() {
       priceChangeLastMonthPct: i.priceChangeLastMonthPct ?? null,
       priceChangeOneYearPct: i.priceTrends?.growth?.oneYear ?? null,
       localityScore: i.localityScore ?? null,
+      // Gross rental yield in percent, for the home page's insight carousel. Null when the locality report has none.
+      avgRentYieldPct: i.avgRentYieldPct ?? null,
       subtitle: i.subtitle ?? null,
       listingsCount: countMap.get(`${i.city}|${i.locality}`) ?? 0,
     }))
