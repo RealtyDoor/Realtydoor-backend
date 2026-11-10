@@ -1,6 +1,6 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
-const { createNotification } = require('../../lib/notifications');
+const { createNotification, notifyAdmins } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const { notifyUser } = require('../../lib/wati');
 const { sendDisputeUpdate } = require('../../lib/email');
@@ -105,6 +105,19 @@ async function adminResolveDispute(disputeId, { status, adminNote }, adminId) {
     const u = await prisma.user.findUnique({ where: { id: dispute.userId }, select: { email: true } });
     if (u?.email) await sendDisputeUpdate(u.email, { status: label, note: adminNote ? adminNote.slice(0, 200) : '' });
   })().catch(() => null);
+  // Resolving a dispute does not unfreeze its escrow (a person decides: unfreeze, release or refund), so remind the admins while it is still frozen.
+  if (dispute.type === 'ESCROW' && (updated.status === 'RESOLVED' || updated.status === 'CLOSED')) {
+    (async () => {
+      const escrow = await prisma.escrowTransaction.findUnique({ where: { id: dispute.referenceId }, select: { id: true, status: true } });
+      if (escrow?.status === 'FROZEN') {
+        await notifyAdmins({
+          title: 'Dispute resolved, token still frozen',
+          message: 'A dispute on a frozen token was marked resolved, but the token is still frozen. Open Escrow and unfreeze, release or refund it.',
+          type: 'ESCROW_FROZEN', linkUrl: '/admin/escrow',
+        });
+      }
+    })().catch(() => null);
+  }
   await createAuditLog({
     adminId, action: 'DISPUTE_UPDATED', targetType: 'Dispute', targetId: disputeId,
     before: { status: dispute.status, adminNote: dispute.adminNote },

@@ -21,7 +21,10 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 const APPLY = process.argv.includes('--apply');
-const ACTIVE_STATUSES = ['HELD', 'PAYMENT_PENDING'];
+// 7 Nov 2026: widened from HELD and PAYMENT_PENDING. createOrder() (escrow.service.js) refuses a new order while a token is in any of these
+// states (a frozen or part-refunded token still holds the buyer's money), so the index must back the same rule against the race.
+const ACTIVE_STATUSES = ['HELD', 'PAYMENT_PENDING', 'HELD_PAYOUT_FAILED', 'FROZEN', 'PARTIALLY_REFUNDED'];
+const INDEX_NAME = 'escrow_active_lead_unique';
 
 async function main() {
   const active = await prisma.escrowTransaction.findMany({
@@ -46,19 +49,30 @@ async function main() {
     return;
   }
 
+  // An index of the same name with a different filter cannot be changed in place: drop it, then create the wider one.
+  const existing = (await prisma.$runCommandRaw({ listIndexes: 'EscrowTransaction' })).cursor.firstBatch.find((i) => i.name === INDEX_NAME);
+  const sameFilter = existing && JSON.stringify(existing.partialFilterExpression?.status?.$in) === JSON.stringify(ACTIVE_STATUSES);
+  if (sameFilter) {
+    console.log('The index is already in place with these statuses. Nothing to do.');
+    return;
+  }
+  if (existing) {
+    console.log(`Replacing ${INDEX_NAME} (was ${JSON.stringify(existing.partialFilterExpression?.status?.$in)}). There is a gap of a few milliseconds with no database-level guard; the application check still runs.`);
+    await prisma.$runCommandRaw({ dropIndexes: 'EscrowTransaction', index: INDEX_NAME });
+  }
   await prisma.$runCommandRaw({
     createIndexes: 'EscrowTransaction',
     indexes: [
       {
         key: { leadId: 1 },
-        name: 'escrow_active_lead_unique',
+        name: INDEX_NAME,
         unique: true,
         partialFilterExpression: { status: { $in: ACTIVE_STATUSES } },
       },
     ],
   });
 
-  console.log('Partial unique index on (leadId, active status) created.');
+  console.log(`Partial unique index on (leadId, active status) created for ${ACTIVE_STATUSES.join(', ')}.`);
 }
 
 main()

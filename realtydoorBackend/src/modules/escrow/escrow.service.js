@@ -1,6 +1,7 @@
 const prisma = require('../../lib/prisma');
+const escrowTotals = require('../../lib/escrowTotals');
 const ApiError = require('../../utils/ApiError');
-const { razorpay, createEscrowOrder, createPayoutContact, createPayoutFundAccount, createPayout, validateFundAccountOrWarn, refundPayment } = require('../../lib/razorpay');
+const { razorpay, createEscrowOrder, createPayoutContact, createPayoutFundAccount, createPayout, validateFundAccountOrWarn, refundPayment, findPayoutByReference } = require('../../lib/razorpay');
 const { createAuditLog } = require('../../lib/auditLog');
 const { createNotification, notifyAdmins } = require('../../lib/notifications');
 const { notifyUser } = require('../../lib/wati');
@@ -15,18 +16,10 @@ const money = require('../../lib/moneyModel');
 const { getMoneySettings } = require('../money/moneyConfig');
 const ledger = require('../money/ledger.service');
 const partnerTax = require('../money/partnerTax.service');
+const { razorpayErrorText, isClearRefusal, isLowBalance, refundFailure, recordRefundFailure } = require('../../lib/refundFailure');
 
 const DEFAULT_MIN_ESCROW_AMOUNT = 50000;
 const DEFAULT_MAX_ESCROW_PCT = 10;
-
-// Razorpay's SDK rejects with a plain {statusCode, error} object, so `err.message` is usually undefined and the
-// reason sits in err.error.description (or err.error as a string). Never fall back to a bare "Unknown error".
-function razorpayErrorText(err, fallback = 'Unknown error') {
-  const e = err?.error;
-  return (e && (e.description || e.reason || (typeof e === 'string' ? e : null)))
-    || err?.message
-    || (err?.statusCode ? `HTTP ${err.statusCode} from Razorpay` : fallback);
-}
 
 // Buyer-scoped lookup — for polling status right after a Checkout attempt,
 // or refreshing later. Buyers previously had no way to check escrow status
@@ -180,8 +173,10 @@ async function getFeeInvoice(escrowId, buyerId) {
 // token, the separate payment processing fee, the total charged, and the
 // refund terms, all from settings (money model Rev 3, T55/T56). Same numbers
 // everywhere: the Razorpay order is for totalPaise.
-function checkoutBreakdown(tokenPaise, settings) {
-  const fee = money.processingFee(tokenPaise, { ...settings.processingFee });
+// 7 Nov 2026: an NRI buyer may pay with a foreign card (Razorpay 3% + GST, not 2% + GST), so the fee is sized with the NRI rate for them.
+function checkoutBreakdown(tokenPaise, settings, { nri = false } = {}) {
+  const gatewayPct = nri ? settings.processingFee.gatewayPctNri : settings.processingFee.gatewayPct;
+  const fee = money.processingFee(tokenPaise, { ...settings.processingFee, gatewayPct });
   const r = settings.refund;
   return {
     tokenPaise,
@@ -189,7 +184,8 @@ function checkoutBreakdown(tokenPaise, settings) {
     processingFeeGstPaise: fee.feeGstPaise,
     totalPaise: fee.totalPaise,
     processingFeeEnabled: settings.processingFee.enabled,
-    gatewayPct: settings.processingFee.gatewayPct,
+    nri,
+    gatewayPct,
     gatewayGstPct: settings.processingFee.gatewayGstPct,
     refundWindowHours: r.freeWindowHours,
     cancellationChargePaise: Math.min(r.cancellationChargePaise, tokenPaise),
@@ -201,12 +197,12 @@ function checkoutBreakdown(tokenPaise, settings) {
 // + payment processing fee Y"). Reads settings only; moves no money.
 const MAX_QUOTE_RUPEES = 1_000_000_000; // Rs. 100 crore
 
-async function getCheckoutQuote(amountInRupees) {
+async function getCheckoutQuote(amountInRupees, { nri = false } = {}) {
   const tokenPaise = money.toPaise(amountInRupees);
   if (!Number.isInteger(tokenPaise) || tokenPaise <= 0) throw new ApiError(400, 'amount must be a positive number');
   // This price check is public. A token can never be anywhere near this, and a huge number would only produce nonsense arithmetic.
   if (!Number.isSafeInteger(tokenPaise) || amountInRupees > MAX_QUOTE_RUPEES) throw new ApiError(400, 'amount is too large');
-  return checkoutBreakdown(tokenPaise, await getMoneySettings());
+  return checkoutBreakdown(tokenPaise, await getMoneySettings(), { nri });
 }
 
 async function createOrder(leadId, buyerId, amountInRupees) {
@@ -218,6 +214,8 @@ async function createOrder(leadId, buyerId, amountInRupees) {
     include: { property: { select: { price: true } } },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  // The fee is sized from the buyer's own NRI flag in the database, never from anything the browser sends. Read only when a price is needed.
+  const isNri = async () => !!(await prisma.user.findUnique({ where: { id: buyerId }, select: { isNRI: true } }))?.isNRI;
   // A cancelled or closed inquiry can never be paid again; say why and what to do, not the generic visit message.
   if (lead.status === 'DROPPED') {
     throw new ApiError(400, 'This inquiry was cancelled, so a token cannot be paid on it. Send a new inquiry for the property to continue.', { code: 'LEAD_DROPPED' });
@@ -254,7 +252,8 @@ async function createOrder(leadId, buyerId, amountInRupees) {
   const refundProtectionFeePct = await getConfigNumber('escrow_refund_protection_fee_pct', 0);
 
   const existing = await prisma.escrowTransaction.findFirst({
-    where: { leadId, status: { in: ['HELD', 'PAYMENT_PENDING', 'HELD_PAYOUT_FAILED'] } },
+    // Any token that still holds money blocks a new order, not only HELD: a frozen (disputed) or part-refunded token still holds the buyer's money.
+    where: { leadId, status: { in: ['HELD', 'PAYMENT_PENDING', 'HELD_PAYOUT_FAILED', 'FROZEN', 'PARTIALLY_REFUNDED'] } },
   });
   if (existing) {
     if (existing.status !== 'PAYMENT_PENDING') {
@@ -271,7 +270,7 @@ async function createOrder(leadId, buyerId, amountInRupees) {
     // never made, and the only way out was dropping the whole lead. Razorpay
     // orders don't expire, so just resume the same order_id instead of erroring.
     const razorpayOrder = await razorpay.orders.fetch(existing.razorpayOrderId);
-    const resumedBreakdown = checkoutBreakdown(Math.round(existing.amount * 100), await getMoneySettings());
+    const resumedBreakdown = checkoutBreakdown(Math.round(existing.amount * 100), await getMoneySettings(), { nri: await isNri() });
 
     if (razorpayOrder.status === 'paid') {
       // The payment actually went through already — most likely the
@@ -301,7 +300,7 @@ async function createOrder(leadId, buyerId, amountInRupees) {
   const amountInPaise = Math.round(amountInRupees * 100);
   // Money model Rev 3 — the order is for token + processing fee; `amount`
   // stays the token alone (see schema comment on EscrowTransaction).
-  const breakdown = checkoutBreakdown(amountInPaise, await getMoneySettings());
+  const breakdown = checkoutBreakdown(amountInPaise, await getMoneySettings(), { nri: await isNri() });
   // Live-tested finding — Razorpay rejects a bad/expired key pair with a
   // plain {statusCode, error} throw (not an Error instance), which
   // previously fell through to the generic 500 INTERNAL_ERROR instead of
@@ -350,6 +349,56 @@ async function createOrder(leadId, buyerId, amountInRupees) {
   // button entirely. The backend already has the one true key_id in its
   // own env; no reason to make the frontend keep a second copy in sync.
   return { escrow, razorpayOrder: order, key: process.env.RAZORPAY_KEY_ID, refundProtectionFeePct, breakdown };
+}
+
+// Duplicate or late payment (7 Nov 2026, owner's decision). Razorpay only auto-refunds a duplicate on the SAME order, and only while it is still
+// authorized; a captured payment on another order of the same lead stays with us. So the extra payment is refunded in full (token and fee) here:
+// claim the row first (only one delivery wins), call Razorpay, put the row back and alert admins if Razorpay refuses. Never throws.
+async function refundDuplicatePayment(escrow, razorpayPaymentId) {
+  const paise = escrow.chargedPaise ?? Math.round(escrow.amount * 100);
+  try {
+    const claim = await prisma.escrowTransaction.updateMany({
+      where: { razorpayOrderId: escrow.razorpayOrderId, status: { in: ['PAYMENT_PENDING', 'FAILED'] } },
+      data: { status: 'REFUNDED', razorpayPaymentId, refundReason: 'DUPLICATE_PAYMENT', refundedAmountPaise: paise, refundedAt: new Date() },
+    });
+    if (claim.count === 0) return; // another delivery already handled it
+    let refundResult;
+    try {
+      refundResult = await refundPayment(razorpayPaymentId, paise);
+    } catch (err) {
+      await prisma.escrowTransaction.updateMany({
+        where: { razorpayOrderId: escrow.razorpayOrderId, status: 'REFUNDED', refundReason: 'DUPLICATE_PAYMENT' },
+        data: { status: escrow.status, refundedAmountPaise: 0, refundedAt: null, refundReason: null },
+      });
+      logger.error('[Escrow] Refund of a duplicate payment failed', { escrowId: escrow.id, razorpayPaymentId, statusCode: err?.statusCode, razorpayError: err?.error || err?.message });
+      await notifyAdmins({
+        title: 'Duplicate payment: refund by hand',
+        message: isLowBalance(err)
+          ? `The buyer paid twice for one deal and the automatic refund of ₹${money.toRupees(paise).toLocaleString('en-IN')} (payment ${razorpayPaymentId}) failed because the Razorpay payments balance is too low (Razorpay said: ${razorpayErrorText(err)}). Top up the balance, then refund it by hand in Razorpay.`
+          : `The buyer paid twice for one deal and Razorpay refused the automatic refund of ₹${money.toRupees(paise).toLocaleString('en-IN')} (payment ${razorpayPaymentId}): ${razorpayErrorText(err)}. Refund it by hand in Razorpay.`,
+        type: 'ESCROW_REFUNDED', linkUrl: '/admin/escrow',
+      }).catch(() => {});
+      return;
+    }
+    await prisma.escrowTransaction.updateMany({ where: { razorpayOrderId: escrow.razorpayOrderId }, data: { razorpayRefundId: refundResult.id, refundIds: { push: refundResult.id } } });
+    const updated = { ...escrow, razorpayPaymentId, status: 'REFUNDED' };
+    const feeSettings = await getMoneySettings();
+    await ledger.onPaymentCaptured(updated, { feeGstPct: feeSettings.processingFee.feeGstPct });
+    await ledger.onRefund(updated, { refundPaise: paise, reason: 'DUPLICATE_PAYMENT', feeReturned: true, cancellationChargePaise: 0, stage: 'DUPLICATE_PAYMENT' }, { refundId: refundResult.id, actor: { createdByType: 'SYSTEM', createdById: null } });
+    await createAuditLog({
+      adminId: null, actorRole: 'SYSTEM', action: 'ESCROW_DUPLICATE_REFUNDED', targetType: 'EscrowTransaction', targetId: escrow.id,
+      reason: 'Captured payment on an order whose lead already had an active token',
+      after: { status: 'REFUNDED', reason: 'DUPLICATE_PAYMENT', refundPaise: paise, razorpayPaymentId, razorpayRefundId: refundResult.id },
+    });
+    await createNotification({
+      userId: escrow.buyerId, title: 'Extra payment refunded',
+      message: `You had already paid the token for this deal, so the extra payment of ₹${money.toRupees(paise).toLocaleString('en-IN')} is being refunded to your original payment method.`,
+      type: 'ESCROW_REFUNDED',
+    }).catch(() => {});
+    await notifyAdmins({ title: 'Duplicate payment refunded', message: `An extra payment of ₹${money.toRupees(paise).toLocaleString('en-IN')} on one deal was refunded automatically (payment ${razorpayPaymentId}).`, type: 'ESCROW_REFUNDED', linkUrl: '/admin/escrow' }).catch(() => {});
+  } catch (err) {
+    logger.error('[Escrow] Could not process a duplicate payment — refund it by hand', { razorpayPaymentId, error: err.message });
+  }
 }
 
 // buyerId is only passed by the buyer-facing verify-payment controller — the
@@ -420,8 +469,9 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
     // A newer order for the same lead is already active, so this older one can't also become HELD.
     // The buyer has paid, so surface it loudly for the admin to resolve by hand instead of losing it.
     if (isEscrowLeadUniqueViolation(err)) {
-      logger.error('[Escrow] Captured payment for an old order but the lead already has an active escrow — needs manual review', { razorpayOrderId, razorpayPaymentId });
-      throw new ApiError(409, 'Your payment was received, but another payment order is already active for this deal. Our team will sort it out — please contact support.', { code: 'ESCROW_DUPLICATE_PAYMENT' });
+      logger.error('[Escrow] Captured payment for an old order but the lead already has an active escrow — refunding the extra payment', { razorpayOrderId, razorpayPaymentId });
+      await refundDuplicatePayment(escrow, razorpayPaymentId);
+      throw new ApiError(409, 'You already have a token payment for this deal, so this extra payment is being refunded to your original payment method. No action is needed.', { code: 'ESCROW_DUPLICATE_PAYMENT' });
     }
     throw err;
   }
@@ -511,8 +561,12 @@ async function repairReleaseBookkeeping(escrowId, adminId, ip) {
   const sellerAmountPaise = escrow.netAmountPaise ?? Math.round((escrow.netAmount ?? escrow.amount) * 100);
   const done = [];
   try {
-    await ledger.onSellerPayout(escrow, { sellerAmountPaise, payoutId: escrow.razorpayPayoutId, status: escrow.sellerPayoutStatus });
-    done.push('seller payout line');
+    // F20: no seller line for a seller payout that failed and has no payout on file; the retry writes it.
+    const manualSeller = !escrow.razorpayPayoutId && !escrow.sellerPayoutStatus && escrow.status === 'RELEASED';
+    if (escrow.razorpayPayoutId || manualSeller) {
+      await ledger.onSellerPayout(escrow, { sellerAmountPaise, payoutId: escrow.razorpayPayoutId, status: escrow.sellerPayoutStatus, manual: manualSeller });
+      done.push('seller payout line');
+    }
     if (escrow.partnerPaidFromCompany && escrow.partnerGrossPaise && escrow.partnerPayoutStatus !== 'deferred') {
       if (!c) throw new Error('the partner commission can no longer be worked out from the locked terms');
       if (c.commissionPaise !== escrow.partnerGrossPaise) {
@@ -946,6 +1000,8 @@ async function release(escrowId, adminId, releaseData, ip) {
   // of letting it propagate, so allSettled always waits for BOTH legs to
   // fully finish before any decision is made.
   const legs = [];
+  let sellerPayoutRequested = false; let partnerPayoutRequested = false;
+  let sellerUnknown = false; let partnerUnknown = false;
   if (sellerDetails) {
     legs.push((async () => {
       try {
@@ -953,6 +1009,7 @@ async function release(escrowId, adminId, releaseData, ip) {
         const fundAccount = await createPayoutFundAccount(contact.id, sellerDetails.name, sellerDetails.ifsc, sellerDetails.accountNumber);
         await validateFundAccountOrWarn(fundAccount.id, 'seller');
         const sellerAmountPaise = Math.round(sellerAmount * 100);
+        sellerPayoutRequested = true;
         const payout = await createPayout(
           fundAccount.id, sellerAmountPaise, `esc_s_${escrowId}_a${attempt}`,
           `seller:${escrowId}:${fundAccount.id}:${sellerAmountPaise}:${attempt}`,
@@ -965,6 +1022,8 @@ async function release(escrowId, adminId, releaseData, ip) {
         });
       } catch (err) {
         sellerError = err;
+        // F1: the create call went out and nobody refused it, so the payout may exist at RazorpayX.
+        if (sellerPayoutRequested && !sellerPayoutId && !isClearRefusal(err)) sellerUnknown = true;
       }
     })());
   }
@@ -983,6 +1042,7 @@ async function release(escrowId, adminId, releaseData, ip) {
           fundAccountId = fundAccount.id;
         }
         const partnerSharePaise = Math.round(partnerShare * 100);
+        partnerPayoutRequested = true;
         const payout = await createPayout(
           fundAccountId, partnerSharePaise, `esc_p_${escrowId}_a${attempt}`,
           `partner:${escrowId}:${fundAccountId}:${partnerSharePaise}:${attempt}`,
@@ -995,6 +1055,7 @@ async function release(escrowId, adminId, releaseData, ip) {
         });
       } catch (err) {
         partnerError = err;
+        if (partnerPayoutRequested && !partnerPayoutId && !isClearRefusal(err)) partnerUnknown = true;
       }
     })());
   }
@@ -1006,7 +1067,14 @@ async function release(escrowId, adminId, releaseData, ip) {
   // was paid and the release rolls back to HELD below, and when the partner
   // payout is deferred (it is credited later, by payDeferredPartnerCommission).
   const recordTds = async () => {
-    await ledger.onSellerPayout(escrow, { sellerAmountPaise: Math.round(sellerAmount * 100), payoutId: sellerPayoutId, status: sellerPayoutStatusVal });
+    // F20: the seller row is written only for a real RazorpayX payout or a transfer the admin confirmed was made by hand.
+    // A seller leg that failed (or whose result is unknown) gets no row here; the retry or the recovery writes it.
+    if (sellerPayoutId || (!sellerDetails && manualTransferConfirmed)) {
+      await ledger.onSellerPayout(escrow, {
+        sellerAmountPaise: Math.round(sellerAmount * 100), payoutId: sellerPayoutId, status: sellerPayoutStatusVal,
+        manual: !sellerPayoutId,
+      });
+    }
     if (!newModel || partnerDeferred) return;
     await recordPartnerCredit(escrow, commissionPayout, { payoutId: partnerPayoutId, payoutStatus: partnerPayoutStatusVal, adminId });
   };
@@ -1038,14 +1106,24 @@ async function release(escrowId, adminId, releaseData, ip) {
     // blocks both and routes to BE-2's payout tools, which already know
     // which leg succeeded.
     const anyLegPaidOut = !!(sellerPayoutId || partnerPayoutId);
-    if (anyLegPaidOut) {
-      await recordBooks();
+    // F1 (audit Nov 2026): a leg whose create call got no clear answer (timeout, dropped connection, 5xx) may exist at
+    // RazorpayX. Going back to HELD would let the token be refunded or released again while that payout lands, so it
+    // goes to HELD_PAYOUT_FAILED with the leg marked "unconfirmed". The payout tools and the reconcile job look the
+    // payout up by its reference id before anything else may happen.
+    const anyUnknown = sellerUnknown || partnerUnknown;
+    if (anyLegPaidOut || anyUnknown) {
+      if (anyLegPaidOut) await recordBooks();
       const failedLeg = sellerError ? 'seller' : 'partner';
+      const unknownNote = 'RazorpayX did not answer; the payout may or may not exist. Use "Retry payout" or wait for the automatic check (every 15 minutes): both look it up at RazorpayX first.';
       await prisma.escrowTransaction.update({
         where: { id: escrowId },
         data: {
           status: 'HELD_PAYOUT_FAILED',
-          adminNote: `${failedLeg} payout failed after the other leg already paid out: ${providerMessage}`,
+          adminNote: anyUnknown
+            ? `Payout result unknown (${[sellerUnknown && 'seller', partnerUnknown && 'partner'].filter(Boolean).join(' and ')}): ${providerMessage}. ${unknownNote}`
+            : `${failedLeg} payout failed after the other leg already paid out: ${providerMessage}`,
+          ...(sellerUnknown ? { sellerPayoutStatus: 'unconfirmed', sellerPayoutFailureReason: unknownNote } : (sellerError && !sellerPayoutId ? { sellerPayoutStatus: 'failed', sellerPayoutFailureReason: razorpayErrorText(sellerError) } : {})),
+          ...(partnerUnknown ? { partnerPayoutStatus: 'unconfirmed', partnerPayoutFailureReason: unknownNote } : (partnerError && !partnerPayoutId ? { partnerPayoutStatus: 'failed', partnerPayoutFailureReason: razorpayErrorText(partnerError) } : {})),
         },
       });
     } else {
@@ -1241,7 +1319,8 @@ async function recordPartnerCredit(escrow, c, { payoutId, payoutStatus, adminId 
 async function payDeferredPartnerCommission(escrowId, adminId, ip) {
   const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
   if (!escrow) throw new ApiError(404, 'Escrow not found');
-  if (escrow.status !== 'RELEASED' || escrow.partnerPayoutStatus !== 'deferred' || escrow.razorpayPartnerPayoutId) {
+  // 'unconfirmed' = an earlier attempt here got no answer from RazorpayX (F1); it is looked up before anything is created.
+  if (escrow.status !== 'RELEASED' || !['deferred', 'unconfirmed'].includes(escrow.partnerPayoutStatus) || escrow.razorpayPartnerPayoutId) {
     throw new ApiError(409, 'There is no held partner payout on this escrow', { code: 'NO_DEFERRED_PAYOUT' });
   }
   const lead = await prisma.lead.findUnique({
@@ -1264,16 +1343,38 @@ async function payDeferredPartnerCommission(escrowId, adminId, ip) {
     throw new ApiError(400, "The partner's payout account is not active.", { code: 'PARTNER_PAYOUT_ACCOUNT_NOT_ACTIVE' });
   }
 
-  const claim = await prisma.escrowTransaction.updateMany({ where: { id: escrowId, partnerPayoutStatus: 'deferred' }, data: { partnerPayoutStatus: 'claiming' } });
+  const claim = await prisma.escrowTransaction.updateMany({ where: { id: escrowId, partnerPayoutStatus: escrow.partnerPayoutStatus }, data: { partnerPayoutStatus: 'claiming' } });
   if (claim.count === 0) throw new ApiError(409, 'This payout is already being processed');
   const netPaise = c.payNowPaise;
-  let payout;
-  try {
-    const attempt = escrow.payoutAttempt || 0;
-    payout = await createPayout(partner.razorpayFundAccountId, netPaise, `esc_p_${escrowId}_a${attempt}`, `partner:${escrowId}:${partner.razorpayFundAccountId}:${netPaise}:${attempt}`);
-  } catch (err) {
-    await prisma.escrowTransaction.update({ where: { id: escrowId }, data: { partnerPayoutStatus: 'deferred' } });
-    throw new ApiError(502, `RazorpayX error: ${razorpayErrorText(err)}`, { code: 'RAZORPAYX_ERROR' });
+  const attempt = escrow.payoutAttempt || 0;
+  const referenceId = `esc_p_${escrowId}_a${attempt}`;
+  let payout = null;
+  if (escrow.partnerPayoutStatus === 'unconfirmed') {
+    try {
+      payout = await findPayoutByReference(referenceId);
+    } catch (err) {
+      await prisma.escrowTransaction.update({ where: { id: escrowId }, data: { partnerPayoutStatus: 'unconfirmed' } });
+      throw new ApiError(502, 'Could not reach RazorpayX to check whether the earlier payout exists. Nothing was paid now; try again in a few minutes.', { code: 'RAZORPAYX_ERROR' });
+    }
+    // A payout that exists but failed is not reused: a new one is created below (same idempotency key, so RazorpayX
+    // itself still refuses a second live payout for this attempt).
+    if (payout && ['failed', 'rejected', 'reversed', 'cancelled'].includes(payout.status)) payout = null;
+  }
+  if (!payout) {
+    try {
+      payout = await createPayout(partner.razorpayFundAccountId, netPaise, referenceId, `partner:${escrowId}:${partner.razorpayFundAccountId}:${netPaise}:${attempt}`);
+    } catch (err) {
+      // A clear refusal: nothing was created, back to "deferred". Anything else: we do not know, so it stays blocked as
+      // "unconfirmed" and the next attempt looks it up first.
+      const refused = isClearRefusal(err);
+      await prisma.escrowTransaction.update({
+        where: { id: escrowId },
+        data: refused
+          ? { partnerPayoutStatus: 'deferred' }
+          : { partnerPayoutStatus: 'unconfirmed', partnerPayoutFailureReason: 'RazorpayX did not answer; the payout may or may not exist. "Pay partner" looks it up first.' },
+      });
+      throw new ApiError(502, `RazorpayX error: ${razorpayErrorText(err)}`, { code: refused ? 'RAZORPAYX_ERROR' : 'PAYOUT_UNCONFIRMED' });
+    }
   }
   const updated = await prisma.escrowTransaction.update({
     where: { id: escrowId },
@@ -1284,6 +1385,8 @@ async function payDeferredPartnerCommission(escrowId, adminId, ip) {
     },
   });
   await recordPartnerCredit(updated, c, { payoutId: payout.id, payoutStatus: payout.status, adminId });
+  // A payout found again by its reference id can already be processed; its webhook came and went, so settle it here.
+  if (payout.status === 'processed') await ledger.onPayoutStatus({ escrowId, payoutId: payout.id, status: 'processed', utr: payout.utr });
   await createAuditLog({
     adminId, actorRole: 'ADMIN', action: 'PARTNER_PAYOUT_RELEASED', targetType: 'EscrowTransaction', targetId: escrowId,
     after: { payoutId: payout.id, netPaise, commissionPaise: c.commissionPaise, tdsPaise: c.tdsPaise, taxInvoiceStatus: c.taxInvoiceStatus }, ipAddress: ip,
@@ -1351,9 +1454,11 @@ async function refund(escrowId, adminId, ip, opts = {}) {
       data: { status: 'HELD', refundedAt: null },
     });
     // BE-16 — Razorpay throws a plain {statusCode, error} object, not an ApiError.
-    // The friendly text can be a bare "invalid request sent"; keep Razorpay's own code, description, field and reason for whoever debugs it.
-    logger.error('[escrow] Razorpay refund failed', { escrowId, paymentId: escrow.razorpayPaymentId, amountPaise: amountInPaise, statusCode: err?.statusCode, razorpayError: err?.error || err?.message });
-    throw new ApiError(502, `Razorpay refund failed: ${razorpayErrorText(err)}`, { code: 'RAZORPAY_ERROR' });
+    // The friendly text can be a bare "invalid request sent"; Razorpay's own code, description, field and reason are logged and kept in the
+    // audit trail for whoever debugs it. A buyer's cancel and the automatic refund job have no admin on screen, so admins are told.
+    const actorRole = opts.actorType === 'BUYER' ? 'USER' : (opts.actorType || 'ADMIN');
+    await recordRefundFailure({ escrowId, actorId: adminId, actorRole, ip, amountPaise: amountInPaise, paymentId: escrow.razorpayPaymentId, route: 'refund', err });
+    throw refundFailure(err, { forBuyer: actorRole === 'USER' });
   }
 
   // M1 fix — refundedAmountPaise/refundIds must be set here, not left for
@@ -1443,6 +1548,106 @@ async function refund(escrowId, adminId, ip, opts = {}) {
   return { ...updated, refundQuote: quote };
 }
 
+// Admin refund of an amount the admin picks ("Other amount"), for a part payment already made outside the standard rules
+// or the rest of a PARTIALLY_REFUNDED escrow. Repeatable until the token is fully refunded; capped at the token still
+// refundable (the processing fee is not returned here; the fee-returning cases are the standard reasons in refund()).
+// The amount is reserved on the escrow BEFORE Razorpay is called (optimistic claim on the running total), so two admins
+// pressing at once cannot refund more than is left; a Razorpay failure puts the escrow back exactly as it was.
+async function refundPartial(escrowId, adminId, ip, { amountPaise, reason } = {}) {
+  if (!Number.isInteger(amountPaise) || amountPaise <= 0) throw new ApiError(400, 'Enter a refund amount greater than zero (whole paise).', { code: 'INVALID_AMOUNT' });
+  const note = typeof reason === 'string' ? reason.trim() : '';
+  if (note.length < 5 || note.length > 500) throw new ApiError(400, 'A reason of 5 to 500 characters is required.', { code: 'REASON_REQUIRED' });
+
+  const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
+  if (!escrow) throw new ApiError(404, 'Escrow not found');
+  if (!['HELD', 'PARTIALLY_REFUNDED'].includes(escrow.status)) throw new ApiError(400, `Cannot refund escrow with status ${escrow.status}`);
+  if (!escrow.razorpayPaymentId) throw new ApiError(400, 'Payment not yet captured');
+  if (escrow.razorpayPayoutId || escrow.razorpayPartnerPayoutId) {
+    throw new ApiError(409, 'This escrow already has a payout on file — use the payout retry/resolve/refund-remaining actions instead.', { code: 'ESCROW_HAS_PAYOUTS' });
+  }
+
+  const tokenPaise = Math.round(escrow.amount * 100);
+  const alreadyPaise = escrow.refundedAmountPaise || 0;
+  const remainingPaise = tokenPaise - alreadyPaise;
+  if (remainingPaise <= 0) throw new ApiError(400, 'The whole token has already been refunded.');
+  if (amountPaise > remainingPaise) {
+    throw new ApiError(400, `Only ₹${money.toRupees(remainingPaise).toLocaleString('en-IN')} is still refundable on this escrow.`, { code: 'AMOUNT_TOO_HIGH', remainingPaise });
+  }
+
+  const lead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { allocationLetterVerifiedAt: true } });
+  if (lead?.allocationLetterVerifiedAt) {
+    throw new ApiError(409, 'The allocation letter has been verified, so this token can no longer be refunded here. Raise a dispute instead.', { code: 'NOT_REFUNDABLE_AFTER_VERIFICATION' });
+  }
+
+  const totalPaise = alreadyPaise + amountPaise;
+  const complete = totalPaise >= tokenPaise;
+  const newStatus = complete ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
+  const sameTotal = alreadyPaise === 0 ? { OR: [{ refundedAmountPaise: 0 }, { refundedAmountPaise: null }] } : { refundedAmountPaise: alreadyPaise };
+  const claim = await prisma.escrowTransaction.updateMany({
+    where: { id: escrowId, status: escrow.status, ...sameTotal },
+    data: { status: newStatus, refundedAmountPaise: totalPaise, ...(complete ? { refundedAt: new Date() } : {}) },
+  });
+  if (claim.count === 0) throw new ApiError(409, 'This escrow was just changed by someone else. Reload and check it before refunding again.', { code: 'ESCROW_CHANGED' });
+
+  let refundResult;
+  try {
+    refundResult = await refundPayment(escrow.razorpayPaymentId, amountPaise);
+  } catch (err) {
+    await prisma.escrowTransaction.updateMany({
+      where: { id: escrowId, refundedAmountPaise: totalPaise },
+      data: { status: escrow.status, refundedAmountPaise: alreadyPaise, refundedAt: null },
+    });
+    await recordRefundFailure({ escrowId, actorId: adminId, actorRole: 'ADMIN', ip, amountPaise, paymentId: escrow.razorpayPaymentId, route: 'refund-partial', err });
+    throw refundFailure(err);
+  }
+
+  // Record the refund id so the refund.created webhook skips it. If the webhook already counted this refund (it beat us
+  // here), our reservation made the total double, so set the total straight instead of pushing the id twice.
+  const marked = await prisma.escrowTransaction.updateMany({
+    where: { id: escrowId, NOT: { refundIds: { has: refundResult.id } } },
+    data: { razorpayRefundId: refundResult.id, refundIds: { push: refundResult.id }, refundReason: 'ADMIN_PARTIAL' },
+  });
+  if (marked.count === 0) {
+    await prisma.escrowTransaction.update({
+      where: { id: escrowId },
+      data: { refundedAmountPaise: totalPaise, status: newStatus, refundReason: 'ADMIN_PARTIAL', ...(complete ? { refundedAt: new Date() } : {}) },
+    });
+  }
+
+  const quote = { refundPaise: amountPaise, reason: 'ADMIN_PARTIAL', feeReturned: false, cancellationChargePaise: 0, stage: 'ADMIN_PARTIAL' };
+  await ledger.onRefund(escrow, quote, { refundId: refundResult.id, actor: { createdByType: 'ADMIN', createdById: adminId || null } });
+  await createAuditLog({
+    adminId, actorRole: 'ADMIN', action: 'ESCROW_REFUNDED', targetType: 'EscrowTransaction', targetId: escrowId,
+    reason: note,
+    after: { status: newStatus, reason: 'ADMIN_PARTIAL', refundPaise: amountPaise, totalRefundedPaise: totalPaise, remainingPaise: tokenPaise - totalPaise },
+    ipAddress: ip,
+  });
+
+  (async () => {
+    const refundRupees = money.toRupees(amountPaise);
+    const inr = (n) => `₹${n.toLocaleString('en-IN')}`;
+    const refundedLead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { refCode: true, property: { select: { title: true } } } });
+    const leadRef = refundedLead?.refCode || 'a lead';
+    await createNotification({
+      userId: escrow.buyerId,
+      title: complete ? 'Token Advance Refunded' : 'Partial Refund Issued',
+      message: `${inr(refundRupees)} of your token advance has been refunded to your original payment method.${complete ? '' : ' The rest stays held until your deal is settled.'}`,
+      type: 'ESCROW_REFUNDED',
+    });
+    notifyUser(escrow.buyerId, 'escrow_refunded', {
+      name: '$userName', amount: refundRupees.toLocaleString('en-IN'), charge: '0', property_title: refundedLead?.property?.title || 'your property',
+    }, { leadId: escrow.leadId });
+    await notifyAdmins({
+      title: 'Partial token refund',
+      message: `${leadRef}: ${inr(refundRupees)} refunded (${inr(money.toRupees(totalPaise))} of ${inr(money.toRupees(tokenPaise))} so far). Reason: ${note}`,
+      type: 'ESCROW_REFUNDED',
+      linkUrl: '/admin/escrow',
+    });
+  })().catch((err) => logger.warn('[Escrow] Post-partial-refund notification failed', { escrowId, error: err.message }));
+
+  return prisma.escrowTransaction.findUnique({ where: { id: escrowId } }).then((e) => e || { id: escrowId, status: newStatus, refundedAmountPaise: totalPaise });
+}
+
 async function getAllEscrow(filters, skip, limit) {
   const where = {};
   // BE-11 — status is now pre-validated (and comma-split into an array) by
@@ -1479,12 +1684,14 @@ async function getEscrowStats() {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  const [heldAgg, refundedAgg, releasedThisMonthAgg, releasedForAvg, payoutFailedCount, refundedThisMonthAgg, heldCount, releasedThisMonthCount] = await Promise.all([
+  const [holdingRows, refundedAgg, releasedThisMonthAgg, releasedForAvg, payoutFailedCount, refundedThisMonthAgg, releasedThisMonthCount] = await Promise.all([
     // HELD_PAYOUT_FAILED money hasn't left the account either — it's still
     // "held", just stuck on a failed payout attempt — so it's counted here
     // too rather than disappearing from this total; payoutFailedCount below
     // is what actually surfaces that it needs attention.
-    prisma.escrowTransaction.aggregate({ where: { status: { in: ['HELD', 'HELD_PAYOUT_FAILED'] } }, _sum: { amount: true } }),
+    // 7 Nov 2026: frozen and part-refunded tokens hold money too, and a part-refunded one holds only what is left (see lib/escrowTotals).
+    // Few rows are ever in these states at once, so they are read and added up in code rather than in the database.
+    prisma.escrowTransaction.findMany({ where: { status: { in: escrowTotals.HOLDING_STATUSES } }, select: { status: true, amount: true, refundedAmountPaise: true } }),
     prisma.escrowTransaction.aggregate({ where: { status: 'REFUNDED' }, _sum: { amount: true } }),
     prisma.escrowTransaction.aggregate({
       where: { status: 'RELEASED', releasedAt: { gte: startOfMonth } },
@@ -1501,7 +1708,6 @@ async function getEscrowStats() {
       where: { status: 'REFUNDED', refundedAt: { gte: startOfMonth } },
       _sum: { amount: true },
     }),
-    prisma.escrowTransaction.count({ where: { status: { in: ['HELD', 'HELD_PAYOUT_FAILED'] } } }),
     prisma.escrowTransaction.count({ where: { status: 'RELEASED', releasedAt: { gte: startOfMonth } } }),
   ]);
 
@@ -1510,23 +1716,129 @@ async function getEscrowStats() {
     : 0;
 
   return {
-    heldSum: heldAgg._sum.amount || 0,
-    refundedSum: refundedAgg._sum.amount || 0,
+    heldSum: escrowTotals.sumHeld(holdingRows),
+    refundedSum: Math.round(((refundedAgg._sum.amount || 0) + escrowTotals.sumRefunded(holdingRows)) * 100) / 100,
     releasedSumThisMonth: releasedThisMonthAgg._sum.amount || 0,
     refundedSumThisMonth: refundedThisMonthAgg._sum.amount || 0,
-    heldCount,
+    heldCount: holdingRows.length,
     releasedCountThisMonth: releasedThisMonthCount,
     avgHoldDays: Math.round(avgHoldDays * 10) / 10,
     payoutFailedCount,
   };
 }
 
+// Manual refund (7 Nov 2026). When Razorpay cannot pay a refund (payments balance too low) the admin pays the buyer by bank transfer and records
+// it here with the bank reference and a reason. Razorpay is never called. The same status, cap, payout and verification rules apply, so the token
+// can never be refunded twice (a later Razorpay refund is held to what is still refundable). One admin is enough; the reason and reference are
+// stored in the audit log and the ledger, and the buyer is told in-app only (the WhatsApp text says "original payment method", which is wrong here).
+async function refundManually(escrowId, adminId, ip, { amountPaise, reference, reason } = {}) {
+  if (!Number.isInteger(amountPaise) || amountPaise <= 0) throw new ApiError(400, 'Enter a refund amount greater than zero (whole paise).', { code: 'INVALID_AMOUNT' });
+  const ref = typeof reference === 'string' ? reference.trim() : '';
+  if (ref.length < 4 || ref.length > 100) throw new ApiError(400, 'The bank reference (UTR or transaction id) of 4 to 100 characters is required.', { code: 'REFERENCE_REQUIRED' });
+  const note = typeof reason === 'string' ? reason.trim() : '';
+  if (note.length < 5 || note.length > 500) throw new ApiError(400, 'A reason of 5 to 500 characters is required.', { code: 'REASON_REQUIRED' });
+
+  const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
+  if (!escrow) throw new ApiError(404, 'Escrow not found');
+  if (!['HELD', 'PARTIALLY_REFUNDED'].includes(escrow.status)) throw new ApiError(400, `Cannot refund escrow with status ${escrow.status}`);
+  if (escrow.razorpayPayoutId || escrow.razorpayPartnerPayoutId) {
+    throw new ApiError(409, 'This escrow already has a payout on file — use the payout retry/resolve/refund-remaining actions instead.', { code: 'ESCROW_HAS_PAYOUTS' });
+  }
+
+  const tokenPaise = Math.round(escrow.amount * 100);
+  const alreadyPaise = escrow.refundedAmountPaise || 0;
+  const remainingPaise = tokenPaise - alreadyPaise;
+  if (remainingPaise <= 0) throw new ApiError(400, 'The whole token has already been refunded.');
+  if (amountPaise > remainingPaise) {
+    throw new ApiError(400, `Only ₹${money.toRupees(remainingPaise).toLocaleString('en-IN')} is still refundable on this escrow.`, { code: 'AMOUNT_TOO_HIGH', remainingPaise });
+  }
+
+  const lead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { allocationLetterVerifiedAt: true } });
+  if (lead?.allocationLetterVerifiedAt) {
+    throw new ApiError(409, 'The allocation letter has been verified, so this token can no longer be refunded here. Raise a dispute instead.', { code: 'NOT_REFUNDABLE_AFTER_VERIFICATION' });
+  }
+
+  const totalPaise = alreadyPaise + amountPaise;
+  const complete = totalPaise >= tokenPaise;
+  const newStatus = complete ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
+  const manualId = `manual:${totalPaise}:${ref}`;
+  const sameTotal = alreadyPaise === 0 ? { OR: [{ refundedAmountPaise: 0 }, { refundedAmountPaise: null }] } : { refundedAmountPaise: alreadyPaise };
+  const claim = await prisma.escrowTransaction.updateMany({
+    where: { id: escrowId, status: escrow.status, ...sameTotal },
+    data: { status: newStatus, refundedAmountPaise: totalPaise, refundReason: 'ADMIN_MANUAL', refundIds: { push: manualId }, ...(complete ? { refundedAt: new Date() } : {}) },
+  });
+  if (claim.count === 0) throw new ApiError(409, 'This escrow was just changed by someone else. Reload and check it before refunding again.', { code: 'ESCROW_CHANGED' });
+
+  const quote = { refundPaise: amountPaise, reason: 'ADMIN_MANUAL', feeReturned: false, cancellationChargePaise: 0, stage: 'ADMIN_MANUAL' };
+  await ledger.onRefund(escrow, quote, { refundId: manualId, actor: { createdByType: 'ADMIN', createdById: adminId || null } });
+  await createAuditLog({
+    adminId, actorRole: 'ADMIN', action: 'ESCROW_REFUNDED_MANUALLY', targetType: 'EscrowTransaction', targetId: escrowId,
+    reason: note,
+    after: { status: newStatus, reason: 'ADMIN_MANUAL', reference: ref, refundPaise: amountPaise, totalRefundedPaise: totalPaise, remainingPaise: tokenPaise - totalPaise },
+    ipAddress: ip,
+  });
+
+  (async () => {
+    const refundRupees = money.toRupees(amountPaise);
+    const inr = (n) => `₹${n.toLocaleString('en-IN')}`;
+    const refundedLead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { refCode: true } });
+    await createNotification({
+      userId: escrow.buyerId,
+      title: complete ? 'Token Advance Refunded' : 'Partial Refund Issued',
+      message: `${inr(refundRupees)} of your token advance has been sent to your bank account by transfer. Reference: ${ref}.${complete ? '' : ' The rest stays held until your deal is settled.'}`,
+      type: 'ESCROW_REFUNDED',
+    });
+    await notifyAdmins({
+      title: 'Token refunded manually',
+      message: `${refundedLead?.refCode || 'A lead'}: ${inr(refundRupees)} refunded by bank transfer (ref ${ref}). Reason: ${note}`,
+      type: 'ESCROW_REFUNDED',
+      linkUrl: '/admin/escrow',
+    });
+  })().catch((err) => logger.warn('[Escrow] Post-manual-refund notification failed', { escrowId, error: err.message }));
+
+  return prisma.escrowTransaction.findUnique({ where: { id: escrowId } }).then((e) => e || { id: escrowId, status: newStatus, refundedAmountPaise: totalPaise });
+}
+
 // R10 — freeze a HELD escrow for a dispute. Blocks release() and refund()
 // for free, since both already reject anything that is not HELD.
+// The buyer and the assigned partner are told in the app (no WhatsApp: there is no approved template for it). The reason is not
+// shown to them: whether it should be is a product decision that has not been made. Never fails the freeze or unfreeze itself.
+async function notifyFreezeChange(escrow, frozen) {
+  try {
+    const lead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { refCode: true, assignedPartnerId: true, property: { select: { title: true } } } });
+    const title = lead?.property?.title || 'your property';
+    const ref = lead?.refCode || 'A lead';
+    const type = frozen ? 'ESCROW_FROZEN' : 'ESCROW_UNFROZEN';
+    await createNotification({
+      userId: escrow.buyerId,
+      title: frozen ? 'Your token is on hold' : 'The hold on your token is lifted',
+      message: frozen
+        ? `Your token for ${title} is on hold while our team reviews your deal. It stays safe in escrow, and we will update you here.`
+        : `The hold on your token for ${title} has been lifted.`,
+      type, linkUrl: `/user/inquiries/${escrow.leadId}`,
+    });
+    if (lead?.assignedPartnerId) {
+      await createNotification({
+        userId: lead.assignedPartnerId,
+        title: frozen ? 'Token on hold' : 'Token hold lifted',
+        message: frozen
+          ? `${ref}: the buyer's token is on hold while our team reviews the deal.`
+          : `${ref}: the hold on the buyer's token has been lifted.`,
+        type, linkUrl: `/partners/leads/${escrow.leadId}`,
+      });
+    }
+  } catch (err) {
+    logger.warn('[Escrow] Freeze/unfreeze notice failed', { escrowId: escrow.id, error: err.message });
+  }
+}
+
+// A HELD escrow, or a part-refunded one (the rest of its money can be frozen in a dispute too).
+const FREEZABLE = ['HELD', 'PARTIALLY_REFUNDED'];
+
 async function freeze(escrowId, reason, adminId, ip) {
   const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
   if (!escrow) throw new ApiError(404, 'Escrow not found');
-  if (escrow.status !== 'HELD') throw new ApiError(400, `Cannot freeze escrow with status ${escrow.status} — only a HELD escrow can be frozen`);
+  if (!FREEZABLE.includes(escrow.status)) throw new ApiError(400, `Cannot freeze escrow with status ${escrow.status} — only a HELD or PARTIALLY_REFUNDED escrow can be frozen`);
 
   // BE-4 — same atomic-claim pattern as release()/refund(): a read-then-write
   // here could race a concurrent release() for the same escrow — whichever
@@ -1535,46 +1847,49 @@ async function freeze(escrowId, reason, adminId, ip) {
   // status this function itself just checked, so only one of two concurrent
   // calls can ever affect a row.
   const claim = await prisma.escrowTransaction.updateMany({
-    where: { id: escrowId, status: 'HELD' },
+    where: { id: escrowId, status: { in: FREEZABLE } },
     data: { status: 'FROZEN', frozenAt: new Date(), frozenReason: reason, frozenByAdminId: adminId, unfrozenAt: null },
   });
   if (claim.count === 0) throw new ApiError(409, 'This escrow is no longer HELD — it may have just been released or refunded.', { code: 'ESCROW_STATE_CHANGED' });
 
-  const updated = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
+  const updated = (await prisma.escrowTransaction.findUnique({ where: { id: escrowId } })) || { ...escrow, status: 'FROZEN' };
 
   await createAuditLog({
     adminId, action: 'ESCROW_FROZEN', targetType: 'EscrowTransaction', targetId: escrowId,
-    before: { status: 'HELD' }, after: { status: 'FROZEN', reason }, ipAddress: ip,
+    before: { status: escrow.status }, after: { status: 'FROZEN', reason }, ipAddress: ip,
   });
+  notifyFreezeChange(escrow, true);
 
   return updated;
 }
 
-// Always restores HELD — FROZEN is only ever entered from HELD above, so
-// there is nothing else to restore to.
+// Restores the state it was frozen from: a part-refunded escrow (refundedAmountPaise above zero) goes back to PARTIALLY_REFUNDED, never
+// to HELD, because a HELD escrow can be refunded for the whole token again.
 async function unfreeze(escrowId, adminId, ip) {
   const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
   if (!escrow) throw new ApiError(404, 'Escrow not found');
   if (escrow.status !== 'FROZEN') throw new ApiError(400, `Escrow is not frozen (status: ${escrow.status})`);
+  const restoreTo = (escrow.refundedAmountPaise || 0) > 0 ? 'PARTIALLY_REFUNDED' : 'HELD';
 
   // BE-4 — same atomic claim as freeze() above.
   const claim = await prisma.escrowTransaction.updateMany({
     where: { id: escrowId, status: 'FROZEN' },
-    data: { status: 'HELD', unfrozenAt: new Date() },
+    data: { status: restoreTo, unfrozenAt: new Date() },
   });
   if (claim.count === 0) throw new ApiError(409, 'This escrow is no longer FROZEN.', { code: 'ESCROW_STATE_CHANGED' });
 
-  const updated = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
+  const updated = (await prisma.escrowTransaction.findUnique({ where: { id: escrowId } })) || { ...escrow, status: restoreTo };
 
   await createAuditLog({
     adminId, action: 'ESCROW_UNFROZEN', targetType: 'EscrowTransaction', targetId: escrowId,
-    before: { status: 'FROZEN' }, after: { status: 'HELD' }, ipAddress: ip,
+    before: { status: 'FROZEN' }, after: { status: restoreTo }, ipAddress: ip,
   });
+  notifyFreezeChange(escrow, false);
 
   return updated;
 }
 
 module.exports = {
-  createOrder, getCheckoutQuote, checkoutBreakdown, getById, getReceipt, getRefundReceipt, getFeeInvoice, getReleasePlan, confirmPayment, release, refund, getAllEscrow, getEscrowStats,
+  refundManually, createOrder, getCheckoutQuote, checkoutBreakdown, getById, getReceipt, getRefundReceipt, getFeeInvoice, getReleasePlan, confirmPayment, release, refund, refundPartial, getAllEscrow, getEscrowStats,
   freeze, unfreeze, payDeferredPartnerCommission, recordPartnerCredit, repairReleaseBookkeeping,
 };

@@ -23,6 +23,10 @@ const salesRules = require('../../src/lib/leadSales');
 
 const NOW = new Date('2026-11-04T10:00:00Z');
 const day = (n) => new Date(NOW.getTime() - n * 86_400_000);
+// The service reads the clock itself (new Date()), so pin "today" to NOW. Only Date is replaced; real timers keep running.
+// Without this the 26-day-old lead below is past its 30-day hold on any day after 8 Nov 2026 and two tests fail.
+beforeAll(() => { jest.useFakeTimers({ now: NOW, doNotFake: ['hrtime', 'nextTick', 'performance', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] }); });
+afterAll(() => { jest.useRealTimers(); });
 const lead = (over = {}) => ({ id: 'l1', refCode: 'RD-L-1', buyerName: 'Meena', status: 'ASSIGNED', addedByPartnerId: 'A', createdAt: day(26), escrowTransactions: [], ...over });
 
 describe('the hold, with and without an extension', () => {

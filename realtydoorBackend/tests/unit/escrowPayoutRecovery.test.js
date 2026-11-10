@@ -9,6 +9,7 @@ jest.mock('../../src/lib/razorpay', () => ({
   createPayoutContact: jest.fn(), createPayoutFundAccount: jest.fn(), createPayout: jest.fn(), validateFundAccountOrWarn: jest.fn(), refundPayment: jest.fn(), rawGet: jest.fn(),
 }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn().mockResolvedValue() }));
+jest.mock('../../src/lib/notifications', () => ({ createNotification: jest.fn().mockResolvedValue(), notifyAdmins: jest.fn() }));
 
 const prisma = require('../../src/lib/prisma');
 const rz = require('../../src/lib/razorpay');
@@ -195,6 +196,46 @@ describe('refundRemaining', () => {
     rz.refundPayment.mockRejectedValue({ statusCode: 400, error: {} });
     await expect(svc.refundRemaining('e1', 'note', 'a1', 'ip')).rejects.toMatchObject({ statusCode: 502 });
     expect(prisma.escrowTransaction.update).toHaveBeenCalledWith({ where: { id: 'e1' }, data: { status: 'HELD_PAYOUT_FAILED', refundedAt: null } });
+  });
+  test.each([
+    ['a vague "invalid request sent"', { statusCode: 400, error: { description: 'invalid request sent' } }],
+    ['an explicit balance message', { statusCode: 400, error: { description: 'Your account does not have enough balance to carry out the refund operation.' } }],
+  ])('LOW BALANCE: %s becomes a clear message the admin can act on, and the escrow can be retried', async (_n, rzErr) => {
+    prisma.escrowTransaction.findUnique.mockResolvedValue(failed());
+    live('failed');
+    rz.refundPayment.mockRejectedValue(rzErr);
+    await expect(svc.refundRemaining('e1', 'note', 'a1', 'ip')).rejects.toMatchObject({
+      statusCode: 502,
+      message: expect.stringMatching(/not enough balance.*top up.*try again/i),
+      data: { code: 'RAZORPAY_BALANCE_LOW', providerMessage: rzErr.error.description },
+    });
+    expect(prisma.escrowTransaction.update).toHaveBeenCalledWith({ where: { id: 'e1' }, data: { status: 'HELD_PAYOUT_FAILED', refundedAt: null } });
+  });
+  test('another Razorpay failure keeps its own text and code', async () => {
+    prisma.escrowTransaction.findUnique.mockResolvedValue(failed());
+    live('failed');
+    rz.refundPayment.mockRejectedValue({ statusCode: 500, error: { description: 'Gateway down' } });
+    await expect(svc.refundRemaining('e1', 'note', 'a1', 'ip')).rejects.toMatchObject({ message: expect.stringContaining('Gateway down'), data: { code: 'RAZORPAY_ERROR' } });
+  });
+  test('a failed refund is written to the audit trail with Razorpay\'s own words, who tried and how much', async () => {
+    const { createAuditLog } = require('../../src/lib/auditLog');
+    prisma.escrowTransaction.findUnique.mockResolvedValue(failed());
+    live('failed');
+    rz.refundPayment.mockRejectedValue({ statusCode: 400, error: { description: 'invalid request sent' } });
+    await expect(svc.refundRemaining('e1', 'note', 'a1', '9.9.9.9')).rejects.toMatchObject({ statusCode: 502 });
+    expect(createAuditLog).toHaveBeenCalledTimes(1);
+    expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      adminId: 'a1', action: 'ESCROW_REFUND_FAILED', targetType: 'EscrowTransaction', targetId: 'e1', ipAddress: '9.9.9.9',
+      after: expect.objectContaining({ route: 'refund-remaining', amountPaise: 5_000_000, paymentId: 'pay_1', code: 'RAZORPAY_BALANCE_LOW', providerMessage: 'invalid request sent', statusCode: 400 }),
+    }));
+  });
+  test('the audit trail being down never hides the refund error', async () => {
+    const { createAuditLog } = require('../../src/lib/auditLog');
+    createAuditLog.mockRejectedValue(new Error('db down'));
+    prisma.escrowTransaction.findUnique.mockResolvedValue(failed());
+    live('failed');
+    rz.refundPayment.mockRejectedValue({ statusCode: 400, error: { description: 'invalid request sent' } });
+    await expect(svc.refundRemaining('e1', 'note', 'a1', 'ip')).rejects.toMatchObject({ data: { code: 'RAZORPAY_BALANCE_LOW' } });
   });
 });
 

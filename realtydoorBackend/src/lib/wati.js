@@ -228,6 +228,11 @@ const LEAD_RULE_TEMPLATES = [
 // Fire-and-forget WhatsApp copy of an in-app notification. Looks up the user's
 // phone and notifWhatsapp preference itself (OPERATIONAL category), never
 // throws; pass '$userName' as a value to insert the recipient's own name — a failed WhatsApp must not break the action that triggered it.
+// Money receipts and refunds are TRANSACTIONAL (privacy spec, 10 Oct 2026): sent whatever the buyer's WhatsApp switch says. The catalogue
+// in docs/WHATSAPP_TEMPLATES.md says the same. Matched on the name without its version suffix (escrow_refunded_v2 is escrow_refunded).
+const TRANSACTIONAL_TEMPLATES = new Set(['escrow_token_received', 'escrow_refunded', 'escrow_released', 'escrow_payment_failed']);
+const baseTemplateName = (name) => String(name).replace(/_v\d+$/, '');
+
 async function notifyUser(userId, templateName, parameters, context = {}) {
   try {
     templateName = resolveTemplate(templateName);
@@ -243,6 +248,7 @@ async function notifyUser(userId, templateName, parameters, context = {}) {
         name, value: String(value === '$userName' ? (user.name || 'there') : value).replace(/\s+/g, ' ').trim(),
       })),
       { userId, ...context }, user,
+      TRANSACTIONAL_TEMPLATES.has(baseTemplateName(templateName)) ? CATEGORIES.TRANSACTIONAL : undefined,
     );
   } catch (err) {
     logger.warn('[WATI] notifyUser failed', { templateName, userId, error: err.message });

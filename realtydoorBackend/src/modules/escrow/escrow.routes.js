@@ -1,13 +1,13 @@
 const router = require('express').Router();
 const ctrl = require('./escrow.controller');
-const { authenticate } = require('../../middleware/auth');
+const { authenticate, optionalAuthenticate } = require('../../middleware/auth');
 const { requireUser } = require('../../middleware/requireRole');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 const { documentLimiter } = require('../../middleware/rateLimiter');
 
 // Public price breakdown (token + processing fee + refund terms). Before /:id.
-router.get('/quote',            ctrl.getCheckoutQuote);
+router.get('/quote',            optionalAuthenticate, ctrl.getCheckoutQuote);
 
 // Buyer creates escrow order (token advance payment)
 router.post('/create-order',    authenticate, requireUser, requirePhone, ctrl.createOrder);

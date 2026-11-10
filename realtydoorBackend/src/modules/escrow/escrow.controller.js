@@ -2,7 +2,7 @@ const { success, created } = require('../../utils/ApiResponse');
 const { parsePagination, paginate } = require('../../utils/pagination');
 const service = require('./escrow.service');
 const payoutService = require('./escrowPayout.service');
-const { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema, refundEscrowSchema, retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema, ESCROW_STATUSES } = require('./escrow.validator');
+const { createOrderSchema, releaseEscrowSchema, freezeEscrowSchema, refundEscrowSchema, refundPartialSchema, refundManualSchema, retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema, ESCROW_STATUSES } = require('./escrow.validator');
 const { verifyPaymentSignature } = require('../../lib/razorpay');
 const { verifyPaymentSchema } = require('../../lib/paymentSchemas');
 const ApiError = require('../../utils/ApiError');
@@ -26,7 +26,8 @@ async function getCheckoutQuote(req, res, next) {
   try {
     const amount = Number(req.query.amount);
     if (!Number.isFinite(amount) || amount <= 0) throw new ApiError(400, 'amount (rupees) is required');
-    success(res, await service.getCheckoutQuote(amount));
+    // A signed-in NRI buyer is quoted the NRI rate (optionalAuthenticate fills req.user); anyone else the normal one.
+    success(res, await service.getCheckoutQuote(amount, { nri: !!req.user?.isNRI }));
   } catch (err) { next(err); }
 }
 
@@ -89,6 +90,22 @@ async function refundEscrow(req, res, next) {
     const body = refundEscrowSchema.parse(req.body) ?? {};
     const escrow = await service.refund(req.params.id, req.user.id, req.ip, { reason: body.reason });
     success(res, escrow, 'Escrow refunded');
+  } catch (err) { next(err); }
+}
+
+async function refundPartialEscrow(req, res, next) {
+  try {
+    const body = refundPartialSchema.parse(req.body);
+    const escrow = await service.refundPartial(req.params.id, req.user.id, req.ip, body);
+    success(res, escrow, 'Partial refund issued');
+  } catch (err) { next(err); }
+}
+
+async function refundManualEscrow(req, res, next) {
+  try {
+    const body = refundManualSchema.parse(req.body);
+    const escrow = await service.refundManually(req.params.id, req.user.id, req.ip, body);
+    success(res, escrow, 'Manual refund recorded');
   } catch (err) { next(err); }
 }
 
@@ -191,6 +208,6 @@ async function refundRemaining(req, res, next) {
 }
 
 module.exports = {
-  payPartnerCommission, repairBookkeeping, getCheckoutQuote, createOrder, getEscrowById, getReceipt, getRefundReceipt, getFeeInvoice, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, getAllEscrow, getEscrowStats,
+  payPartnerCommission, repairBookkeeping, getCheckoutQuote, createOrder, getEscrowById, getReceipt, getRefundReceipt, getFeeInvoice, verifyPayment, getReleasePlan, releaseEscrow, refundEscrow, refundPartialEscrow, refundManualEscrow, getAllEscrow, getEscrowStats,
   freezeEscrow, unfreezeEscrow, getPayouts, retryPayout, resolvePayout, refundRemaining,
 };

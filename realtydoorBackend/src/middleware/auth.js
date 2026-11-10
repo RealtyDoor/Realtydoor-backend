@@ -113,4 +113,13 @@ async function authenticate(req, res, next) {
   }
 }
 
-module.exports = { authenticate };
+// For public routes whose answer can be tailored to a signed-in person (the checkout quote). Never blocks: no token, a bad token or an
+// unusable account all continue as anonymous; a good token continues with req.user set exactly as authenticate() sets it.
+async function optionalAuthenticate(req, res, next) {
+  await authenticate(req, res, (err) => {
+    if (err) req.user = undefined;
+    next();
+  });
+}
+
+module.exports = { authenticate, optionalAuthenticate };

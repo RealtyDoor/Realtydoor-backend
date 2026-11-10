@@ -18,6 +18,7 @@ const DEFINITIONS = {
   // Buyer processing fee (token / 0.9764 at the standard rate).
   processing_fee_enabled:    ['true', 'Charge the buyer a separate payment processing fee on the token. "true" or "false".'],
   processing_fee_gateway_pct: [2, 'Payment gateway charge % used to size the processing fee (Razorpay standard 2%). Confirm the account rate.'],
+  processing_fee_gateway_pct_nri: [3, 'Payment gateway charge % used to size the processing fee for a buyer marked NRI (a foreign card costs Razorpay 3% + GST instead of 2% + GST).'],
   processing_fee_gateway_gst_pct: [18, 'GST % the gateway adds on its own charge.'],
   processing_fee_gst_pct:    [18, 'GST % included in the processing fee, shown on its tax invoice. [CA: SAC code, input credit]'],
 
@@ -70,6 +71,7 @@ function parseSettings(rows) {
     processingFee: {
       enabled: str('processing_fee_enabled') !== 'false',
       gatewayPct: num('processing_fee_gateway_pct'),
+      gatewayPctNri: num('processing_fee_gateway_pct_nri'),
       gatewayGstPct: num('processing_fee_gateway_gst_pct'),
       feeGstPct: num('processing_fee_gst_pct'),
       sacCode: str('processing_fee_sac_code').trim(),

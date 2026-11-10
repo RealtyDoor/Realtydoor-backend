@@ -23,7 +23,7 @@ beforeEach(() => {
 
 describe('seller payout ledger lines', () => {
   test('a transfer the admin confirms as made outside Razorpay is settled at once (a DUE line and a PAID line)', async () => {
-    await ledger.onSellerPayout(e, { sellerAmountPaise: 5000000, payoutId: null });
+    await ledger.onSellerPayout(e, { sellerAmountPaise: 5000000, payoutId: null, manual: true });
     const rows = prisma.moneyLedgerEntry.create.mock.calls.map((c) => c[0].data);
     expect(rows.map((r) => r.status)).toEqual(['DUE', 'PAID']);
     expect(rows[1]).toMatchObject({ type: 'SELLER_PAYOUT', relatedEntryId: 'row_DUE', grossPaise: 5000000, idempotencyKey: 'sellerPayoutManual:e1' });

@@ -13,6 +13,7 @@ process.env.CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY || 'sk_test_dummy';
 jest.mock('../../../src/middleware/auditAction', () => ({ auditAction: () => (req, res, next) => next() }));
 // Sign-in is replaced by a header that carries the acting user as JSON; no header means anonymous.
 jest.mock('../../../src/middleware/auth', () => ({
+  optionalAuthenticate: (req, res, next) => next(),
   authenticate: (req, res, next) => {
     const ApiError = require('../../../src/utils/ApiError');
     const raw = req.headers['x-test-user'];
@@ -159,16 +160,9 @@ describe('admin routes (including /api/admin/money)', () => {
   });
 });
 
-// Reviewed 24 Oct: support-desk work any staff admin may do (inbox, read flags, review moderation, loan/video-tour status,
-// dispute notes, B2B deal notes, advisor-referral revoke). Money-setting routes are NOT here: see the next test.
-const KNOWN_UNSCOPED_MUTATIONS = [
-  'PATCH /api/admin/loan/:id/status',
-  'POST /api/admin/contact/templates', 'PATCH /api/admin/contact/templates/:id', 'DELETE /api/admin/contact/templates/:id',
-  'POST /api/admin/contact/compose', 'PATCH /api/admin/contact/:id/read', 'PATCH /api/admin/contact/:id/status', 'POST /api/admin/contact/:id/reply',
-  'PATCH /api/admin/nri-leads/:id/read', 'PATCH /api/admin/video-tours/:id', 'POST /api/admin/video-tours/:id/upload',
-  'PATCH /api/admin/disputes/:id', 'PATCH /api/admin/reviews/:id/moderate', 'PATCH /api/admin/b2b/:id',
-  'PATCH /api/admin/advisor-referrals/:id/revoke',
-];
+// Was a reviewed list of 15 routes open to any staff admin (24 Oct). Gated on 7 Nov 2026 by the owner's decision (see adminEveryRouteGated.test.js):
+// the list is empty on purpose. A new state-changing admin route without a permission scope fails this test.
+const KNOWN_UNSCOPED_MUTATIONS = [];
 
 describe('commission terms are money: a Support or Content admin must not change them', () => {
   test.each([

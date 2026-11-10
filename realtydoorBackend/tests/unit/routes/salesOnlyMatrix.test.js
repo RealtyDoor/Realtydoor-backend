@@ -11,6 +11,7 @@ process.env.CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY || 'sk_test_dummy';
 jest.mock('../../../src/middleware/auditAction', () => ({ auditAction: () => (req, res, next) => next() }));
 // Sign-in is replaced by a header that carries the acting user as JSON; no header means anonymous.
 jest.mock('../../../src/middleware/auth', () => ({
+  optionalAuthenticate: (req, res, next) => next(),
   authenticate: (req, res, next) => {
     const ApiError = require('../../../src/utils/ApiError');
     const raw = req.headers['x-test-user'];

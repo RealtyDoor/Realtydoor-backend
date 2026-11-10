@@ -293,11 +293,16 @@ async function rateLead(userId, leadId, { rating, comment }) {
 
 // What a buyer would get back if they cancelled now, for the confirm screen
 // (money model Rev 3, 2.2). Moves nothing.
+// Token states where our team, not the buyer, decides what happens to the money next.
+const TOKEN_ON_HOLD = ['FROZEN', 'HELD_PAYOUT_FAILED', 'PARTIALLY_REFUNDED'];
+
 async function getCancelQuote(userId, leadId) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, buyerId: userId }, select: { id: true, status: true } });
   if (!lead) throw new ApiError(404, 'Lead not found');
-  const escrow = await prisma.escrowTransaction.findFirst({ where: { leadId, status: 'HELD' } });
+  const escrow = await prisma.escrowTransaction.findFirst({ where: { leadId, status: { in: ['HELD', ...TOKEN_ON_HOLD] } } });
   if (!escrow) return { hasEscrow: false };
+  // A frozen, part-refunded or payout-failed token is money our team is holding: cancelling cannot refund it (and cancelLead refuses).
+  if (TOKEN_ON_HOLD.includes(escrow.status)) return { hasEscrow: true, escrowId: escrow.id, stage: 'ON_HOLD', refundable: false };
   // cancelLead refuses a closed or dropped inquiry, so the quote must not promise a refund for one.
   if (['CLOSED', 'DROPPED'].includes(lead.status)) {
     return { hasEscrow: true, escrowId: escrow.id, stage: 'CLOSED', refundable: false };
@@ -311,6 +316,15 @@ async function cancelLead(userId, leadId, { reason, reasonLabel, acceptCancellat
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (['CLOSED', 'DROPPED'].includes(lead.status)) {
     throw new ApiError(400, `This inquiry is already ${lead.status.toLowerCase()}`);
+  }
+
+  // A token our team is holding (frozen for a dispute, partly refunded, or a failed payout) must not be orphaned: dropping the inquiry
+  // here would leave the money locked with no inquiry attached, and cancelLead has no refund to give for it.
+  const onHold = await prisma.escrowTransaction.findFirst({ where: { leadId, status: { in: TOKEN_ON_HOLD } }, select: { id: true, status: true } });
+  if (onHold && TOKEN_ON_HOLD.includes(onHold.status)) {
+    throw new ApiError(409,
+      'Your token is on hold with our team, so this inquiry cannot be cancelled right now. Please contact support, or check your dispute, and we will release or refund it.',
+      { code: 'ESCROW_ON_HOLD' });
   }
 
   const escrow = await prisma.escrowTransaction.findFirst({

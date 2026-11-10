@@ -21,6 +21,7 @@ const handler = (path) => new Proxy(function () {}, {
 });
 jest.mock('../../../src/lib/prisma', () => handler([]));
 jest.mock('../../../src/middleware/auth', () => ({
+  optionalAuthenticate: (req, res, next) => next(),
   authenticate: (req, res, next) => { req.user = { id: '64b000000000000000000001', role: 'ADMIN', staffRole: null, phoneVerified: true, onboardingComplete: true, kycStatus: 'VERIFIED' }; next(); },
 }));
 jest.mock('../../../src/lib/cache', () => ({ cacheGet: async () => null, cacheSet: async () => {}, cacheDel: async () => {}, cacheDelPattern: async () => {}, withCache: async (k, t, fn) => fn() }));

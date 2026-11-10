@@ -21,6 +21,7 @@ jest.mock('../../src/modules/money/ledger.service', () => ({ onPaymentCaptured: 
 const prisma = require('../../src/lib/prisma');
 const rz = require('../../src/lib/razorpay');
 const { createAuditLog } = require('../../src/lib/auditLog');
+const { notifyAdmins } = require('../../src/lib/notifications');
 const { getConfigNumber } = require('../../src/modules/config/config.service');
 const { getMoneySettings, parseSettings } = require('../../src/modules/money/moneyConfig');
 const ledger = require('../../src/modules/money/ledger.service');
@@ -92,6 +93,21 @@ describe('createOrder', () => {
     await expect(svc.createOrder('l1', 'b1', 10)).rejects.toMatchObject({ statusCode: 400 });
   });
 
+  test('an NRI buyer is charged the NRI processing fee, a normal buyer the normal one (from the database flag)', async () => {
+    prisma.lead.findFirst.mockResolvedValue(lead());
+    rz.createEscrowOrder.mockResolvedValue({ id: 'order_1' });
+    prisma.escrowTransaction.create.mockResolvedValue({ id: 'e1' });
+    prisma.user.findUnique.mockResolvedValue({ isNRI: false });
+    await svc.createOrder('l1', 'b1', 50000);
+    expect(rz.createEscrowOrder).toHaveBeenLastCalledWith(5_120_900, expect.any(String));
+    prisma.user.findUnique.mockResolvedValue({ isNRI: true });
+    const out = await svc.createOrder('l1', 'b1', 50000);
+    const nriTotal = rz.createEscrowOrder.mock.calls.at(-1)[0];
+    expect(nriTotal).toBeGreaterThan(5_120_900);
+    expect(nriTotal - (nriTotal * 3 * 1.18) / 100).toBeGreaterThanOrEqual(5_000_000 - 1);
+    expect(out).toBeTruthy();
+  });
+
   test('the order is for token + fee, and the stored charge is what the gateway is asked for (not what the client sent)', async () => {
     prisma.lead.findFirst.mockResolvedValue(lead());
     rz.createEscrowOrder.mockResolvedValue({ id: 'order_1' });
@@ -109,6 +125,25 @@ describe('createOrder', () => {
     prisma.escrowTransaction.findFirst.mockResolvedValue({ id: 'e9', status: 'HELD' });
     await expect(svc.createOrder('l1', 'b1', 50000)).rejects.toMatchObject({ statusCode: 409, data: { code: 'ESCROW_ALREADY_ACTIVE', escrowId: 'e9' } });
     expect(rz.createEscrowOrder).not.toHaveBeenCalled();
+  });
+
+  // 7 Nov 2026: a third order was accepted on a lead whose earlier token was part-refunded (money still held), and would have been accepted
+  // while a token was FROZEN in a dispute. Any token that still holds money blocks a new order; only a settled one (released, refunded,
+  // failed, cancelled) lets the buyer pay again.
+  test.each(['HELD', 'HELD_PAYOUT_FAILED', 'FROZEN', 'PARTIALLY_REFUNDED'])('a lead with a %s token is a 409 and nothing is created at the gateway', async (status) => {
+    prisma.lead.findFirst.mockResolvedValue(lead());
+    prisma.escrowTransaction.findFirst.mockImplementation(async ({ where }) => (where.status.in.includes(status) ? { id: 'e9', status } : null));
+    await expect(svc.createOrder('l1', 'b1', 50000)).rejects.toMatchObject({ statusCode: 409, data: { code: 'ESCROW_ALREADY_ACTIVE', escrowId: 'e9' } });
+    expect(rz.createEscrowOrder).not.toHaveBeenCalled();
+    expect(prisma.escrowTransaction.create).not.toHaveBeenCalled();
+  });
+  test.each(['RELEASED', 'REFUNDED', 'FAILED', 'CANCELLED'])('a lead whose only token is %s can be paid into again', async (status) => {
+    prisma.lead.findFirst.mockResolvedValue(lead());
+    prisma.escrowTransaction.findFirst.mockImplementation(async ({ where }) => (where.status.in.includes(status) ? { id: 'e9', status } : null));
+    rz.createEscrowOrder.mockResolvedValue({ id: 'order_new' });
+    prisma.escrowTransaction.create.mockResolvedValue({ id: 'e_new', razorpayOrderId: 'order_new' });
+    await expect(svc.createOrder('l1', 'b1', 50000)).resolves.toBeDefined();
+    expect(rz.createEscrowOrder).toHaveBeenCalledTimes(1);
   });
 
   test('an abandoned pending order is resumed, not duplicated, and it keeps its ORIGINAL amount whatever is asked now', async () => {
@@ -299,6 +334,62 @@ describe('refund', () => {
     await expect(svc.refund('e1', 'a1', 'ip')).rejects.toMatchObject({ statusCode: 502 });
     expect(prisma.escrowTransaction.update).toHaveBeenCalledWith({ where: { id: 'e1' }, data: { status: 'HELD', refundedAt: null } });
     expect(ledger.onRefund).not.toHaveBeenCalled();
+  });
+
+  test('LOW BALANCE, admin refund: clear message, the failure is in the audit trail, and no extra admin notice (the admin is looking at it)', async () => {
+    prisma.escrowTransaction.findUnique.mockResolvedValue(held());
+    rz.refundPayment.mockRejectedValue({ statusCode: 400, error: { description: 'invalid request sent' } });
+    await expect(svc.refund('e1', 'a1', '9.9.9.9')).rejects.toMatchObject({
+      statusCode: 502, message: expect.stringMatching(/not enough balance.*top up.*try again/i), data: { code: 'RAZORPAY_BALANCE_LOW' },
+    });
+    expect(createAuditLog).toHaveBeenCalledTimes(1);
+    expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      adminId: 'a1', actorRole: 'ADMIN', action: 'ESCROW_REFUND_FAILED', targetId: 'e1', ipAddress: '9.9.9.9',
+      after: expect.objectContaining({ route: 'refund', amountPaise: 5_000_000, paymentId: 'pay_1', code: 'RAZORPAY_BALANCE_LOW', providerMessage: 'invalid request sent' }),
+    }));
+    expect(notifyAdmins).not.toHaveBeenCalled();
+  });
+
+  test('LOW BALANCE, buyer cancel: the buyer is not shown our Razorpay balance, and admins are told so they can top up', async () => {
+    prisma.escrowTransaction.findUnique.mockResolvedValue(held());
+    rz.refundPayment.mockRejectedValue({ statusCode: 400, error: { description: 'Your account does not have enough balance to carry out the refund operation.' } });
+    const err = await svc.refund('e1', 'b1', null, { reason: 'BUYER_CANCEL', actorType: 'BUYER' }).catch((e) => e);
+    expect(err).toMatchObject({ statusCode: 502, data: { code: 'REFUND_NOT_SENT' } });
+    expect(err.message).not.toMatch(/razorpay|balance|top up/i);
+    expect(err.message).toMatch(/token is safe/i);
+    expect(JSON.stringify(err.data)).not.toMatch(/balance/i);
+    expect(prisma.escrowTransaction.update).toHaveBeenCalledWith({ where: { id: 'e1' }, data: { status: 'HELD', refundedAt: null } });
+    expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ adminId: 'b1', actorRole: 'USER', action: 'ESCROW_REFUND_FAILED', after: expect.objectContaining({ code: 'RAZORPAY_BALANCE_LOW' }) }));
+    expect(notifyAdmins).toHaveBeenCalledTimes(1);
+    expect(notifyAdmins).toHaveBeenCalledWith(expect.objectContaining({
+      title: expect.stringMatching(/refund failed.*balance too low/i), message: expect.stringMatching(/buyer.*cancel.*50,000.*top up/i), linkUrl: '/admin/escrow',
+    }));
+  });
+
+  test('LOW BALANCE, automatic refund job: nobody is on screen, so admins are told', async () => {
+    prisma.escrowTransaction.findUnique.mockResolvedValue(held());
+    rz.refundPayment.mockRejectedValue({ statusCode: 400, error: { description: 'invalid request sent' } });
+    await expect(svc.refund('e1', null, null, { reason: 'ADMIN_TOKEN_ONLY', actorType: 'SYSTEM', autoReason: 'Held 30 days' })).rejects.toMatchObject({ data: { code: 'RAZORPAY_BALANCE_LOW' } });
+    expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ adminId: null, actorRole: 'SYSTEM', action: 'ESCROW_REFUND_FAILED' }));
+    expect(notifyAdmins).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringMatching(/refund failed.*balance too low/i), message: expect.stringMatching(/automatic refund/i) }));
+  });
+
+  test('a buyer cancel that fails for another reason also gets the plain message; admins get Razorpay\'s words', async () => {
+    prisma.escrowTransaction.findUnique.mockResolvedValue(held());
+    rz.refundPayment.mockRejectedValue({ statusCode: 500, error: { description: 'Gateway down' } });
+    const err = await svc.refund('e1', 'b1', null, { reason: 'BUYER_CANCEL', actorType: 'BUYER' }).catch((e) => e);
+    expect(err).toMatchObject({ statusCode: 502, data: { code: 'REFUND_NOT_SENT' } });
+    expect(err.message).not.toMatch(/gateway down|razorpay/i);
+    expect(notifyAdmins).toHaveBeenCalledWith(expect.objectContaining({ title: 'Refund failed', message: expect.stringContaining('Gateway down') }));
+  });
+
+  test('the audit trail or the notice being down never hides the refund error or the rollback', async () => {
+    createAuditLog.mockRejectedValue(new Error('db down'));
+    notifyAdmins.mockImplementation(() => { throw new Error('boom'); });
+    prisma.escrowTransaction.findUnique.mockResolvedValue(held());
+    rz.refundPayment.mockRejectedValue({ statusCode: 400, error: { description: 'invalid request sent' } });
+    await expect(svc.refund('e1', null, null, { actorType: 'SYSTEM' })).rejects.toMatchObject({ data: { code: 'RAZORPAY_BALANCE_LOW' } });
+    expect(prisma.escrowTransaction.update).toHaveBeenCalledWith({ where: { id: 'e1' }, data: { status: 'HELD', refundedAt: null } });
   });
 
   test('a buyer cancel after the free window keeps the cancellation charge', async () => {

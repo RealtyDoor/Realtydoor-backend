@@ -30,6 +30,7 @@ const GATED = [
   ['patch', '/leads/:id/do-not-contact', 'LEADS'],
   ['get', '/leads/:id/related', 'LEADS'],
   ['post', '/escrow/:id/refund', 'FINANCE'],
+  ['post', '/escrow/:id/refund-partial', 'FINANCE'],
   ['post', '/escrow/:id/freeze', 'FINANCE'],
   ['post', '/escrow/:id/unfreeze', 'FINANCE'],
   ['post', '/escrow/:id/payouts/refund-remaining', 'FINANCE'],

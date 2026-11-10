@@ -103,12 +103,25 @@ const refundEscrowSchema = z.object({
   reason: z.enum(['ADMIN_TOKEN_ONLY', 'SELLER_BACKOUT', 'LISTING_WRONG', 'OUR_FAULT']).optional(),
 }).optional();
 
+// "Other amount" refund: whole paise (the screen turns rupees into paise), a reason of 5 to 500 characters.
+// The service enforces the cap (what is still refundable), the reason length and the status; these only fix the types.
+const refundPartialSchema = z.object({
+  amountPaise: z.number().int().positive().max(100_000_000),
+  reason: z.string().max(1000),
+});
+
+const refundManualSchema = z.object({
+  amountPaise: z.number().int().positive().max(100_000_000),
+  reference: z.string().max(200),
+  reason: z.string().max(1000),
+});
+
 const refundRemainingSchema = z.object({
   note: z.string().max(500).optional(),
 });
 
 module.exports = {
-  createOrderSchema, releaseEscrowSchema, freezeEscrowSchema, refundEscrowSchema,
+  createOrderSchema, releaseEscrowSchema, freezeEscrowSchema, refundEscrowSchema, refundPartialSchema, refundManualSchema,
   retryPayoutSchema, resolvePayoutSchema, refundRemainingSchema,
   ESCROW_STATUSES,
 };

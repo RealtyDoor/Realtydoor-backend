@@ -1,4 +1,5 @@
 const prisma = require('../../lib/prisma');
+const escrowTotals = require('../../lib/escrowTotals');
 const ApiError = require('../../utils/ApiError');
 const { createNotification, notifyAdmins } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
@@ -213,7 +214,7 @@ async function getFinanceSummary(partnerId) {
     prisma.lead.count({ where: { assignedPartnerId: partnerId } }),
     prisma.escrowTransaction.findMany({
       where: { lead: { assignedPartnerId: partnerId } },
-      select: { status: true, amount: true, releasedAt: true, heldAt: true, partnerShareAmount: true },
+      select: { status: true, amount: true, refundedAmountPaise: true, releasedAt: true, heldAt: true, partnerShareAmount: true },
     }),
     prisma.escrowTransaction.findMany({
       where: {
@@ -225,13 +226,14 @@ async function getFinanceSummary(partnerId) {
     }),
   ]);
 
-  const heldEscrows     = allEscrows.filter((e) => e.status === 'HELD');
+  // Frozen and part-refunded tokens still hold money, and a part-refunded one holds only what is left (lib/escrowTotals).
+  const heldEscrows     = allEscrows.filter((e) => escrowTotals.HOLDING_STATUSES.includes(e.status));
   const releasedEscrows = allEscrows.filter((e) => e.status === 'RELEASED');
 
   return {
     totalLeads,
     closedDeals:         releasedEscrows.length,
-    escrowHeld:          heldEscrows.reduce((s, e) => s + e.amount, 0),
+    escrowHeld:          escrowTotals.sumHeld(heldEscrows),
     pendingCount:        heldEscrows.length,
     releasedTotal:       releasedEscrows.reduce((s, e) => s + e.amount, 0),
     releasedThisMonth:   thisMonthEscrows.reduce((s, e) => s + e.amount, 0),
@@ -497,14 +499,14 @@ async function listPayoutAccounts(filters, skip, limit) {
   const partnerIds = rows.map((r) => r.id);
   const heldEscrows = partnerIds.length
     ? await prisma.escrowTransaction.findMany({
-        where: { status: 'HELD', lead: { assignedPartnerId: { in: partnerIds } } },
-        select: { amount: true, lead: { select: { assignedPartnerId: true } } },
+        where: { status: { in: escrowTotals.HOLDING_STATUSES }, lead: { assignedPartnerId: { in: partnerIds } } },
+        select: { status: true, amount: true, refundedAmountPaise: true, lead: { select: { assignedPartnerId: true } } },
       })
     : [];
   const heldByPartnerId = new Map();
   for (const e of heldEscrows) {
     const pid = e.lead.assignedPartnerId;
-    heldByPartnerId.set(pid, (heldByPartnerId.get(pid) || 0) + e.amount);
+    heldByPartnerId.set(pid, (heldByPartnerId.get(pid) || 0) + escrowTotals.heldRupees(e));
   }
 
   return {

@@ -8,6 +8,7 @@
 // Spec: admin-nextjs/docs/MONEY_LEDGER_SPEC_DRAFT.md.
 
 const prisma = require('../../lib/prisma');
+const escrowTotals = require('../../lib/escrowTotals');
 const ApiError = require('../../utils/ApiError');
 const logger = require('../../lib/logger');
 const money = require('../../lib/moneyModel');
@@ -111,7 +112,7 @@ async function onRefund(escrow, quote, { refundId, actor }) {
     leadId: escrow.leadId, escrowId: escrow.id, type: 'REFUND', direction: 'OUT', status: 'RECORDED',
     partyType: 'BUYER', partyId: escrow.buyerId, grossPaise: quote.refundPaise, netPaise: quote.refundPaise,
     razorpayPaymentId: escrow.razorpayPaymentId, razorpayRefundId: refundId, reason: quote.reason,
-    note: quote.feeReturned ? 'Token and processing fee returned' : 'Token returned, processing fee kept',
+    note: quote.note || (quote.feeReturned ? 'Token and processing fee returned' : 'Token returned, processing fee kept'),
     idempotencyKey: `refund:${escrow.id}:${refundId}`, ...by,
   });
   if (quote.cancellationChargePaise > 0) {
@@ -126,7 +127,13 @@ async function onRefund(escrow, quote, { refundId, actor }) {
 }
 
 // Seller leg of a release.
-async function onSellerPayout(escrow, { sellerAmountPaise, payoutId, status }) {
+// `manual: true` must be passed for a transfer the admin confirmed was made outside Razorpay. A missing payout id alone
+// never means "paid by hand" (audit Nov 2026, F20: a failed seller leg was booked as paid).
+async function onSellerPayout(escrow, { sellerAmountPaise, payoutId, status, manual = false }) {
+  if (!payoutId && !manual) {
+    logger.warn('[Ledger] seller payout line skipped: no payout id and not a confirmed manual transfer', { escrowId: escrow.id });
+    return null;
+  }
   const due = await recordSafe({
     leadId: escrow.leadId, escrowId: escrow.id, type: 'SELLER_PAYOUT', direction: 'OUT', status: 'DUE',
     partyType: 'SELLER', grossPaise: sellerAmountPaise, netPaise: sellerAmountPaise, razorpayPayoutId: payoutId || null,
@@ -135,7 +142,7 @@ async function onSellerPayout(escrow, { sellerAmountPaise, payoutId, status }) {
   });
   // A RazorpayX payout is settled later by its webhook (onPayoutStatus). A transfer the admin confirms as already
   // made outside Razorpay has no webhook, so settle it here: otherwise "Seller payouts due" keeps showing it forever.
-  if (!payoutId && due) {
+  if (!payoutId && manual && due) {
     await recordSafe({
       leadId: escrow.leadId, escrowId: escrow.id, type: 'SELLER_PAYOUT', direction: 'OUT', status: 'PAID',
       partyType: 'SELLER', grossPaise: sellerAmountPaise, netPaise: sellerAmountPaise, relatedEntryId: due.id,
@@ -200,6 +207,46 @@ async function onPayoutStatus({ escrowId, payoutId, status, utr, reason }) {
     razorpayPayoutId: payoutId, utr: utr || null, relatedEntryId: parent.id,
     reason: reason || null, note: `Payout ${status}${utr ? ` (UTR ${utr})` : ''}`,
     idempotencyKey: `payoutStatus:${payoutId}:${mapped}`, ...sys, createdByType: 'WEBHOOK',
+  });
+}
+
+// A payout leg was created again (retry) or found again at RazorpayX after its create call got no answer. Writes a new
+// DUE row carrying the new payout id, so that payout's webhook has a row to settle (audit Nov 2026, F3). The earlier row
+// stays as it is, closed by its own FAILED line. `amountPaise` is used only when the leg has no earlier row at all.
+async function onPayoutRecreated(escrow, args) {
+  try {
+    return await payoutRecreated(escrow, args);
+  } catch (err) {
+    logger.error('[Ledger] FAILED to record a re-created payout — reconcile this deal by hand', { escrowId: escrow?.id, payoutId: args?.payoutId, error: err.message });
+    return null;
+  }
+}
+async function payoutRecreated(escrow, { leg, payoutId, status, attempt, amountPaise, note }) {
+  const types = leg === 'seller' ? ['SELLER_PAYOUT'] : ['PARTNER_COMMISSION', 'COMMISSION_VOUCHER'];
+  const already = await prisma.moneyLedgerEntry.findFirst({ where: { razorpayPayoutId: payoutId, type: { in: types }, relatedEntryId: { isSet: false } } });
+  if (already) return already;
+  const parent = await prisma.moneyLedgerEntry.findFirst({
+    where: { escrowId: escrow.id, type: { in: types }, relatedEntryId: { isSet: false } }, orderBy: { createdAt: 'desc' },
+  });
+  const text = note || `Payout created again (attempt ${attempt}): ${status || ''}`.trim();
+  if (parent) {
+    return recordSafe({
+      leadId: parent.leadId, escrowId: parent.escrowId, type: parent.type, direction: 'OUT', status: 'DUE',
+      partyType: parent.partyType, partyId: parent.partyId, partyName: parent.partyName,
+      grossPaise: parent.grossPaise, tdsPaise: parent.tdsPaise, netPaise: parent.netPaise,
+      voucherId: parent.voucherId || null, taxInvoiceId: parent.taxInvoiceId || null, invoiceNumber: parent.invoiceNumber || null, tdsEntryId: parent.tdsEntryId || null,
+      razorpayPayoutId: payoutId, note: text,
+      idempotencyKey: `payoutRecreated:${escrow.id}:${leg}:${payoutId}`, ...sys,
+    });
+  }
+  if (leg !== 'seller') {
+    logger.error('[Ledger] a partner payout was created but the commission has no ledger row: run "Repair bookkeeping" on this escrow', { escrowId: escrow.id, payoutId });
+    return null;
+  }
+  return recordSafe({
+    leadId: escrow.leadId, escrowId: escrow.id, type: 'SELLER_PAYOUT', direction: 'OUT', status: 'DUE',
+    partyType: 'SELLER', grossPaise: amountPaise, netPaise: amountPaise, razorpayPayoutId: payoutId, note: text,
+    idempotencyKey: `payoutRecreated:${escrow.id}:${leg}:${payoutId}`, ...sys,
   });
 }
 
@@ -357,7 +404,7 @@ async function dealMoneyCard(leadId) {
   const received = sum(['BROKERAGE_RECEIVED'], 'netPaise');
   const tdsReceivable = sum(['TDS_RECEIVABLE']);
   const gatewayFee = sum(['GATEWAY_FEE']);
-  const heldPaise = escrows.filter((e) => ['HELD', 'HELD_PAYOUT_FAILED', 'FROZEN', 'PARTIALLY_REFUNDED'].includes(e.status)).reduce((s, e) => s + Math.round(e.amount * 100), 0);
+  const heldPaise = escrows.reduce((s, e) => s + escrowTotals.heldPaise(e), 0);
 
   return {
     lead: { ...lead },
@@ -386,7 +433,7 @@ async function payablesReceivables(now = new Date()) {
     prisma.moneyLedgerEntry.findMany({ where: { type: 'SELLER_PAYOUT' } }),
     prisma.moneyLedgerEntry.findMany({ where: { type: { in: ['BROKERAGE_INVOICED', 'BROKERAGE_RECEIVED'] } } }),
     prisma.moneyLedgerEntry.findMany({ where: { type: 'TDS_RECEIVABLE' } }),
-    prisma.escrowTransaction.findMany({ where: { status: { in: ['HELD', 'HELD_PAYOUT_FAILED', 'FROZEN'] } }, select: { amount: true } }),
+    prisma.escrowTransaction.findMany({ where: { status: { in: escrowTotals.HOLDING_STATUSES } }, select: { status: true, amount: true, refundedAmountPaise: true } }),
   ]);
   const open = (rows) => withCurrentStatus(rows).filter((r) => !r.relatedEntryId && ['DUE', 'RECORDED'].includes(r.currentStatus));
   const sumNet = (rows) => rows.reduce((s, r) => s + r.netPaise, 0);
@@ -421,7 +468,7 @@ async function payablesReceivables(now = new Date()) {
       brokerageOutstandingDeals: brokerageOutstanding,
       tdsReceivablePaise: tdsRecv.reduce((s, r) => s + r.netPaise, 0),
     },
-    heldForOthers: { tokensInEscrowPaise: escrowsHeld.reduce((s, e) => s + Math.round(e.amount * 100), 0), count: escrowsHeld.length },
+    heldForOthers: { tokensInEscrowPaise: escrowsHeld.reduce((s, e) => s + escrowTotals.heldPaise(e), 0), count: escrowsHeld.length },
   };
 }
 
@@ -578,7 +625,7 @@ async function monthlyCsv(kind, month) {
 
 module.exports = {
   LEDGER_TYPES, MANUAL_TYPES, record, recordSafe, addManual,
-  onPaymentCaptured, onServicePaid, onRefund, onSellerPayout, onPartnerCredit, onPayoutStatus,
+  onPaymentCaptured, onServicePaid, onRefund, onSellerPayout, onPartnerCredit, onPayoutStatus, onPayoutRecreated,
   onBrokerageInvoiced, onBrokerageReceived, onTdsDeposited, onInvoiceMatched,
   listEntries, withCurrentStatus, dealMoneyCard, payablesReceivables, reconcile,
   profitView, monthlyCsv, csvCell, monthRange, buildWhere,

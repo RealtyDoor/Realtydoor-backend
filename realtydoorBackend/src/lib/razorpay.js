@@ -97,6 +97,24 @@ async function createPayout(fundAccountId, amountInPaise, referenceId, idempoten
   }, { 'X-Payout-Idempotency': idempotencyKey });
 }
 
+// Audit Nov 2026, F1: see isClearRefusal in lib/refundFailure.js for when a failed create call means "we do not know".
+// Finds a payout by the reference id we sent with it (esc_s_<escrowId>_a<attempt> / esc_p_...). This is how a payout whose
+// create call got no answer is found again. Returns the payout, or null when RazorpayX has none. Throws when RazorpayX
+// cannot be asked, so the caller can refuse to guess.
+async function findPayoutByReference(referenceId) {
+  const account = encodeURIComponent(process.env.RAZORPAYX_ACCOUNT_NUMBER || '');
+  const res = await rawGet(`/v1/payouts?account_number=${account}&reference_id=${encodeURIComponent(referenceId)}&count=10`);
+  const items = Array.isArray(res?.items) ? res.items : [];
+  // Filtered here too, so a list endpoint that ignored the filter can never hand back someone else's payout.
+  const matches = items.filter((p) => p.reference_id === referenceId);
+  // Fail safe: rows with another reference mean the filter was not applied, so "not in this page" proves nothing.
+  // Throwing makes every caller treat it as "could not check" and refuse to move money.
+  if (!matches.length && items.length) throw new Error('RazorpayX did not filter payouts by reference id; cannot tell whether the payout exists');
+  if (!matches.length) return null;
+  const rank = (p) => (['processed', 'processing', 'queued', 'pending'].includes(p.status) ? 0 : 1);
+  return matches.sort((a, b) => rank(a) - rank(b))[0];
+}
+
 const FUND_ACCOUNT_VALIDATION_POLL_ATTEMPTS = 3;
 const FUND_ACCOUNT_VALIDATION_POLL_DELAY_MS = 1500;
 
@@ -198,6 +216,7 @@ module.exports = {
   createPayoutContact,
   createPayoutFundAccount,
   createPayout,
+  findPayoutByReference,
   validateFundAccountOrWarn,
   refundPayment,
   verifyWebhookSignature,

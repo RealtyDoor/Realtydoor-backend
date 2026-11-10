@@ -10,12 +10,52 @@ const logger = require('../../lib/logger');
 const ledger = require('../money/ledger.service');
 const { createAuditLog } = require('../../lib/auditLog');
 
+// A signed body that can never be processed (no event name, or an event we handle without the object it must carry) is answered 400 before
+// anything is written. Unknown event names are fine (acknowledged and ignored). Only an event we recognise is checked for its entity.
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+function isWellFormedEvent(body) {
+  if (!isObj(body) || typeof body.event !== 'string' || !body.event || body.event.length > 100) return false;
+  const p = isObj(body.payload) ? body.payload : {};
+  const entityOf = (k) => (isObj(p[k]) && isObj(p[k].entity) ? p[k].entity : null);
+  const hasId = (e) => !!e && typeof e.id === 'string' && !!e.id;
+  if (body.event === 'payment.captured') return hasId(entityOf('payment')) && typeof entityOf('payment').order_id === 'string';
+  if (body.event === 'payment.failed') return !!entityOf('payment') && typeof entityOf('payment').order_id === 'string';
+  if (body.event === 'refund.created') return hasId(entityOf('refund')) && typeof entityOf('refund').payment_id === 'string';
+  if (body.event === 'payout.processed' || body.event === 'payout.failed' || body.event === 'payout.rejected' || body.event === 'payout.reversed') return hasId(entityOf('payout'));
+  return true;
+}
+
 // The entire handler body is one try/catch, including signature verification
 // — this is a public, unauthenticated, internet-facing endpoint (it has to
 // be, to receive real Razorpay webhooks), so nothing in here may ever throw
 // past this function. A single malformed/missing header or an unexpected
 // payload shape must degrade to a clean error response, never an unhandled
 // promise rejection (which server.js treats as fatal and exits the process).
+// Finds the escrow a payout event belongs to. Normally by the payout id we stored. Audit Nov 2026, F1: when the create
+// call got no answer we have no id, only the leg marked "unconfirmed"; the event still carries the reference id we sent
+// (esc_s_<escrowId>_a<attempt> / esc_p_...), so the payout is adopted from it and the event then applies as usual.
+async function findEscrowForPayout(entity) {
+  const byId = await prisma.escrowTransaction.findFirst({
+    where: { OR: [{ razorpayPayoutId: entity.id }, { razorpayPartnerPayoutId: entity.id }] },
+  });
+  if (byId) return byId;
+  const m = /^esc_([sp])_([a-f0-9]{24})_a(\d+)$/.exec(String(entity.reference_id || ''));
+  if (!m) return null;
+  const leg = m[1] === 's' ? 'seller' : 'partner';
+  const escrow = await prisma.escrowTransaction.findUnique({ where: { id: m[2] } });
+  if (!escrow) return null;
+  const legStatus = leg === 'seller' ? escrow.sellerPayoutStatus : escrow.partnerPayoutStatus;
+  if (legStatus !== 'unconfirmed' || escrow.status !== 'HELD_PAYOUT_FAILED' || Number(m[3]) !== (escrow.payoutAttempt || 0)) {
+    logger.error('[RazorpayWebhook] payout event for an escrow that has no record of this payout — check it by hand', { escrowId: escrow.id, payoutId: entity.id, referenceId: entity.reference_id, legStatus });
+    return null;
+  }
+  // Adopted as "processing" whatever the event says, so the branch below still sees a status change and does its
+  // normal work (ledger line, notifications, failure flag).
+  const { adoptPayout } = require('../escrow/escrowPayout.service');
+  await adoptPayout(escrow, leg, { id: entity.id, status: 'processing', amount: entity.amount }, 'webhook');
+  return prisma.escrowTransaction.findUnique({ where: { id: escrow.id } });
+}
+
 async function razorpay(req, res) {
   // Declared here (not via `const` inside the try block) so the catch
   // block below can actually log which event failed — a `const` declared
@@ -29,6 +69,11 @@ async function razorpay(req, res) {
 
     if (!verifyWebhookSignature(req.rawBody, signature)) {
       return res.status(400).json({ error: 'Invalid signature' });
+    }
+
+    if (!isWellFormedEvent(req.body)) {
+      logger.warn('[RazorpayWebhook] Malformed signed payload refused', { event: isObj(req.body) ? String(req.body.event).slice(0, 60) : typeof req.body });
+      return res.status(400).json({ error: 'Malformed webhook payload' });
     }
 
     let payload;
@@ -172,7 +217,12 @@ async function razorpay(req, res) {
         // so a refund arriving while HELD_PAYOUT_FAILED is itself a
         // double-payment already in progress, not a normal refund to wave
         // through. It needs a human, same as any other unexpected state.
-        if (!['HELD', 'FROZEN', 'PARTIALLY_REFUNDED'].includes(escrow.status)) {
+        if (escrow.status === 'REFUNDED' && !escrow.razorpayRefundId && !(escrow.refundIds || []).length) {
+          // The app's own refund is in progress: refund() marks REFUNDED before it calls Razorpay and writes the refund id
+          // right after. This event simply arrived first; it is not an "unexpected refund". If refund() died half way,
+          // the reconcile job alerts admins about a REFUNDED row with no refund id.
+          logger.info('[RazorpayWebhook] refund.created arrived while the app refund is still being recorded', { escrowId: escrow.id, refundId });
+        } else if (!['HELD', 'FROZEN', 'PARTIALLY_REFUNDED'].includes(escrow.status)) {
           logger.warn('[RazorpayWebhook] refund.created for an escrow not in a refundable state — not touching status', { escrowId: escrow.id, status: escrow.status, refundId });
           const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
           if (admins.length > 0) {
@@ -186,10 +236,13 @@ async function razorpay(req, res) {
         } else {
           const refundedAmountPaise = (escrow.refundedAmountPaise || 0) + amount;
           const fullyRefunded = refundedAmountPaise >= Math.round(escrow.amount * 100);
-          await prisma.escrowTransaction.update({
-            where: { id: escrow.id },
+          // Audit Nov 2026, F5: one guarded write, not read-then-write. It applies only while the row is still in the
+          // status just read and this refund id is still absent, so two deliveries (or a delivery racing an admin
+          // action) cannot both count the amount. A lost race throws: Razorpay redelivers and the retry re-reads.
+          const applied = await prisma.escrowTransaction.updateMany({
+            where: { id: escrow.id, status: escrow.status, NOT: { refundIds: { has: refundId } } },
             data: {
-              refundedAmountPaise,
+              refundedAmountPaise: { increment: amount },
               refundIds: { push: refundId },
               razorpayRefundId: refundId,
               ...(fullyRefunded
@@ -197,6 +250,24 @@ async function razorpay(req, res) {
                 : { status: 'PARTIALLY_REFUNDED' }),
             },
           });
+          if (applied.count === 0) throw new Error(`refund.created ${refundId}: the escrow changed while it was being applied; retry`);
+          // Two part refunds landing together can each see "not full yet". Settle the status from the stored total.
+          if (!fullyRefunded) {
+            await prisma.escrowTransaction.updateMany({
+              where: { id: escrow.id, status: 'PARTIALLY_REFUNDED', refundedAmountPaise: { gte: Math.round(escrow.amount * 100) } },
+              data: { status: 'REFUNDED', refundedAt: new Date() },
+            });
+          }
+          // A refund made in the Razorpay dashboard had no ledger row at all.
+          await ledger.onRefund(escrow, {
+            refundPaise: amount, reason: 'RAZORPAY_DASHBOARD', cancellationChargePaise: 0,
+            note: 'Refund made outside the app (Razorpay dashboard), recorded from the webhook',
+          }, { refundId, actor: { createdByType: 'WEBHOOK' } });
+          await createAuditLog({
+            actorRole: 'WEBHOOK', action: 'ESCROW_REFUND_RECORDED', targetType: 'EscrowTransaction', targetId: escrow.id,
+            before: { status: escrow.status, refundedAmountPaise: escrow.refundedAmountPaise || 0 },
+            after: { status: fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED', refundId, refundPaise: amount },
+          }).catch((e) => logger.warn('[RazorpayWebhook] audit of a dashboard refund failed', { error: e.message }));
           await createNotification({
             userId: escrow.buyerId,
             title: fullyRefunded ? 'Token Advance Refunded' : 'Partial Refund Received',
@@ -252,9 +323,7 @@ async function razorpay(req, res) {
     // dedup against adminNote text here except the one fired on this update.
     if (event === 'payout.processed') {
       const { id: payoutId, utr } = payload.payout.entity;
-      const escrow = await prisma.escrowTransaction.findFirst({
-        where: { OR: [{ razorpayPayoutId: payoutId }, { razorpayPartnerPayoutId: payoutId }] },
-      });
+      const escrow = await findEscrowForPayout(payload.payout.entity);
 
       if (escrow) {
         const leg = escrow.razorpayPayoutId === payoutId ? 'seller' : 'partner';
@@ -314,9 +383,7 @@ async function razorpay(req, res) {
     // RazorpayX has no payout.failed event in its webhook list; a payout it refuses arrives as payout.rejected.
     if (event === 'payout.failed' || event === 'payout.rejected' || event === 'payout.reversed') {
       const { id: payoutId, status, status_details: statusDetails } = payload.payout.entity;
-      const escrow = await prisma.escrowTransaction.findFirst({
-        where: { OR: [{ razorpayPayoutId: payoutId }, { razorpayPartnerPayoutId: payoutId }] },
-      });
+      const escrow = await findEscrowForPayout(payload.payout.entity);
 
       // Re-checking status in (RELEASED, HELD_PAYOUT_FAILED) rather than just
       // RELEASED — a release() with both seller and partner payouts can have

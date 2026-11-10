@@ -4,9 +4,12 @@ const logger = require('../lib/logger');
 const { razorpay, rawGet } = require('../lib/razorpay');
 const { confirmPayment } = require('../modules/escrow/escrow.service');
 const { activateSubscription } = require('../modules/services/services.service');
-const { createNotification, broadcastNotification } = require('../lib/notifications');
+const { createNotification, broadcastNotification, notifyAdmins } = require('../lib/notifications');
 const { notifyUser } = require('../lib/wati');
 const { onPayoutFailed } = require('../lib/payoutAlerts');
+const ledger = require('../modules/money/ledger.service');
+const { createAuditLog } = require('../lib/auditLog');
+const { alertStaff } = require('../lib/staffAlerts');
 
 // BE-5 — a self-healing safety net for whatever the webhook alone might miss
 // (dropped delivery, Razorpay outage, a bug that threw and — before this —
@@ -101,6 +104,11 @@ async function applyLivePayoutStatus(escrow, leg, payoutId, live) {
         ? { sellerPayoutStatus: 'processed', sellerPayoutUtr: live.utr || null }
         : { partnerPayoutStatus: 'processed', partnerPayoutUtr: live.utr || null },
     });
+    // Audit Nov 2026, F27: the ledger gets its PAID line here too, same as from the webhook (same key, so never twice).
+    await ledger.onPayoutStatus({ escrowId: escrow.id, payoutId, status: 'processed', utr: live.utr });
+    if (leg === 'partner' && live.utr) {
+      await prisma.commissionVoucher.updateMany({ where: { escrowId: escrow.id }, data: { utr: live.utr, payoutId } }).catch(() => {});
+    }
     if (leg === 'partner' && !alreadyProcessed) {
       const lead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { assignedPartnerId: true, refCode: true } });
       if (lead?.assignedPartnerId) {
@@ -147,6 +155,12 @@ async function applyLivePayoutStatus(escrow, leg, payoutId, live) {
       });
     }
     onPayoutFailed({ escrow, leg, status: live.status, reason });
+    await ledger.onPayoutStatus({ escrowId: escrow.id, payoutId, status: live.status, reason });
+    await createAuditLog({
+      actorRole: 'SYSTEM', action: live.status === 'reversed' ? 'PAYOUT_REVERSED' : 'PAYOUT_FAILED',
+      targetType: 'EscrowTransaction', targetId: escrow.id,
+      before: { [`${leg}PayoutStatus`]: currentLegStatus ?? null }, after: { [`${leg}PayoutStatus`]: live.status, payoutId }, reason,
+    }).catch((e) => logger.warn('[PaymentReconcile] audit of payout failure failed', { error: e.message }));
     logger.error('[PaymentReconcile] Escrow payout reconciled as failed/reversed', { payoutId, escrowId: escrow.id, leg, status: live.status });
     return true;
   }
@@ -193,14 +207,103 @@ async function reconcileStuckPayouts() {
   return updated;
 }
 
+// Audit Nov 2026, F1: a payout leg marked "unconfirmed" (its create call got no answer) is looked up at RazorpayX by the
+// reference id we sent. Found: recorded, and the escrow goes back to RELEASED if nothing else is wrong. Not there: the
+// leg is marked failed and admins are told to retry or refund. RazorpayX unreachable: left alone until the next run.
+async function reconcileUnconfirmedPayouts() {
+  const { resolveUnconfirmedLeg } = require('../modules/escrow/escrowPayout.service');
+  const rows = await prisma.escrowTransaction.findMany({
+    where: { status: 'HELD_PAYOUT_FAILED', OR: [{ sellerPayoutStatus: 'unconfirmed' }, { partnerPayoutStatus: 'unconfirmed' }] },
+  });
+  let settled = 0;
+  for (const row of rows) {
+    for (const leg of ['seller', 'partner']) {
+      try {
+        // Re-read: settling the first leg changes the row the second leg is judged against.
+        const escrow = await prisma.escrowTransaction.findUnique({ where: { id: row.id } });
+        const r = await resolveUnconfirmedLeg(escrow, leg, 'reconcile job');
+        if (r.state === 'found' || r.state === 'absent') settled++;
+        if (r.state === 'absent') {
+          await notifyAdmins({
+            title: 'Payout was not created',
+            message: `The ${leg} payout for an escrow of ₹${escrow.amount.toLocaleString('en-IN')} got no answer from RazorpayX and was checked: it does not exist. Retry the payout or refund the token from Escrow.`,
+            type: 'ESCROW_PAYOUT_FAILED', linkUrl: '/admin/escrow',
+          });
+        }
+      } catch (err) {
+        logger.warn('[PaymentReconcile] Could not look up an unconfirmed payout', { escrowId: row.id, leg, error: err.message || razorpayText(err) });
+      }
+    }
+  }
+  return settled;
+}
+const razorpayText = (err) => err?.error?.description || (err?.statusCode ? `HTTP ${err.statusCode}` : 'unknown error');
+
+const STUCK_STATE_MS = 10 * 60 * 1000;         // a claim older than this with no result is not "in progress" any more
+const STUCK_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000; // old test and seed rows are not re-scanned for ever
+
+// Audit Nov 2026, F2. refund() marks REFUNDED and release() marks RELEASED BEFORE they call Razorpay (that is what stops a
+// double click paying twice). If the server dies between the mark and the call, the row says money moved and none did.
+// Nothing here moves money: it tells the admins, once per escrow and kind, by notification and email. The one row change
+// is a partner payout stuck in "claiming" (the server died mid-payout), which becomes "unconfirmed" so that "Pay partner"
+// is offered again and looks the payout up at RazorpayX before creating anything.
+async function alertStuckMoneyStates(now = Date.now()) {
+  const cutoff = new Date(now - STUCK_STATE_MS);
+  const since = new Date(now - STUCK_LOOKBACK_MS);
+  const [refunded, released, partnerStuck] = await Promise.all([
+    // A real refund always leaves an id in refundIds (Razorpay's, or "manual:..." for one made by hand).
+    prisma.escrowTransaction.findMany({ where: { status: 'REFUNDED', refundedAt: { lte: cutoff, gte: since }, refundIds: { isEmpty: true } } }),
+    // Candidates only; a confirmed manual transfer also has no payout id, so the release audit entry decides below.
+    prisma.escrowTransaction.findMany({ where: { status: 'RELEASED', releasedAt: { lte: cutoff, gte: since }, OR: [{ razorpayPayoutId: null }, { razorpayPayoutId: { isSet: false } }] } }),
+    prisma.escrowTransaction.findMany({ where: { status: 'RELEASED', partnerPayoutStatus: { in: ['claiming', 'unconfirmed'] }, updatedAt: { lte: cutoff } } }),
+  ]);
+
+  const found = [];
+  for (const e of refunded) {
+    found.push({ e, action: 'ALERT_REFUND_NOT_SENT', title: 'Refund marked but not sent', text: `An escrow of ₹${e.amount.toLocaleString('en-IN')} is marked REFUNDED but no refund was recorded at Razorpay. The buyer may not have been paid. Check the payment in Razorpay; if no refund exists there, refund it by hand and record it.` });
+  }
+  for (const e of released) {
+    if (e.sellerPayoutStatus) continue; // a payout was attempted and its state is known
+    const audited = await prisma.auditLog.findFirst({ where: { action: 'ESCROW_RELEASED', targetId: e.id }, select: { id: true } });
+    if (audited) continue; // release() ran to its end (for example a confirmed manual transfer)
+    found.push({ e, action: 'ALERT_RELEASE_NOT_PAID', title: 'Release marked but no payout made', text: `An escrow of ₹${e.amount.toLocaleString('en-IN')} is marked RELEASED but no payout was created and the release never finished. The seller has not been paid by the app. Check RazorpayX for a payout with this escrow's reference, then pay or correct it.` });
+  }
+  for (const e of partnerStuck) {
+    if (e.partnerPayoutStatus === 'claiming') {
+      const moved = await prisma.escrowTransaction.updateMany({
+        where: { id: e.id, partnerPayoutStatus: 'claiming', updatedAt: { lte: cutoff } },
+        data: { partnerPayoutStatus: 'unconfirmed', partnerPayoutFailureReason: 'The payout was started and never finished; it may or may not exist. "Pay partner" looks it up first.' },
+      });
+      if (moved.count === 0) continue; // it finished while we were looking
+      e.partnerPayoutStatus = 'unconfirmed';
+    }
+    found.push({ e, action: 'ALERT_PARTNER_PAYOUT_STUCK', title: 'Partner payout needs a check', text: `The partner payout on an escrow of ₹${e.amount.toLocaleString('en-IN')} was started and its result is not known. Open Escrow and press "Pay partner": it first checks RazorpayX for the earlier payout, so nothing is paid twice.` });
+  }
+
+  let alerted = 0;
+  for (const { e, action, title, text } of found) {
+    const done = await prisma.auditLog.findFirst({ where: { action, targetId: e.id }, select: { id: true } });
+    if (done) continue;
+    await notifyAdmins({ title, message: text, type: 'ESCROW_PAYOUT_FAILED', linkUrl: '/admin/escrow' });
+    await alertStaff(title, `<p>${text}</p><p>Escrow id: ${e.id}</p>`);
+    await createAuditLog({ actorRole: 'SYSTEM', action, targetType: 'EscrowTransaction', targetId: e.id, after: { status: e.status, partnerPayoutStatus: e.partnerPayoutStatus ?? null } });
+    logger.error(`[PaymentReconcile] ${title}`, { escrowId: e.id, status: e.status });
+    alerted++;
+  }
+  return alerted;
+}
+
 async function runOnce() {
-  const [healedEscrows, healedSubscriptions, reconciledPayouts] = await Promise.all([
+  const [healedEscrows, healedSubscriptions, reconciledPayouts, unconfirmedPayouts, stuckAlerts] = await Promise.all([
     reconcilePendingEscrows(),
     reconcilePendingSubscriptions(),
     reconcileStuckPayouts(),
+    // These two must never stop the three above (or each other) from reporting.
+    reconcileUnconfirmedPayouts().catch((err) => { logger.error('[PaymentReconcile] unconfirmed-payout check failed', { error: err.message }); return 0; }),
+    alertStuckMoneyStates().catch((err) => { logger.error('[PaymentReconcile] stuck-state check failed', { error: err.message }); return 0; }),
   ]);
-  const result = { healedEscrows, healedSubscriptions, reconciledPayouts };
-  if (healedEscrows || healedSubscriptions || reconciledPayouts) {
+  const result = { healedEscrows, healedSubscriptions, reconciledPayouts, unconfirmedPayouts, stuckAlerts };
+  if (healedEscrows || healedSubscriptions || reconciledPayouts || unconfirmedPayouts || stuckAlerts) {
     logger.info('[PaymentReconcile] Reconciled', result);
   }
   return result;
@@ -216,4 +319,4 @@ function start() {
   logger.info('[Jobs] Payment reconciliation job scheduled (every 15 min)');
 }
 
-module.exports = { start, runOnce };
+module.exports = { start, runOnce, reconcileUnconfirmedPayouts, alertStuckMoneyStates };

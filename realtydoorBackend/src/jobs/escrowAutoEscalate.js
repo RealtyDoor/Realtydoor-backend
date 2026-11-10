@@ -5,6 +5,9 @@ const { broadcastNotification } = require('../lib/notifications');
 const { getConfigNumber } = require('../modules/config/config.service');
 
 const DEFAULT_AUTO_ESCALATE_DAYS = 14;
+// Every state that still holds buyer money, except FROZEN (a person is already deciding that one, and the hold-limit job
+// reminds them). Audit Nov 2026, F7: part-refunded and payout-failed tokens used to be skipped.
+const ESCALATE_STATUSES = ['HELD', 'PARTIALLY_REFUNDED', 'HELD_PAYOUT_FAILED'];
 
 // Runs nightly. Flags any escrow that's sat HELD (undispatched — not released,
 // not refunded) past the configured cool-off window (FRONTEND_HANDOFF_SPEC.md
@@ -19,8 +22,8 @@ async function runOnce() {
   // was never written at all (which is every row until its first escalation)
   // — confirmed empirically, not a Prisma quirk to trust blindly here.
   const candidates = await prisma.escrowTransaction.findMany({
-    where: { status: 'HELD', heldAt: { lte: cutoff } },
-    select: { id: true, amount: true, leadId: true, autoEscalatedAt: true },
+    where: { status: { in: ESCALATE_STATUSES }, heldAt: { lte: cutoff } },
+    select: { id: true, status: true, amount: true, leadId: true, autoEscalatedAt: true },
   });
   const stale = candidates.filter((e) => !e.autoEscalatedAt);
 

@@ -1,4 +1,5 @@
 const prisma = require('../../lib/prisma');
+const escrowTotals = require('../../lib/escrowTotals');
 const { isPartnerBrought, isCampaignLead, rotationOrder } = require('../../lib/leadAssignRules');
 const leadSalesRules = require('../../lib/leadSales');
 const leadSales = require('../leadSales/leadSales.service');
@@ -1351,7 +1352,8 @@ async function getRevenueSummary() {
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
   const [escrowHeld, escrowReleased, escrowPlatformFee, servicesRevenue, closedLeads, totalLeads] = await Promise.all([
-    prisma.escrowTransaction.aggregate({ where: { status: 'HELD' }, _sum: { amount: true }, _count: true }),
+    // Frozen and part-refunded tokens still hold money (lib/escrowTotals): counted, with only the unrefunded part of a part-refunded one.
+    prisma.escrowTransaction.findMany({ where: { status: { in: escrowTotals.HOLDING_STATUSES } }, select: { status: true, amount: true, refundedAmountPaise: true } }),
     prisma.escrowTransaction.aggregate({
       where: { status: 'RELEASED', releasedAt: { gte: startOfMonth } },
       _sum: { amount: true }, _count: true,
@@ -1375,7 +1377,7 @@ async function getRevenueSummary() {
   ]);
 
   return {
-    escrowHeld:        { amount: escrowHeld._sum.amount || 0,         count: escrowHeld._count },
+    escrowHeld:        { amount: escrowTotals.sumHeld(escrowHeld),    count: escrowHeld.length },
     escrowReleasedMTD: { amount: escrowReleased._sum.amount || 0,      count: escrowReleased._count },
     // Paise-summed, then converted to rupees for the response — older rows
     // released before BE-9/BE-17 shipped have no platformFeePaise, so this

@@ -8,12 +8,103 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const {
   createPayoutContact, createPayoutFundAccount, createPayout,
-  validateFundAccountOrWarn, refundPayment, rawGet,
+  validateFundAccountOrWarn, refundPayment, rawGet, findPayoutByReference,
 } = require('../../lib/razorpay');
+const ledger = require('../money/ledger.service');
+const { createNotification } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const logger = require('../../lib/logger');
+const { refundFailure, recordRefundFailure, isClearRefusal, razorpayErrorText } = require('../../lib/refundFailure');
 
 const IN_FLIGHT_STATUSES = ['queued', 'pending', 'processing'];
+const DEAD_STATUSES = ['failed', 'rejected', 'reversed', 'cancelled'];
+// A leg in one of these states still needs a person (or the lookup below) before the escrow may read RELEASED.
+const NOT_PAID_STATUSES = [...DEAD_STATUSES, 'unconfirmed'];
+// How long after an unanswered create call a "RazorpayX has no such payout" answer is trusted. Inside this window the
+// lost request could still be on its way.
+const UNCONFIRMED_SETTLE_MS = 2 * 60 * 1000;
+
+const legFields = (leg) => (leg === 'seller'
+  ? { id: 'razorpayPayoutId', status: 'sellerPayoutStatus', utr: 'sellerPayoutUtr', reason: 'sellerPayoutFailureReason', amount: 'netAmount' }
+  : { id: 'razorpayPartnerPayoutId', status: 'partnerPayoutStatus', utr: 'partnerPayoutUtr', reason: 'partnerPayoutFailureReason', amount: 'partnerShareAmount' });
+const referenceFor = (leg, escrowId, attempt) => `esc_${leg === 'seller' ? 's' : 'p'}_${escrowId}_a${attempt}`;
+
+// Audit Nov 2026, F1. Records a payout that was found at RazorpayX for a leg marked "unconfirmed" (its create call got no
+// answer). Stores the id and status, writes the ledger row, and puts the escrow back to RELEASED when no leg is left
+// unpaid. Guarded on the leg still being "unconfirmed", so the webhook, the job and an admin cannot adopt it twice.
+async function adoptPayout(escrow, leg, payout, source = 'lookup') {
+  const f = legFields(leg);
+  const other = legFields(leg === 'seller' ? 'partner' : 'seller');
+  const dead = DEAD_STATUSES.includes(payout.status);
+  const otherUnpaid = NOT_PAID_STATUSES.includes(escrow[other.status]);
+  const backToReleased = escrow.status === 'HELD_PAYOUT_FAILED' && !dead && !otherUnpaid;
+  const claim = await prisma.escrowTransaction.updateMany({
+    where: { id: escrow.id, [f.status]: 'unconfirmed' },
+    data: {
+      [f.id]: payout.id, [f.status]: payout.status, [f.utr]: payout.utr || null,
+      [f.reason]: dead ? (payout.status_details?.description || payout.status) : null,
+      ...(backToReleased ? { status: 'RELEASED' } : {}),
+      adminNote: `${escrow.adminNote ? `${escrow.adminNote} | ` : ''}${leg} payout found at RazorpayX (${source}): ${payout.id}, ${payout.status}`,
+    },
+  });
+  if (claim.count === 0) return false;
+  await ledger.onPayoutRecreated(escrow, {
+    leg, payoutId: payout.id, status: payout.status, attempt: escrow.payoutAttempt || 0,
+    amountPaise: payout.amount ?? Math.round((escrow[f.amount] || 0) * 100),
+    note: `Payout found at RazorpayX after its create call got no answer: ${payout.status}`,
+  });
+  if (payout.status === 'processed' || dead) {
+    await ledger.onPayoutStatus({ escrowId: escrow.id, payoutId: payout.id, status: payout.status, utr: payout.utr, reason: payout.status_details?.description });
+  }
+  await createAuditLog({
+    actorRole: 'SYSTEM', action: 'ESCROW_PAYOUT_FOUND', targetType: 'EscrowTransaction', targetId: escrow.id,
+    after: { leg, payoutId: payout.id, status: payout.status, source },
+  }).catch((e) => logger.warn('[EscrowPayout] audit of a found payout failed', { error: e.message }));
+  logger.warn('[EscrowPayout] A payout with an unknown result was found at RazorpayX', { escrowId: escrow.id, leg, payoutId: payout.id, status: payout.status, source });
+  return true;
+}
+
+// Settles a leg marked "unconfirmed": asks RazorpayX for a payout with this leg's reference id.
+//   found      -> adopted (see adoptPayout); returns { state: 'found', payout }
+//   not there  -> the leg is marked failed ("never created"); returns { state: 'absent' }
+//   too early  -> returns { state: 'wait' } and changes nothing
+// Throws (from findPayoutByReference) when RazorpayX cannot be asked: the caller must then refuse to move money.
+async function resolveUnconfirmedLeg(escrow, leg, source = 'lookup', now = Date.now()) {
+  const f = legFields(leg);
+  // Only a payout-failed escrow. A partner payout that was held back at release and then got no answer (escrow still
+  // RELEASED) is finished by "Pay partner" (payDeferredPartnerCommission), which also writes the TDS entry and voucher.
+  if (escrow[f.status] !== 'unconfirmed' || escrow.status !== 'HELD_PAYOUT_FAILED') return { state: 'none' };
+  const payout = await findPayoutByReference(referenceFor(leg, escrow.id, escrow.payoutAttempt || 0));
+  if (payout) {
+    await adoptPayout(escrow, leg, payout, source);
+    return { state: 'found', payout };
+  }
+  if (escrow.updatedAt && now - new Date(escrow.updatedAt).getTime() < UNCONFIRMED_SETTLE_MS) return { state: 'wait' };
+  await prisma.escrowTransaction.updateMany({
+    where: { id: escrow.id, [f.status]: 'unconfirmed' },
+    data: { [f.status]: 'failed', [f.reason]: 'The payout was never created at RazorpayX (checked by reference id)' },
+  });
+  return { state: 'absent' };
+}
+
+// For the callers that are about to move money: every "unconfirmed" leg must be settled first.
+async function settleUnconfirmedOrRefuse(escrow, legsToCheck) {
+  let touched = false;
+  for (const leg of legsToCheck) {
+    if (escrow[legFields(leg).status] !== 'unconfirmed') continue;
+    let r;
+    try {
+      r = await resolveUnconfirmedLeg(escrow, leg, 'admin action');
+    } catch (err) {
+      throw new ApiError(502, `Could not reach RazorpayX to check whether the earlier ${leg} payout exists. Nothing was changed; try again in a few minutes.`, { code: 'RAZORPAYX_ERROR' });
+    }
+    if (r.state === 'wait') {
+      throw new ApiError(409, `The earlier ${leg} payout request got no answer from RazorpayX less than two minutes ago. Wait two minutes and try again.`, { code: 'PAYOUT_UNCONFIRMED' });
+    }
+    touched = true;
+  }
+  return touched ? prisma.escrowTransaction.findUnique({ where: { id: escrow.id } }) : escrow;
+}
 
 async function fetchPayoutStatus(payoutId) {
   return rawGet(`/v1/payouts/${payoutId}`);
@@ -52,10 +143,17 @@ async function getPayouts(escrowId) {
 }
 
 async function retryPayout(escrowId, { leg, sellerDetails, note }, adminId, ip) {
-  const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
+  let escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
   if (!escrow) throw new ApiError(404, 'Escrow not found');
   if (escrow.status !== 'HELD_PAYOUT_FAILED') {
     throw new ApiError(400, 'This escrow is not in a payout-failed state', { code: 'ESCROW_NOT_PAYOUT_FAILED' });
+  }
+  // F1: a leg whose earlier create call got no answer is looked up first. If the payout exists, it is recorded and the
+  // usual checks below decide (still in flight / already processed = nothing to retry).
+  // Both legs, not just this one: the retry below moves the attempt number on, and an unconfirmed leg is looked up by it.
+  escrow = await settleUnconfirmedOrRefuse(escrow, ['seller', 'partner']);
+  if (escrow.status !== 'HELD_PAYOUT_FAILED') {
+    throw new ApiError(409, 'The earlier payout was found at RazorpayX and recorded. Nothing to retry.', { code: 'PAYOUT_FOUND' });
   }
 
   const existingPayoutId = leg === 'seller' ? escrow.razorpayPayoutId : escrow.razorpayPartnerPayoutId;
@@ -141,25 +239,37 @@ async function retryPayout(escrowId, { leg, sellerDetails, note }, adminId, ip) 
   try {
     payout = await createPayout(fundAccountId, amountPaise, referenceId, idempotencyKeyInput);
   } catch (err) {
-    throw new ApiError(502, `RazorpayX rejected the retried ${leg} payout: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAYX_ERROR' });
+    // F1: no clear refusal = the payout may exist. Mark the leg so the next action looks it up (by this attempt's
+    // reference id) instead of creating another one.
+    if (!isClearRefusal(err)) {
+      const f = legFields(leg);
+      await prisma.escrowTransaction.update({
+        where: { id: escrowId },
+        data: { [f.status]: 'unconfirmed', [f.reason]: 'RazorpayX did not answer the retry; the payout may or may not exist. The next retry looks it up first.' },
+      });
+      throw new ApiError(502, `RazorpayX did not answer the retried ${leg} payout (${razorpayErrorText(err)}). It may or may not have been created; try again in a few minutes and it will be looked up first.`, { code: 'PAYOUT_UNCONFIRMED' });
+    }
+    throw new ApiError(502, `RazorpayX rejected the retried ${leg} payout: ${razorpayErrorText(err)}`, { code: 'RAZORPAYX_ERROR' });
   }
 
   const legData = leg === 'seller'
-    ? { razorpayPayoutId: payout.id, sellerPayoutStatus: payout.status }
-    : { razorpayPartnerPayoutId: payout.id, partnerPayoutStatus: payout.status };
+    ? { razorpayPayoutId: payout.id, sellerPayoutStatus: payout.status, sellerPayoutFailureReason: null }
+    : { razorpayPartnerPayoutId: payout.id, partnerPayoutStatus: payout.status, partnerPayoutFailureReason: null };
 
-  // Back to RELEASED now that this leg has a payout on file again — if the
-  // OTHER leg independently fails later, the existing payout.failed/reversed
-  // webhook already re-flags ANY RELEASED escrow back to HELD_PAYOUT_FAILED,
-  // so this is self-healing either way.
+  // Back to RELEASED now that this leg has a payout on file again, but only when the OTHER leg is not itself failed or
+  // unconfirmed (audit Nov 2026, F3: one retried leg used to hide the other leg's failure).
+  const otherStatus = leg === 'seller' ? escrow.partnerPayoutStatus : escrow.sellerPayoutStatus;
   const updated = await prisma.escrowTransaction.update({
     where: { id: escrowId },
     data: {
       ...legData,
-      status: 'RELEASED',
+      ...(NOT_PAID_STATUSES.includes(otherStatus) ? {} : { status: 'RELEASED' }),
       adminNote: `${escrow.adminNote ? `${escrow.adminNote} | ` : ''}${leg} payout retried (attempt ${nextAttempt}): ${payout.id}${note ? ` — ${note}` : ''}`,
     },
   });
+
+  // F3: the new payout gets its own ledger row, so its webhook can settle it.
+  await ledger.onPayoutRecreated(escrow, { leg, payoutId: payout.id, status: payout.status, attempt: nextAttempt, amountPaise });
 
   await createAuditLog({
     adminId, action: 'ESCROW_PAYOUT_RETRIED', targetType: 'EscrowTransaction', targetId: escrowId,
@@ -177,10 +287,16 @@ async function resolvePayout(escrowId, { resolution, note }, adminId, ip) {
     throw new ApiError(400, 'A note of 5-500 characters is required', { code: 'NOTE_REQUIRED' });
   }
 
-  const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
+  let escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
   if (!escrow) throw new ApiError(404, 'Escrow not found');
   if (escrow.status !== 'HELD_PAYOUT_FAILED') {
     throw new ApiError(400, 'This escrow is not in a payout-failed state', { code: 'ESCROW_NOT_PAYOUT_FAILED' });
+  }
+  // F1: do not close the case by hand while a payout may exist that nobody has looked up. Otherwise "paid outside" could be
+  // recorded on top of a payout RazorpayX did make.
+  escrow = await settleUnconfirmedOrRefuse(escrow, ['seller', 'partner']);
+  if (escrow.status !== 'HELD_PAYOUT_FAILED') {
+    throw new ApiError(409, 'An earlier payout was found at RazorpayX and recorded; this escrow is released already.', { code: 'PAYOUT_FOUND' });
   }
 
   const claim = await prisma.escrowTransaction.updateMany({
@@ -204,10 +320,15 @@ async function resolvePayout(escrowId, { resolution, note }, adminId, ip) {
 }
 
 async function refundRemaining(escrowId, note, adminId, ip) {
-  const escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
+  let escrow = await prisma.escrowTransaction.findUnique({ where: { id: escrowId } });
   if (!escrow) throw new ApiError(404, 'Escrow not found');
   if (escrow.status !== 'HELD_PAYOUT_FAILED') {
     throw new ApiError(400, 'This escrow is not in a payout-failed state', { code: 'ESCROW_NOT_PAYOUT_FAILED' });
+  }
+  // F1: never refund while a payout may exist that we have no id for. Look both legs up first.
+  escrow = await settleUnconfirmedOrRefuse(escrow, ['seller', 'partner']);
+  if (escrow.status !== 'HELD_PAYOUT_FAILED') {
+    throw new ApiError(409, 'An earlier payout was found at RazorpayX and recorded; this escrow is released, there is nothing to refund.', { code: 'PAYOUT_FOUND' });
   }
   if (!escrow.razorpayPaymentId) throw new ApiError(400, 'Payment not yet captured');
 
@@ -273,10 +394,11 @@ async function refundRemaining(escrowId, note, adminId, ip) {
       where: { id: escrowId },
       data: { status: 'HELD_PAYOUT_FAILED', refundedAt: null },
     });
-    // Live-tested finding — Razorpay's own error shape here has neither
-    // .error.description nor .message (a bare {statusCode, error:{}}), so
-    // without a final fallback this literally printed "...failed: undefined".
-    throw new ApiError(502, `RazorpayX refund failed: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAY_ERROR' });
+    // Same handling as refund(): a low payments balance gets the "top up and try again" instruction (RAZORPAY_BALANCE_LOW),
+    // anything else keeps Razorpay's own words (never "undefined": the error can be a bare {statusCode, error:{}}),
+    // and the failed attempt goes into the audit trail.
+    await recordRefundFailure({ escrowId, actorId: adminId, actorRole: 'ADMIN', ip, amountPaise: remainingPaise, paymentId: escrow.razorpayPaymentId, route: 'refund-remaining', err });
+    throw refundFailure(err);
   }
 
   // BE-6 — this refund closes out whatever was left (remainingPaise), so
@@ -291,9 +413,23 @@ async function refundRemaining(escrowId, note, adminId, ip) {
       razorpayRefundId: refundResult.id,
       refundedAmountPaise: totalRefundedPaise,
       refundIds: { push: refundResult.id },
+      refundReason: 'REFUND_REMAINING',
       adminNote: `${escrow.adminNote ? `${escrow.adminNote} | ` : ''}Refunded remaining ₹${(remainingPaise / 100).toFixed(2)}: ${note}`,
     },
   });
+
+  // F4 (audit Nov 2026): this refund moved money, so it gets its ledger row and the buyer is told, like any other refund.
+  await ledger.onRefund(escrow, {
+    refundPaise: remainingPaise, reason: 'REFUND_REMAINING', cancellationChargePaise: 0,
+    note: `Rest of the token returned after a failed payout${note ? `: ${note}` : ''}`,
+  }, { refundId: refundResult.id, actor: { createdByType: 'ADMIN', createdById: adminId || null } });
+  if (escrow.buyerId) {
+    createNotification({
+      userId: escrow.buyerId, title: 'Escrow Refunded',
+      message: `₹${(remainingPaise / 100).toLocaleString('en-IN')} of your token advance has been refunded to your original payment method.`,
+      type: 'ESCROW_REFUNDED', linkUrl: `/user/inquiries/${escrow.leadId}`,
+    }).catch((e) => logger.warn('[EscrowPayout] buyer notice of the refund failed', { escrowId, error: e.message }));
+  }
 
   await createAuditLog({
     adminId, action: 'ESCROW_REFUND_REMAINING', targetType: 'EscrowTransaction', targetId: escrowId,
@@ -303,4 +439,4 @@ async function refundRemaining(escrowId, note, adminId, ip) {
   return updated;
 }
 
-module.exports = { getPayouts, retryPayout, resolvePayout, refundRemaining };
+module.exports = { getPayouts, retryPayout, resolvePayout, refundRemaining, adoptPayout, resolveUnconfirmedLeg, referenceFor };

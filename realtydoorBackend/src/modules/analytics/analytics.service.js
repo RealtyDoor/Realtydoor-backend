@@ -71,7 +71,7 @@ async function getFunnel(period = 'MTD') {
       prisma.lead.count({ where: { ...leadWhere, isOtpVerified: true } }),
       // "Decided" = the buyer or partner recorded an outcome either way.
       prisma.lead.count({ where: { ...leadWhere, OR: [{ visitOutcome: { not: null } }, { buyerFeedbackStatus: { in: ['VERIFIED_CLOSED', 'VERIFIED_DROPPED'] } }] } }),
-      prisma.lead.count({ where: { ...leadWhere, escrowTransactions: { some: { status: { in: ['HELD', 'HELD_PAYOUT_FAILED', 'RELEASED'] } } } } }),
+      prisma.lead.count({ where: { ...leadWhere, escrowTransactions: { some: { status: { in: ['HELD', 'HELD_PAYOUT_FAILED', 'FROZEN', 'PARTIALLY_REFUNDED', 'RELEASED'] } } } } }),
       prisma.lead.count({ where: { ...leadWhere, status: 'CLOSED' } }),
     ]);
 

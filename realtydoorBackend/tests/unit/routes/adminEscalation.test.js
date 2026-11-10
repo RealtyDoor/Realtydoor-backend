@@ -15,6 +15,7 @@ jest.mock('../../../src/lib/prisma', () => {
   return new Proxy({ user }, { get: (t, p) => (p in t ? t[p] : new Proxy({}, { get: () => jest.fn(async () => null) })) });
 });
 jest.mock('../../../src/middleware/auth', () => ({
+  optionalAuthenticate: (req, res, next) => next(),
   authenticate: (req, res, next) => { req.user = JSON.parse(req.headers['x-test-user']); next(); },
 }));
 jest.mock('../../../src/lib/clerkAdmin', () => ({ setUserRole: jest.fn().mockResolvedValue() }));

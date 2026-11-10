@@ -241,10 +241,10 @@ describe('ledger', () => {
       return [];
     });
     prisma.tdsEntry.findMany.mockResolvedValue([{ tdsPaise: 150000, depositDueDate: new Date('2026-09-07') }]);
-    prisma.escrowTransaction.findMany.mockResolvedValue([{ amount: 50000 }]);
+    prisma.escrowTransaction.findMany.mockResolvedValue([{ status: 'HELD', amount: 50000 }, { status: 'PARTIALLY_REFUNDED', amount: 49998, refundedAmountPaise: 2499800 }]);
     const p = await ledger.payablesReceivables(new Date('2026-10-22'));
     expect(p.payables).toMatchObject({ partnerCommissionPaise: 7350000, partnerGstAwaitingInvoicePaise: 1350000, tdsToDepositPaise: 150000, tdsOverduePaise: 150000, tdsOverdueCount: 1 });
-    expect(p.heldForOthers.tokensInEscrowPaise).toBe(5000000);
+    expect(p.heldForOthers.tokensInEscrowPaise).toBe(7500000);
   });
 });
 
@@ -629,6 +629,6 @@ describe('escrow hold-expiry job', () => {
     prisma.escrowTransaction.findMany.mockResolvedValue([]);
     const now = new Date('2026-11-30T00:00:00Z');
     await job.runOnce({ now });
-    expect(prisma.escrowTransaction.findMany.mock.calls[0][0].where).toEqual({ status: 'HELD', heldAt: { lte: new Date('2026-10-31T00:00:00Z') } });
+    expect(prisma.escrowTransaction.findMany.mock.calls[0][0].where).toEqual({ status: { in: ['HELD', 'HELD_PAYOUT_FAILED', 'FROZEN', 'PARTIALLY_REFUNDED'] }, heldAt: { lte: new Date('2026-10-31T00:00:00Z') } });
   });
 });

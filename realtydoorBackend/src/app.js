@@ -9,6 +9,7 @@ const { rejectNullBytes } = require('./middleware/rejectNullBytes');
 const { rejectNestedQuery } = require('./middleware/rejectNestedQuery');
 const { requestLogger } = require('./middleware/requestLogger');
 const { defaultLimiter } = require('./middleware/rateLimiter');
+const { requestTimeout } = require('./middleware/requestTimeout');
 
 const app = express();
 
@@ -74,7 +75,8 @@ app.get(['/health', '/api/health'], (req, res) => res.json({ status: 'ok', ts: D
 // Global baseline rate limit — route-specific limiters (auth, OTP, upload,
 // search) stack tighter caps on top of this for the endpoints that need it.
 const routes = require('./routes');
-app.use('/api', defaultLimiter, routes);
+// Reads stop waiting after 30 s (REQUEST_TIMEOUT_MS) with a 503; writes, exports and webhooks are never cut (middleware/requestTimeout.js).
+app.use('/api', requestTimeout(), defaultLimiter, routes);
 
 // ── 404 + global error handler ────────────────────────────────────────────────
 app.use(notFound);
