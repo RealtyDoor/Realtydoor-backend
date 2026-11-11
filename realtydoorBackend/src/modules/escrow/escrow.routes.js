@@ -4,14 +4,14 @@ const { authenticate, optionalAuthenticate } = require('../../middleware/auth');
 const { requireUser } = require('../../middleware/requireRole');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { validateObjectId } = require('../../middleware/validateObjectId');
-const { documentLimiter } = require('../../middleware/rateLimiter');
+const { documentLimiter, paymentStartLimiter, paymentVerifyLimiter } = require('../../middleware/rateLimiter');
 
 // Public price breakdown (token + processing fee + refund terms). Before /:id.
 router.get('/quote',            optionalAuthenticate, ctrl.getCheckoutQuote);
 
 // Buyer creates escrow order (token advance payment)
-router.post('/create-order',    authenticate, requireUser, requirePhone, ctrl.createOrder);
-router.post('/verify-payment',  authenticate, requireUser, ctrl.verifyPayment);
+router.post('/create-order',    authenticate, requireUser, requirePhone, paymentStartLimiter, ctrl.createOrder);
+router.post('/verify-payment',  authenticate, requireUser, paymentVerifyLimiter, ctrl.verifyPayment);
 router.get('/:id',              authenticate, requireUser, validateObjectId('id'), ctrl.getEscrowById);
 // Dev feedback, 2026-10-08 — registered after /:id is fine here since
 // Express only falls through to /:id/receipt if the path actually has

@@ -2,6 +2,7 @@ const router = require('express').Router();
 const ctrl = require('./locality.controller');
 const { authenticate } = require('../../middleware/auth');
 const { requireAdmin, requirePartner } = require('../../middleware/requireRole');
+const { requirePermission } = require('../../middleware/requirePermission');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 const { searchLimiter, localitySuggestLimiter } = require('../../middleware/rateLimiter');
 
@@ -21,14 +22,16 @@ router.get('/report',         searchLimiter, ctrl.downloadReport);
 // Listing form: the Locality dropdown for a city, and "add a locality that isn't in the list" (partner or admin).
 router.get('/options',     authenticate, requirePartner, ctrl.listOptions);
 router.post('/suggest',    authenticate, requirePartner, localitySuggestLimiter, ctrl.suggest);
+// Staff permissions (audit Nov 2026, A3): these routes sit outside /admin, so each names its own. Reading is open to the
+// content team and the listings team (who review listings in new localities); changing is the content team's.
 // Admin: localities added by partners that still need their CMS details.
-router.get('/suggestions', authenticate, requireAdmin, ctrl.listSuggestions);
-router.patch('/suggestions/:id', authenticate, requireAdmin, validateObjectId('id'), ctrl.correctSuggestion);
+router.get('/suggestions', authenticate, requireAdmin, requirePermission(['CONTENT', 'LISTINGS']), ctrl.listSuggestions);
+router.patch('/suggestions/:id', authenticate, requireAdmin, requirePermission('CONTENT'), validateObjectId('id'), ctrl.correctSuggestion);
 
 // Admin-only management
-router.get('/',        authenticate, requireAdmin, ctrl.listLocalities);
-router.get('/:id',     authenticate, requireAdmin, ctrl.getLocalityById);
-router.post('/',       authenticate, requireAdmin, ctrl.upsertLocality);
-router.delete('/:id',  authenticate, requireAdmin, ctrl.deleteLocality);
+router.get('/',        authenticate, requireAdmin, requirePermission(['CONTENT', 'LISTINGS']), ctrl.listLocalities);
+router.get('/:id',     authenticate, requireAdmin, requirePermission(['CONTENT', 'LISTINGS']), ctrl.getLocalityById);
+router.post('/',       authenticate, requireAdmin, requirePermission('CONTENT'), ctrl.upsertLocality);
+router.delete('/:id',  authenticate, requireAdmin, requirePermission('CONTENT'), ctrl.deleteLocality);
 
 module.exports = router;

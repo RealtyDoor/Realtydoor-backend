@@ -21,6 +21,11 @@ const projectRoutes = require('../modules/projects/project.routes');
 const micrositeRoutes = require('../modules/microsites/microsite.routes');
 const onboardingFormRoutes = require('../modules/onboarding/onboarding.routes');
 
+// Private files (BUG-048; audit Nov 2026, A1). Every JSON answer from every route carries short-lived signed links for files
+// outside the bucket's public folders, and a signed link sent back in a request body is stored as the plain link.
+const { signPrivateUrls, unsignRequestUrls } = require('../lib/signedUrls');
+router.use(signPrivateUrls, unsignRequestUrls);
+
 // Auth (sync on login, profile)
 router.use('/auth', authRoutes);
 
@@ -39,9 +44,7 @@ router.use('/locality-insights', localityRoutes);
 router.use('/partner/b2b', b2bRoutes);
 router.use('/config', configRoutes);
 
-// Authenticated. Private uploads (BUG-048) are returned as short-lived signed links on all of these.
-const { signPrivateUrls } = require('../lib/signedUrls');
-router.use(['/leads', '/user', '/partner', '/notifications', '/escrow', '/admin'], signPrivateUrls);
+// Authenticated
 router.use('/leads', leadsRoutes);
 router.use('/user', usersRoutes);
 router.use('/partner', partnersRoutes);

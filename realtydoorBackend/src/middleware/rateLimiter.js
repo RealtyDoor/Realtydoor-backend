@@ -163,7 +163,43 @@ function makePublicFormLimiter({ max = Number(process.env.FORM_RATE_LIMIT_MAX) |
 }
 const publicFormLimiter = makePublicFormLimiter();
 
+// Audit Nov 2026 (A4). File uploads by a signed-in person, counted per account (uploadLimiter above is per IP, for routes
+// that run before sign-in is known). Must sit after `authenticate` and before the multer uploader, so a blocked request stores nothing.
+const userUploadLimiter = rateLimit({
+  ...BASE,
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.UPLOAD_RATE_LIMIT_USER_MAX) || 120,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: rateLimitMessage('Upload limit reached. Try again later.'),
+});
+
+// Audit Nov 2026 (A4, F19). Starting and confirming a payment: each start creates a Razorpay order, so cap it per buyer.
+const paymentStartLimiter = rateLimit({
+  ...BASE,
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: rateLimitMessage('Too many payment attempts. Try again in a few minutes.'),
+});
+const paymentVerifyLimiter = rateLimit({
+  ...BASE,
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: rateLimitMessage('Too many payment attempts. Try again in a few minutes.'),
+});
+
+// Audit Nov 2026 (A5). Webhooks are mounted before the app-wide limiter, so they get their own. Per sender IP; generous,
+// because Razorpay and WATI send bursts, but a flood of forged calls no longer reaches signature checks without limit.
+const webhookLimiter = rateLimit({
+  ...BASE,
+  windowMs: 60 * 1000,
+  max: Number(process.env.WEBHOOK_RATE_LIMIT_MAX) || 300,
+  message: rateLimitMessage('Too many requests.'),
+});
+
 module.exports = {
+  userUploadLimiter, paymentStartLimiter, paymentVerifyLimiter, webhookLimiter,
   makePublicFormLimiter, publicFormLimiter,
   documentLimiter, localitySuggestLimiter,
   defaultLimiter, perUserLimiter, otpLimiter, authLimiter, uploadLimiter, searchLimiter,

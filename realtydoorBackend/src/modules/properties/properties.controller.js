@@ -25,10 +25,11 @@ async function getBySlug(req, res, next) {
 // otherwise a PDF generated from the listing, so every listed property has a brochure.
 async function getBrochure(req, res, next) {
   try {
-    const property = await service.getPropertyByIdOrSlug(req.params.slug);
+    const property = await service.getPropertyByIdOrSlug(req.params.slug, { countView: false, includePrivate: true });
     // Only a brochure stored on our own storage is linked to; a partner-supplied link elsewhere would make this an open redirect.
     const stored = (property.documents || []).find((d) => d && isTrustedMediaUrl(d.url) && /brochure/i.test(d.name || ''));
-    if (stored) return res.redirect(302, stored.url);
+    // A brochure kept with the listing papers is private in the bucket, so the redirect carries a signed link (a public one is returned as it is).
+    if (stored) return res.redirect(302, await require('../../lib/signedUrls').signUrl(stored.url));
     const { buildPropertyBrochurePdf } = require('../../lib/propertyBrochure');
     const pdf = await buildPropertyBrochurePdf(property, (process.env.FRONTEND_URL || '').replace(/\/$/, '') || undefined);
     res.set({

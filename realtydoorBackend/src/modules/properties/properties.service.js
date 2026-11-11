@@ -206,7 +206,33 @@ function withValuePresence(where, field, present) {
 // aren't skewed" — decided not to count microsite views at all for now).
 // countView defaults to true so the one existing caller (the real property
 // detail page) is unaffected.
-async function getPropertyByIdOrSlug(idOrSlug, { countView = true } = {}) {
+// Audit Nov 2026 (A2). What the public listing page may see of a Property row. Anything not named here stays on the server:
+// listing papers, loan and co-owner details, admin notes and ids, the partner's own map pin, the B2B commission offer.
+// A new column must be added to one of the two lists; tests/unit/audit2026_11_access.test.js fails until it is.
+const PUBLIC_PROPERTY_FIELDS = [
+  'id', 'title', 'slug', 'description', 'price', 'previousPrice', 'priceChange6m', 'monthlyRent', 'priceNegotiable',
+  'propertyType', 'listingType', 'propertyStatus', 'publishStatus', 'isFeatured', 'isFeaturedProject', 'isSearchable', 'isB2BOnly',
+  'bhk', 'bathrooms', 'balconies', 'carpetArea', 'builtUpArea', 'plotArea', 'floorNumber', 'totalFloors', 'ageOfProperty',
+  'furnishing', 'facing', 'possessionDate', 'unitsLeft', 'viewsThisWeek', 'developer', 'projectId', 'landAreaValue', 'landAreaUnit',
+  'openSpacePct', 'totalUnits', 'unitConfigurations', 'priceMax', 'address', 'locality', 'city', 'state', 'pincode', 'latitude',
+  'longitude', 'nearbyLandmarks', 'mapLink', 'mapLinkLatitude', 'mapLinkLongitude', 'locationSource', 'locationVerifiedAt',
+  'isVerified', 'verifiedAt', 'reraNumber', 'bankApprovals', 'images', 'videos', 'coverImageIndex', 'floorPlanUrl', 'virtualTourUrl',
+  'videoUrl', 'amenities', 'societyFeatures', 'metaTitle', 'metaDescription', 'partnerId', 'createdAt', 'updatedAt',
+];
+const PRIVATE_PROPERTY_FIELDS = [
+  'rejectionNote', 'adminEditNote', 'requestedChanges', 'requestedChangesNote', 'changesRequestedAt', 'changesRequestedByAdminId',
+  'partnerPinLatitude', 'partnerPinLongitude', 'locationVerifiedByAdminId', 'isMortgaged', 'mortgageLender', 'loanNocStatus',
+  'loanNocUrl', 'hasCoOwners', 'documents', 'commissionSplitOffer', 'b2bUrgent',
+];
+function pickPublicProperty(property) {
+  const out = {};
+  for (const k of PUBLIC_PROPERTY_FIELDS) if (k in property) out[k] = property[k];
+  out.partner = property.partner ?? null;
+  return out;
+}
+
+// `includePrivate` is for server-side callers only (the brochure route reads `documents`); never pass it for a response body.
+async function getPropertyByIdOrSlug(idOrSlug, { countView = true, includePrivate = false } = {}) {
   const property = await prisma.property.findFirst({
     where: {
       publishStatus: 'APPROVED',
@@ -278,7 +304,7 @@ async function getPropertyByIdOrSlug(idOrSlug, { countView = true } = {}) {
   // `property`/`propertyDetailsComparison`/`localityInsights` are additive,
   // for the new nested contract, built from this same real data.
   return {
-    ...property,
+    ...(includePrivate ? property : pickPublicProperty(property)),
     property: shapePropertyDetail(property, ratingsById.get(property.id)),
     propertyDetailsComparison: shapeComparison(peers, ratingsById),
     localityInsights: shapeLocalityInsights(property, localityInsight),
@@ -727,6 +753,7 @@ async function addConstructionUpdate(propertyId, partnerId, data) {
 }
 
 module.exports = {
+  PUBLIC_PROPERTY_FIELDS, PRIVATE_PROPERTY_FIELDS,
   searchProperties, getPropertyByIdOrSlug, createProperty, updateProperty, getFeaturedProperties,
   addImages, addVideos, addDocuments, getPropertyEditLogs,
   getConstructionUpdates, addConstructionUpdate, reportUnauthorizedListing,

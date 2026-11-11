@@ -6,7 +6,14 @@ const { awsClientCredentials } = require('./awsCredentials');
 // ticket evidence) are stored in the bucket under these folders, and the database keeps their plain bucket link. A plain link works
 // for anyone who has it, so signed-in responses hand out a signed link that expires instead. (The bucket itself must also refuse
 // public reads for these folders; this is the code half of that fix.)
-const PRIVATE_PREFIXES = ['visits/', 'kyc/', 'documents/', 'properties/documents/', 'partners/tax-invoices/', 'tickets/', 'onboarding/'];
+//
+// Audit Nov 2026 (A1). The rule is now the other way round, to match the bucket policy: a file is private unless its folder is in
+// PUBLIC_PREFIXES, so receipts, video tours and any folder added later are signed without anyone remembering to list them.
+// Keep this list the same as the "PublicReadSiteMediaOnly" statement of the bucket policy (docs/AUDIT_2026-11.md, A1 plan).
+const PUBLIC_PREFIXES = ['properties/', 'blog/', 'admin-cms/', 'partners/profile-photos/', 'microsites/', 'realtydoor/properties/'];
+// Private although they sit inside a public folder.
+const PRIVATE_PREFIXES = ['properties/documents/'];
+const isPrivateKey = (key) => PRIVATE_PREFIXES.some((p) => key.startsWith(p)) || !PUBLIC_PREFIXES.some((p) => key.startsWith(p));
 const DEFAULT_EXPIRY_SECONDS = 15 * 60;
 
 let client;
@@ -28,14 +35,17 @@ function parsePrivate(value) {
   let key;
   try { key = decodeURIComponent(u.pathname.slice(1)); } catch { return null; }
   if (key.split('/').includes('..')) return null;
-  return PRIVATE_PREFIXES.some((p) => key.startsWith(p)) ? key : null;
+  return key && isPrivateKey(key) ? key : null;
 }
 
 const isPrivateUrl = (value) => parsePrivate(value) !== null;
 
-async function signUrl(value, expiresIn = DEFAULT_EXPIRY_SECONDS) {
+// A recorded video tour is watched for longer than 15 minutes and the player asks for a new piece on every seek, so its link lasts 4 hours.
+const LONG_EXPIRY = { 'video-tours/': 4 * 60 * 60 };
+async function signUrl(value, expiresIn) {
   const key = parsePrivate(value);
   if (!key) return value;
+  if (!expiresIn) expiresIn = Object.entries(LONG_EXPIRY).find(([p]) => key.startsWith(p))?.[1] || DEFAULT_EXPIRY_SECONDS;
   return getSignedUrl(s3(), new GetObjectCommand({
     Bucket: process.env.AWS_S3_BUCKET, Key: key, ResponseCacheControl: 'private, no-store',
   }), { expiresIn });
@@ -65,4 +75,25 @@ function signPrivateUrls(req, res, next) {
   next();
 }
 
-module.exports = { PRIVATE_PREFIXES, isPrivateUrl, signUrl, signDeep, signPrivateUrls };
+// The other direction: a signed link of our own bucket that comes back in a request body (a form that re-saves what it was
+// shown) is turned back into the plain link, so a link that expires in 15 minutes is never stored.
+function unsignUrl(value) {
+  if (typeof value !== 'string' || value.length > 4096 || !value.startsWith('https://') || !value.includes('X-Amz-')) return value;
+  let u;
+  try { u = new URL(value); } catch { return value; }
+  if (u.host !== bucketHost() || !u.searchParams.has('X-Amz-Signature')) return value;
+  return `${u.origin}${u.pathname}`;
+}
+function unsignDeep(value, depth = 0) {
+  if (typeof value === 'string') return unsignUrl(value);
+  if (depth > 12) return value;
+  if (Array.isArray(value)) return value.map((v) => unsignDeep(v, depth + 1));
+  if (isPlain(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, unsignDeep(v, depth + 1)]));
+  return value;
+}
+function unsignRequestUrls(req, res, next) {
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) req.body = unsignDeep(req.body);
+  next();
+}
+
+module.exports = { PUBLIC_PREFIXES, PRIVATE_PREFIXES, isPrivateUrl, signUrl, signDeep, signPrivateUrls, unsignUrl, unsignDeep, unsignRequestUrls };

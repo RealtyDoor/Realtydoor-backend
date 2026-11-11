@@ -83,6 +83,20 @@ async function listMyProjects(builderId, skip, limit) {
 
 // Public — approved projects only, with at least one AVAILABLE unit so an
 // empty or fully sold-out project doesn't clutter search.
+// Audit Nov 2026 (A9). What the public project endpoints may return of a Project row. The approval papers, the designated
+// account number and IFSC, the brokerage rate and the review notes stay on the server. A new column must go in one of the two
+// lists; tests/unit/audit2026_11_access.test.js fails until it does.
+const PUBLIC_PROJECT_FIELDS = [
+  'id', 'title', 'slug', 'description', 'builderId', 'address', 'locality', 'city', 'state', 'pincode', 'latitude', 'longitude',
+  'reraProjectNumber', 'approvedPlanStatus', 'commencementStatus', 'landTitleStatus', 'designatedAccountBankName', 'publishStatus',
+  'createdAt', 'updatedAt',
+];
+const PRIVATE_PROJECT_FIELDS = [
+  'approvedPlanUrl', 'commencementCertificateUrl', 'landTitleDocUrl', 'designatedAccountNumber', 'designatedAccountIfsc', 'brokeragePct',
+  'rejectionNote', 'requestedChanges', 'requestedChangesNote', 'changesRequestedAt', 'changesRequestedByAdminId', 'reviewedByAdminId', 'reviewedAt',
+];
+const pickPublicProject = (p) => Object.fromEntries(PUBLIC_PROJECT_FIELDS.filter((k) => k in p).map((k) => [k, p[k]]));
+
 async function searchProjects(query, skip, limit) {
   const where = { publishStatus: 'APPROVED' };
   if (query.city) where.city = { equals: query.city, mode: 'insensitive' };
@@ -95,7 +109,7 @@ async function searchProjects(query, skip, limit) {
     prisma.project.count({ where }),
   ]);
   return {
-    data: projects.map(({ units, ...p }) => ({ ...p, commercials: commercialsSummary(units) })),
+    data: projects.map(({ units, ...p }) => ({ ...pickPublicProject(p), commercials: commercialsSummary(units) })),
     total,
   };
 }
@@ -109,7 +123,7 @@ async function getProjectBySlug(slug) {
     },
   });
   if (!project || project.publishStatus !== 'APPROVED') throw new ApiError(404, 'Project not found');
-  return { ...project, commercials: commercialsSummary(project.units) };
+  return { ...pickPublicProject(project), units: project.units, builder: project.builder, commercials: commercialsSummary(project.units) };
 }
 
 // Partner edit. A project that is live stays live while edited — the same
@@ -147,6 +161,7 @@ async function updateProject(id, builderId, data) {
 }
 
 module.exports = {
+  PUBLIC_PROJECT_FIELDS, PRIVATE_PROJECT_FIELDS,
   createProject, getProject, getMyProject, listProjectsAdmin, listMyProjects,
   searchProjects, getProjectBySlug, updateProject, commercialsSummary,
   BASE_PROJECT_FIELDS,

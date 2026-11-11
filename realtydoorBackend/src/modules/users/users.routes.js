@@ -5,7 +5,7 @@ const { requireUser } = require('../../middleware/requireRole');
 const { requireOnboarded } = require('../../middleware/requireOnboarded');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { userDocUploader } = require('../../lib/fileUpload');
-const { otpLimiter, perUserLimiter, perUserPhoneOtpLimiter, privacyActionLimiter } = require('../../middleware/rateLimiter');
+const { userUploadLimiter, otpLimiter, perUserLimiter, perUserPhoneOtpLimiter, privacyActionLimiter } = require('../../middleware/rateLimiter');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 
 router.use(authenticate, requireUser, perUserLimiter);
@@ -78,7 +78,7 @@ router.post('/favorites', requirePhone, ctrl.toggleFavorite);
 
 // Document vault
 router.get('/documents', ctrl.getDocuments);
-router.post('/documents', requirePhone, userDocUploader.single('file'), ctrl.uploadDocument);
+router.post('/documents', requirePhone, userUploadLimiter, userDocUploader.single('file'), ctrl.uploadDocument);
 router.delete('/documents/:id', validateObjectId('id'), ctrl.deleteDocument);
 
 // Service subscriptions

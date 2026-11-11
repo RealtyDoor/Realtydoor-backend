@@ -4,6 +4,10 @@ const ctrl    = require('./webhooks.controller');
 const { clerkWebhook } = require('./clerk.handler');
 const { watiWebhook }  = require('./wati.handler');
 const leadIntake = require('../leadIntake/leadIntake.controller');
+const { webhookLimiter } = require('../../middleware/rateLimiter');
+
+// This router is mounted before the app-wide rate limiter (it needs the raw body), so it carries its own.
+router.use(webhookLimiter);
 
 // Both routes use express.raw() — safe because this router is mounted in app.js
 // BEFORE express.json(), so the stream has not been consumed yet.

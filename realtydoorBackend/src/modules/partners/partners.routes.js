@@ -14,7 +14,7 @@ const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
 const { kycDocUploader, dealDocUploader, partnerProfilePhotoUploader, taxInvoiceUploader } = require('../../lib/fileUpload');
 const moneyCtrl = require('../money/money.controller');
-const { uploadLimiter, otpLimiter, perUserLimiter } = require('../../middleware/rateLimiter');
+const { uploadLimiter, userUploadLimiter, otpLimiter, perUserLimiter } = require('../../middleware/rateLimiter');
 
 router.use(authenticate, requirePartner, perUserLimiter);
 
@@ -37,7 +37,7 @@ router.post('/leads/:id/schedule-visit',    requireKyc, leadsCtrl.scheduleVisit)
 router.post('/leads/:id/resend-otp',        requireKyc, otpLimiter, leadsCtrl.resendOtp);
 router.post('/leads/:id/request-otp-override', requireKyc, leadsCtrl.requestOtpOverride);
 router.post('/leads/:id/verify-otp',        requireKyc, otpLimiter, leadsCtrl.verifyOtp);
-router.patch('/leads/:id/document',         requireKyc,
+router.patch('/leads/:id/document',         requireKyc, userUploadLimiter,
   dealDocUploader.fields([
     { name: 'visitPhotos', maxCount: 10 }, { name: 'closureDocs', maxCount: 5 },
     // B5.3/B5.4 — one each per deal; closeLead gates on allocationLetter.
@@ -64,7 +64,7 @@ router.get('/statements/:escrowId/pdf',    moneyCtrl.myStatementPdf);
 // Profile
 router.get('/profile', ctrl.getProfile);
 router.patch('/profile', ctrl.updateProfile);
-router.post('/profile/photo', partnerProfilePhotoUploader.single('photo'), ctrl.uploadProfilePhoto);
+router.post('/profile/photo', userUploadLimiter, partnerProfilePhotoUploader.single('photo'), ctrl.uploadProfilePhoto);
 
 // Listings (KYC required)
 router.get('/listings',    requireKyc, ctrl.getMyListings);

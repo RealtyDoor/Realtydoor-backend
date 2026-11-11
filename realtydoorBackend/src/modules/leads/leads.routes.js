@@ -5,7 +5,7 @@ const { requireUser, requirePartner } = require('../../middleware/requireRole');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { requireKyc } = require('../../middleware/requireKyc');
 const { dealDocUploader } = require('../../lib/fileUpload');
-const { otpLimiter } = require('../../middleware/rateLimiter');
+const { otpLimiter, userUploadLimiter } = require('../../middleware/rateLimiter');
 
 // User submits inquiry (phone required — anti-leakage)
 router.post('/', authenticate, requireUser, requirePhone, ctrl.submit);
@@ -21,7 +21,7 @@ router.post('/partner/:id/schedule-visit', authenticate, requirePartner, require
 router.post('/partner/:id/resend-otp', authenticate, requirePartner, requireKyc, otpLimiter, ctrl.resendOtp);
 router.post('/partner/:id/request-otp-override', authenticate, requirePartner, requireKyc, ctrl.requestOtpOverride);
 router.post('/partner/:id/verify-otp', authenticate, requirePartner, requireKyc, otpLimiter, ctrl.verifyOtp);
-router.patch('/partner/:id/document', authenticate, requirePartner, requireKyc,
+router.patch('/partner/:id/document', authenticate, requirePartner, requireKyc, userUploadLimiter,
   dealDocUploader.fields([
     { name: 'visitPhotos', maxCount: 10 }, { name: 'closureDocs', maxCount: 5 },
     // B5.3/B5.4 — one each per deal; closeLead gates on allocationLetter.
