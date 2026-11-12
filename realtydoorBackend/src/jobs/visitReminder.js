@@ -16,13 +16,14 @@ async function sendDueReminders(now = new Date()) {
   const leads = await prisma.lead.findMany({
     where: { status: 'SITE_VISIT_SCHEDULED', siteVisitScheduledAt: { gte: from, lte: to }, buyerId: { not: null } },
     select: {
-      id: true, buyerId: true, siteVisitScheduledAt: true, propertyInterest: true,
+      id: true, buyerId: true, siteVisitScheduledAt: true, propertyInterest: true, doNotContactAt: true,
       property: { select: { title: true } },
       assignedPartner: { select: { name: true, companyName: true } },
     },
   });
   let sent = 0;
   for (const lead of leads) {
+    if (lead.doNotContactAt) continue; // audit Nov 2026 (L3)
     const buyer = await prisma.user.findUnique({ where: { id: lead.buyerId }, select: { notifVisitReminders: true } });
     if (buyer && buyer.notifVisitReminders === false) continue;
     const already = await prisma.watiMessageLog.findFirst({ where: { leadId: lead.id, templateName: 'visit_reminder_v2' }, select: { id: true } });

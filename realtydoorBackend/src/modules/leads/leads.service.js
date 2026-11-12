@@ -78,10 +78,51 @@ const BUYER_HIDDEN_LEAD_FIELDS = [
   'contactRevealedByPartnerId',
 ];
 
+// Audit Nov 2026 (L4). Staff-only columns: the sales desk's working fields, where an ad lead came from, the raw answers of the ad
+// form (they repeat the buyer's phone and email as typed, so they would hand a partner the number before any visit), and the stamps
+// the background jobs keep. Neither a partner nor a buyer sees these.
+const STAFF_ONLY_LEAD_FIELDS = [
+  'adminNotes', 'addedByAdminId', 'salesStage', 'temperature', 'ownerStaffId', 'ownerAssignedAt', 'nextFollowUpAt', 'lastContactedAt',
+  'qualifiedAt', 'notQualifiedReason', 'contactAttempts', 'responseReminderAt',
+  'campaign', 'sourceDetail', 'utmSource', 'utmMedium', 'utmCampaign', 'utmContent', 'utmTerm', 'adClickId', 'intakeIntegrationId', 'intakeAnswers',
+  'windowWarnedAt', 'proofWarnedAt', 'holdExtensionEscalatedAt', 'holdExtensionEscalatedFiveAt', 'assignmentNudgedAt', 'assignmentDueNotifiedAt',
+  'lateNotifiedAt', 'lateEscalatedAt', 'whatsappSentAt', 'secondFollowupSentAt', 'allocationLetterVerifiedBy', 'droppedByAdminId',
+];
+
+// Every column of Lead is in exactly one of "visible" and "hidden", for the partner and for the buyer; a unit test fails when a new
+// column is in neither, so a new column is never shown just because nobody thought about it.
+const PARTNER_HIDDEN_LEAD_FIELDS = [...new Set(['siteVisitOTP', ...STAFF_ONLY_LEAD_FIELDS, ...COMMISSION_INTERNAL_LEAD_FIELDS])];
+const PARTNER_VISIBLE_LEAD_FIELDS = [
+  'id', 'refCode', 'buyerName', 'buyerEmail', 'buyerPhone', 'buyerId', 'buyerMessage', 'propertyId', 'propertyInterest', 'city', 'budget',
+  'source', 'status', 'addedByPartnerId', 'buyerConsentAt', 'relatedLeadId', 'assignedPartnerId', 'assignedAt', 'doNotContactAt',
+  'creditContestedAt', 'creditContestNote', 'registrationLapsedAt', 'holdExtensionRequestedAt', 'holdExtensionNote', 'holdExtensionDecidedAt',
+  'holdExtensionApproved', 'holdExtensionDays', 'projectId', 'noShowFlaggedAt', 'visitNoShowConfirmedAt', 'siteVisitScheduledAt',
+  'otpGeneratedAt', 'otpExpiresAt', 'otpAttempts', 'otpLockedUntil', 'isOtpVerified', 'otpVerifiedAt', 'otpOverrideRequestedByPartner',
+  'otpOverrideRequestedAt', 'buyerFeedbackStatus', 'feedbackReceivedAt', 'visitNotes', 'visitPhotoUrls', 'closureDocumentUrls', 'partnerNotes',
+  'closingPrice', 'allocationLetterUrl', 'allocationLetterUploadedAt', 'allocationLetterVerifiedAt', 'tokenReceiptUrl', 'closedAt',
+  'contactRevealedAt', 'contactRevealedByPartnerId', 'visitOutcome', 'visitOutcomeAt', 'buyerRating', 'buyerRatingComment',
+  'buyerRatingEditedAt', 'buyerRatedAt', 'dropRequestedByPartner', 'dropRequestNote', 'dropRequestReasonCode', 'dropRequestedAt',
+  'droppedReason', 'droppedReasonCode', 'droppedAt', 'createdAt', 'updatedAt',
+];
+const BUYER_HIDDEN_ALL = [...new Set([
+  ...BUYER_HIDDEN_LEAD_FIELDS, ...STAFF_ONLY_LEAD_FIELDS,
+  // The partner's side of the lead rules: not the buyer's business.
+  'creditContestedAt', 'creditContestNote', 'registrationLapsedAt', 'holdExtensionRequestedAt', 'holdExtensionNote', 'holdExtensionDecidedAt',
+  'holdExtensionApproved', 'holdExtensionDays', 'otpOverrideRequestedByPartner', 'otpOverrideRequestedAt', 'dropRequestReasonCode', 'droppedReasonCode',
+])];
+const BUYER_VISIBLE_LEAD_FIELDS = [
+  'id', 'refCode', 'buyerName', 'buyerEmail', 'buyerPhone', 'buyerId', 'buyerMessage', 'propertyId', 'propertyInterest', 'city', 'budget',
+  'source', 'status', 'addedByPartnerId', 'buyerConsentAt', 'relatedLeadId', 'assignedPartnerId', 'assignedAt', 'doNotContactAt', 'projectId',
+  'noShowFlaggedAt', 'visitNoShowConfirmedAt', 'siteVisitScheduledAt', 'siteVisitOTP', 'otpGeneratedAt', 'otpExpiresAt', 'otpLockedUntil',
+  'isOtpVerified', 'otpVerifiedAt', 'buyerFeedbackStatus', 'feedbackReceivedAt', 'visitPhotoUrls', 'closureDocumentUrls', 'closingPrice',
+  'allocationLetterUrl', 'allocationLetterUploadedAt', 'allocationLetterVerifiedAt', 'tokenReceiptUrl', 'closedAt', 'contactRevealedAt',
+  'visitOutcome', 'visitOutcomeAt', 'buyerRating', 'buyerRatingComment', 'buyerRatingEditedAt', 'buyerRatedAt', 'createdAt', 'updatedAt',
+];
+
 function sanitizeLeadForBuyer(lead) {
   if (!lead) return lead;
   const clean = { ...lead };
-  for (const field of BUYER_HIDDEN_LEAD_FIELDS) delete clean[field];
+  for (const field of BUYER_HIDDEN_ALL) delete clean[field];
   return clean;
 }
 
@@ -285,10 +326,12 @@ async function addPartnerLeadLocked(partnerId, data) {
 
   const ownership = await evaluateBuyerOwnership(data.buyerPhone, partnerId);
 
+  const dncSince = await require('../../lib/doNotContact').doNotContactSince(data.buyerPhone); // audit Nov 2026 (L3)
   const refCode = await nextRefCode('lead');
   const lead = await prisma.lead.create({
     data: {
       refCode,
+      ...(dncSince && { doNotContactAt: dncSince }),
       buyerName: data.buyerName,
       buyerPhone: data.buyerPhone,
       // buyerEmail is required on the model; partner-added leads may not have
@@ -343,13 +386,10 @@ function sanitizeLeadForPartner(lead) {
     buyerEmail: formatContact(lead.buyerEmail, contactVisible, maskEmail),
     buyerRef: buyer?.refCode,
     buyerPhoneVerified: buyer?.phoneVerified,
-    siteVisitOTP: undefined, // never expose OTP in response
-    adminNotes: undefined, // admin-internal, never expose to partner
   };
-  // Dev feedback, 2026-10-07 — see COMMISSION_INTERNAL_LEAD_FIELDS above.
-  // This assigned partner's own commission view is getPartnerRateCards, not
-  // the raw lead record.
-  for (const field of COMMISSION_INTERNAL_LEAD_FIELDS) delete clean[field];
+  // The visit code, admin notes, staff-only fields and the commission bookkeeping (the partner's own commission view is
+  // getPartnerRateCards, not the raw lead record). See PARTNER_HIDDEN_LEAD_FIELDS.
+  for (const field of PARTNER_HIDDEN_LEAD_FIELDS) delete clean[field];
   return clean;
 }
 
@@ -434,7 +474,8 @@ async function getPartnerLeadById(leadId, partnerId) {
     prisma.lead.findFirst({
       where: { id: leadId, assignedPartnerId: partnerId },
       include: {
-        property: true,
+        // Audit Nov 2026 (L4): the listing may be another partner's. Public fields only, never its papers, loan details or admin notes.
+        property: { select: Object.fromEntries(require('../properties/properties.service').PUBLIC_PROPERTY_FIELDS.map((f) => [f, true])) },
         buyer: PARTNER_LEAD_BUYER_SELECT,
         escrowTransactions: PARTNER_LEAD_ESCROW_SELECT,
       },
@@ -449,11 +490,31 @@ async function getPartnerLeadById(leadId, partnerId) {
 
 const DO_NOT_CONTACT = 'The buyer has asked not to be contacted, so this cannot go ahead. Please contact the Realtydoor team.';
 
+// Audit Nov 2026 (L2, L3, L5). One guard for every partner action around the visit code. A dropped lead keeps its partner, so without
+// the status check its partner could book a visit on it and bring it back to life.
+const OTP_SEND_GAP_MS = 60 * 1000;
+function assertVisitAction(lead, allowedStatuses, { sendsCode = false } = {}) {
+  if (lead.doNotContactAt) throw new ApiError(409, DO_NOT_CONTACT, { code: 'DO_NOT_CONTACT' });
+  if (!allowedStatuses.includes(lead.status)) {
+    const why = lead.isOtpVerified && lead.status === 'SITE_VISIT_DONE' ? 'The site visit on this lead is already verified.'
+      : `This cannot be done on a lead that is ${String(lead.status || 'not open').toLowerCase().replace(/_/g, ' ')}.`;
+    throw new ApiError(400, why, { code: 'LEAD_NOT_OPEN' });
+  }
+  if (sendsCode) {
+    if (isLocked(lead.otpLockedUntil)) {
+      throw new ApiError(429, 'OTP is locked after too many failed attempts. Request an admin override instead.', { code: 'LEAD_OTP_LOCKED' });
+    }
+    // Each send is a WhatsApp to the buyer: one a minute for a lead, whichever button it comes from.
+    if (lead.otpGeneratedAt && Date.now() - new Date(lead.otpGeneratedAt).getTime() < OTP_SEND_GAP_MS) {
+      throw new ApiError(429, 'A code was sent to the buyer less than a minute ago. Please wait a minute before sending another.', { code: 'OTP_JUST_SENT' });
+    }
+  }
+}
+
 async function scheduleVisit(leadId, partnerId, scheduledAt) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
-  if (lead.doNotContactAt) throw new ApiError(409, DO_NOT_CONTACT, { code: 'DO_NOT_CONTACT' });
-  if (lead.status === 'CLOSED') throw new ApiError(400, 'Cannot schedule visit on a closed lead');
+  assertVisitAction(lead, ['ASSIGNED', 'SITE_VISIT_SCHEDULED'], { sendsCode: true });
   await assertLeadNotPaused(lead.buyerId);
 
   const otp = generate();
@@ -467,8 +528,8 @@ async function scheduleVisit(leadId, partnerId, scheduledAt) {
       siteVisitOTP: otp,
       otpGeneratedAt: new Date(),
       otpExpiresAt: otpExp,
-      otpAttempts: 0,
-      otpLockedUntil: null,
+      // Only the first booking starts the wrong-try count afresh. Moving a booked visit must not hand out three new tries.
+      ...(lead.status === 'ASSIGNED' ? { otpAttempts: 0, otpLockedUntil: null } : {}),
     },
   });
 
@@ -512,11 +573,8 @@ async function resendOtp(leadId, partnerId) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (!lead.siteVisitScheduledAt) throw new ApiError(400, 'No site visit scheduled for this lead');
-  if (isLocked(lead.otpLockedUntil)) {
-    // BE-21 — coded so the FE can distinguish this from a plain rate-limit
-    // 429 (the lead OTP screen previously had to treat ANY 429 as locked).
-    throw new ApiError(429, 'OTP is locked after too many failed attempts. Request an admin override instead.', { code: 'LEAD_OTP_LOCKED' });
-  }
+  // BE-21 — a locked lead answers LEAD_OTP_LOCKED, so the FE can tell it from a plain rate-limit 429.
+  assertVisitAction(lead, ['SITE_VISIT_SCHEDULED'], { sendsCode: true });
   await assertLeadNotPaused(lead.buyerId);
 
   const otp = generate();
@@ -563,7 +621,8 @@ async function requestOtpOverride(leadId, partnerId) {
 async function verifyOtp(leadId, partnerId, inputOtp, ip) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
-  if (lead.doNotContactAt) throw new ApiError(409, DO_NOT_CONTACT, { code: 'DO_NOT_CONTACT' }); // verifying reveals the buyer's number
+  assertVisitAction(lead, ['SITE_VISIT_SCHEDULED']); // verifying reveals the buyer's number
+  await assertLeadNotPaused(lead.buyerId);
   if (!lead.siteVisitOTP) throw new ApiError(400, 'No OTP generated for this lead');
   if (isLocked(lead.otpLockedUntil)) throw new ApiError(429, 'OTP locked. Contact Admin to override.', { code: 'LEAD_OTP_LOCKED' }); // BE-21
   if (isExpired(lead.otpExpiresAt)) throw new ApiError(400, 'OTP has expired');
@@ -635,6 +694,11 @@ async function verifyOtp(leadId, partnerId, inputOtp, ip) {
 async function uploadDocs(leadId, partnerId, data, fileUrls) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  if (lead.status === 'DROPPED') throw new ApiError(400, 'This lead is dropped, so nothing can be uploaded to it.', { code: 'LEAD_NOT_OPEN' });
+  // Audit Nov 2026 (L7): once Finance has verified the letter it cannot be swapped under them; the release checklist reads that mark.
+  if (fileUrls.allocationLetter && lead.allocationLetterVerifiedAt) {
+    throw new ApiError(409, 'The allocation letter is already verified, so it cannot be replaced. Please contact the Realtydoor team if it is wrong.', { code: 'LETTER_ALREADY_VERIFIED' });
+  }
 
   // Previously returned the raw update result — unmasked buyerPhone/
   // buyerEmail and the live siteVisitOTP, regardless of isOtpVerified. A
@@ -846,7 +910,8 @@ async function adminDecideHoldExtension(leadId, approve, adminId, ip) {
 
 // The partner who registered the buyer says the booked visit did not happen. It stops counting as a sign of life. Not for company-given leads.
 async function partnerConfirmNoShow(leadId, partnerId) {
-  const lead = await prisma.lead.findFirst({ where: { id: leadId, addedByPartnerId: partnerId } });
+  // The partner who registered the buyer and still holds the lead; not a visit some other partner booked.
+  const lead = await prisma.lead.findFirst({ where: { id: leadId, addedByPartnerId: partnerId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (!lead.siteVisitScheduledAt) throw new ApiError(400, 'No visit is booked on this lead');
   if (lead.isOtpVerified || lead.otpVerifiedAt || lead.visitOutcomeAt) throw new ApiError(400, 'The visit was attended, so it cannot be marked a no-show');
@@ -864,6 +929,7 @@ async function adminConfirmNoShow(leadId, adminId, ip) {
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (!lead.siteVisitScheduledAt) throw new ApiError(400, 'No visit is booked on this lead');
   if (lead.isOtpVerified || lead.otpVerifiedAt || lead.visitOutcomeAt) throw new ApiError(400, 'The visit was attended, so it cannot be marked a no-show');
+  if (new Date(lead.siteVisitScheduledAt) > new Date()) throw new ApiError(400, 'The visit has not happened yet');
   if (lead.visitNoShowConfirmedAt) return { confirmed: true };
   const now = new Date();
   await prisma.lead.update({ where: { id: leadId }, data: { visitNoShowConfirmedAt: now } });
@@ -929,6 +995,12 @@ async function adminVerifyAllocationLetter(leadId, adminId, ip) {
   return updated;
 }
 
+// A token that is sitting in escrow right now (not one already released or refunded).
+async function hasMoneyInEscrow(leadId) {
+  const n = await prisma.escrowTransaction.count({ where: { leadId, status: { in: ['HELD', 'HELD_PAYOUT_FAILED', 'FROZEN'] } } });
+  return n > 0;
+}
+
 async function hasHeldMoney(leadId) {
   const n = await prisma.escrowTransaction.count({ where: { leadId, status: { in: ['HELD', 'HELD_PAYOUT_FAILED', 'FROZEN', 'RELEASED', 'PARTIALLY_REFUNDED'] } } });
   return n > 0;
@@ -939,6 +1011,11 @@ async function adminApproveDrop(leadId, adminId, ip) {
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (!lead.dropRequestedByPartner) throw new ApiError(400, 'No pending drop request for this lead');
   if (lead.status === 'DROPPED') throw new ApiError(400, 'Lead is already dropped');
+  // Audit Nov 2026 (L9): refund and release do not look at the lead, so a drop here would leave the buyer's token held on a dead lead
+  // with nothing asking anyone to settle it.
+  if (await hasMoneyInEscrow(leadId)) {
+    throw new ApiError(409, 'A token is held in escrow on this lead. Refund or release it first, then approve the drop.', { code: 'DROP_BLOCKED_MONEY_HELD' });
+  }
 
   const updated = await prisma.lead.update({
     where: { id: leadId },
@@ -1005,4 +1082,5 @@ async function adminRejectDrop(leadId, adminId, ip) {
 }
 
 module.exports = {
+  PARTNER_VISIBLE_LEAD_FIELDS, PARTNER_HIDDEN_LEAD_FIELDS, BUYER_VISIBLE_LEAD_FIELDS, BUYER_HIDDEN_LEAD_FIELDS: BUYER_HIDDEN_ALL, sanitizeLeadForPartner,
   requestHoldExtension, adminDecideHoldExtension, adminConfirmNoShow, adminReleaseRegistration, partnerConfirmNoShow, contestCredit, getPooledLeads, evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };

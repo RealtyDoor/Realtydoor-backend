@@ -61,6 +61,16 @@ const otpLimiter = rateLimit({
   message: rateLimitMessage('Too many OTP requests. Try again in 1 hour.'),
 });
 
+// Audit Nov 2026 (L5). Booking a visit sends the buyer a WhatsApp code. A busy partner books many visits, so this is wider than
+// otpLimiter; the one-a-minute gap per lead (leads.service assertVisitAction) is what protects a single buyer.
+const visitBookingLimiter = rateLimit({
+  ...BASE,
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: rateLimitMessage('Too many visits booked in the last hour. Try again later.'),
+});
+
 const authLimiter = rateLimit({
   ...BASE,
   windowMs: 15 * 60 * 1000,
@@ -202,6 +212,6 @@ module.exports = {
   userUploadLimiter, paymentStartLimiter, paymentVerifyLimiter, webhookLimiter,
   makePublicFormLimiter, publicFormLimiter,
   documentLimiter, localitySuggestLimiter,
-  defaultLimiter, perUserLimiter, otpLimiter, authLimiter, uploadLimiter, searchLimiter,
+  defaultLimiter, perUserLimiter, otpLimiter, visitBookingLimiter, authLimiter, uploadLimiter, searchLimiter,
   otpSendLimiter, otpVerifyLimiter, perUserPhoneOtpLimiter, privacyActionLimiter,
 };

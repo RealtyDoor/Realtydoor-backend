@@ -109,7 +109,8 @@ async function watiWebhook(req, res) {
       where: {
         buyerPhone: phone,
         whatsappSentAt: { not: null },
-        feedbackReceivedAt: null,
+        // Audit Nov 2026 (L1): a field never written is not null in MongoDB, so "no reply yet" has to match both.
+        OR: [{ feedbackReceivedAt: null }, { feedbackReceivedAt: { isSet: false } }],
       },
       orderBy: { whatsappSentAt: 'desc' },
     });

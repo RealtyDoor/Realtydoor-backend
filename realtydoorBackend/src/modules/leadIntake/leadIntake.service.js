@@ -94,7 +94,17 @@ async function note(leadId, text) {
  * project, creates the lead in the sales queue (unassigned, marked with its source and campaign) and tells the admins. `dryRun` does everything
  * except write, so a new integration can be tested.
  */
-async function ingest(integration, body, { dryRun = false } = {}) {
+// Audit Nov 2026 (L8). Google Ads can only send the integration's secret inside the body; it must not be kept with the event.
+const SECRET_BODY_KEYS = ['google_key', 'secret'];
+function withoutSecrets(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const copy = { ...body };
+  for (const k of SECRET_BODY_KEYS) if (k in copy) copy[k] = '[removed]';
+  return copy;
+}
+
+async function ingest(integration, rawBody, { dryRun = false } = {}) {
+  const body = withoutSecrets(rawBody);
   const f = li.normalizeIncoming(body);
   const externalId = li.externalIdFor(f);
   const mapping = li.resolveMapping(integration.mappings || [], f);
@@ -114,11 +124,15 @@ async function ingest(integration, body, { dryRun = false } = {}) {
   try {
     event = await prisma.leadIntakeEvent.create({ data: { integrationId: integration.id, externalId, status: 'RECEIVED', payload: body } });
   } catch (err) {
-    if (err.code === 'P2002') {
-      const prior = await prisma.leadIntakeEvent.findFirst({ where: { integrationId: integration.id, externalId } });
-      return { status: 'DUPLICATE', leadId: prior?.leadId || null, reason: 'Already received' };
-    }
-    throw err;
+    if (err.code !== 'P2002') throw err;
+    const prior = await prisma.leadIntakeEvent.findFirst({ where: { integrationId: integration.id, externalId } });
+    // Audit Nov 2026 (L8). An earlier try that failed part-way left its row behind, and the sender's retry was answered "already
+    // received" with no lead. The retry now takes that failed row over; only one retry can (the update is the claim).
+    const retry = prior?.status === 'ERROR' && !prior.leadId
+      ? await prisma.leadIntakeEvent.updateMany({ where: { id: prior.id, status: 'ERROR' }, data: { status: 'RECEIVED', reason: null } })
+      : { count: 0 };
+    if (retry.count !== 1) return { status: 'DUPLICATE', leadId: prior?.leadId || null, reason: 'Already received' };
+    event = prior;
   }
 
   try {
@@ -145,6 +159,7 @@ async function ingest(integration, body, { dryRun = false } = {}) {
 
     const project = projectId ? await prisma.project.findUnique({ where: { id: projectId }, select: { title: true, city: true } }).catch(() => null) : null;
     const earlier = await prisma.lead.findFirst({ where: { buyerPhone: f.phone }, orderBy: { createdAt: 'desc' }, select: { id: true } });
+    const dncSince = await require('../../lib/doNotContact').doNotContactSince(f.phone); // audit Nov 2026 (L3)
     const lead = await prisma.lead.create({
       data: {
         refCode: await nextRefCode('lead'),
@@ -158,8 +173,10 @@ async function ingest(integration, body, { dryRun = false } = {}) {
         status: 'UNASSIGNED',
         ...((integration.consentAssumed || f.consent) && { buyerConsentAt: new Date() }),
         ...(earlier && { relatedLeadId: earlier.id }),
+        ...(dncSince && { doNotContactAt: dncSince }),
       },
     });
+    if (dncSince) await note(lead.id, 'This number was marked "do not contact" on an earlier lead, so this lead carries the mark. The buyer filled this form themselves: check with them, then clear the mark if they agree.');
     await finish(integration, event.id, 'CREATED', { leadId: lead.id });
     await createAuditLog({ adminId: null, actorRole: 'SYSTEM', action: 'LEAD_CREATED', targetType: 'Lead', targetId: lead.id, after: { refCode: lead.refCode, source, integration: integration.name, campaign: campaign || null, projectId } }).catch(() => null);
     await notifyAdmins({
@@ -175,4 +192,4 @@ async function ingest(integration, body, { dryRun = false } = {}) {
   }
 }
 
-module.exports = { createIntegration, rotateSecret, listIntegrations, updateIntegration, addMapping, deleteMapping, listEvents, authenticate, ingest };
+module.exports = { withoutSecrets, createIntegration, rotateSecret, listIntegrations, updateIntegration, addMapping, deleteMapping, listEvents, authenticate, ingest };

@@ -166,10 +166,10 @@ async function createLead(data, adminId, ip) {
   if (data.partnerId) {
     // Same gate as assignLead — an unverified partner must not receive work.
     partner = await prisma.user.findFirst({
-      where: { id: data.partnerId, role: 'PARTNER', kycStatus: 'VERIFIED' },
+      where: { id: data.partnerId, role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: { not: true }, deletedAt: { isSet: false } }, // audit Nov 2026 (L6): not a suspended or deleted partner
       select: { id: true, name: true, companyName: true },
     });
-    if (!partner) throw new ApiError(400, 'Partner not found or not KYC verified');
+    if (!partner) throw new ApiError(400, 'Partner not found, not KYC verified, or suspended');
   }
 
   // docs-backend-gaps-handoff.md #4 — the partner self-sourced path (B3.2)
@@ -197,6 +197,7 @@ async function createLead(data, adminId, ip) {
     select: { id: true },
   });
 
+  const dncSince = await require('../../lib/doNotContact').doNotContactSince(data.buyerPhone);
   const refCode = await nextRefCode('lead');
   const lead = await prisma.lead.create({
     data: {
@@ -215,6 +216,7 @@ async function createLead(data, adminId, ip) {
       source: data.source,
       ...(data.campaign && { campaign: data.campaign }),
       addedByAdminId: adminId,
+      ...(dncSince && { doNotContactAt: dncSince }), // audit Nov 2026 (L3)
       // The validator only accepts the literal boolean true, so by the time
       // this runs consent was given — recorded as the timestamp admin
       // actually attested it, not a bare echo of the request body.
@@ -306,10 +308,10 @@ async function confirmLead(leadId, partnerId, adminId, ip) {
   let partner = null;
   if (targetPartnerId) {
     partner = await prisma.user.findFirst({
-      where: { id: targetPartnerId, role: 'PARTNER', kycStatus: 'VERIFIED' },
+      where: { id: targetPartnerId, role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: { not: true }, deletedAt: { isSet: false } }, // audit Nov 2026 (L6)
       select: { id: true },
     });
-    if (!partner && partnerId) throw new ApiError(400, 'Partner not found or not KYC verified');
+    if (!partner && partnerId) throw new ApiError(400, 'Partner not found, not KYC verified, or suspended');
   }
 
   // B21 — if a verified buyer account owns this phone number, link the lead to
@@ -501,6 +503,9 @@ async function overrideLeadOtp(leadId, adminId, ip, note) {
   if (!lead) throw new ApiError(404, 'Lead not found');
   if (lead.isOtpVerified) throw new ApiError(400, 'This site visit is already verified');
   if (!lead.siteVisitScheduledAt) throw new ApiError(400, 'No site visit scheduled for this lead');
+  // Audit Nov 2026 (L3, L12): this sends the buyer a WhatsApp, so the same two checks as the partner's own buttons.
+  if (lead.doNotContactAt) throw new ApiError(409, 'This buyer asked not to be contacted. Clear "do not contact" on the lead first if they have agreed.', { code: 'DO_NOT_CONTACT' });
+  if (lead.status !== 'SITE_VISIT_SCHEDULED') throw new ApiError(400, `A new code can be sent only while a visit is booked (this lead is ${lead.status}).`, { code: 'LEAD_NOT_OPEN' });
 
   const otp = generate();
   const updated = await prisma.lead.update({
@@ -569,8 +574,8 @@ async function assignLead(leadId, partnerId, adminId, ip, reason) {
   }
   await assertLeadNotPaused(lead.buyerId);
 
-  const partner = await prisma.user.findFirst({ where: { id: partnerId, role: 'PARTNER', kycStatus: 'VERIFIED' } });
-  if (!partner) throw new ApiError(400, 'Partner not found or not KYC verified');
+  const partner = await prisma.user.findFirst({ where: { id: partnerId, role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: { not: true }, deletedAt: { isSet: false } } }); // audit Nov 2026 (L6)
+  if (!partner) throw new ApiError(400, 'Partner not found, not KYC verified, or suspended');
 
   // R34 — gate the first (and every) lead dispatch on the current
   // lead-data-handling acknowledgment. Off by default: checkLeadDataHandlingGate
@@ -726,7 +731,7 @@ async function findMatchingRoutingRule(entityType, attrs) {
 // this ranking exactly as it would for any other candidate.
 async function rankCandidatePartners(lead) {
   const base = {
-    role: 'PARTNER', kycStatus: 'VERIFIED', deletedAt: { isSet: false },
+    role: 'PARTNER', kycStatus: 'VERIFIED', deletedAt: { isSet: false }, isSuspended: { not: true }, // audit Nov 2026 (L6)
     // leadAutoAccept defaults to FALSE and leadPauseOverloaded defaults to
     // TRUE (both deliberately conservative — see user.prisma) — together they
     // mean a brand-new partner who has never touched Settings is excluded
@@ -756,7 +761,7 @@ async function rankCandidatePartners(lead) {
     // signalling overload is still skipped, same as everywhere else.
     const routedPartner = await prisma.user.findFirst({
       where: {
-        id: rule.targetPartnerId, role: 'PARTNER', kycStatus: 'VERIFIED',
+        id: rule.targetPartnerId, role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: { not: true },
         deletedAt: { isSet: false }, leadPauseOverloaded: { not: true },
       },
       select: { id: true, name: true, companyName: true },

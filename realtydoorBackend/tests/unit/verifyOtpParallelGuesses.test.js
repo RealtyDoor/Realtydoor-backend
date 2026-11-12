@@ -18,7 +18,7 @@ jest.mock('../../src/modules/config/config.service', () => ({ getConfigNumber: j
 const leads = require('../../src/modules/leads/leads.service');
 
 beforeEach(() => {
-  mockDb.lead = { id: 'l1', assignedPartnerId: 'p1', siteVisitOTP: '123456', otpAttempts: 0, otpLockedUntil: null,
+  mockDb.lead = { id: 'l1', assignedPartnerId: 'p1', status: 'SITE_VISIT_SCHEDULED', siteVisitOTP: '123456', otpAttempts: 0, otpLockedUntil: null,
     otpExpiresAt: new Date(Date.now() + 3600e3), siteVisitScheduledAt: new Date(Date.now() - 3600e3) };
 });
 

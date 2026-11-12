@@ -5,7 +5,7 @@ const { requireUser, requirePartner } = require('../../middleware/requireRole');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { requireKyc } = require('../../middleware/requireKyc');
 const { dealDocUploader } = require('../../lib/fileUpload');
-const { otpLimiter, userUploadLimiter } = require('../../middleware/rateLimiter');
+const { otpLimiter, visitBookingLimiter, userUploadLimiter } = require('../../middleware/rateLimiter');
 
 // User submits inquiry (phone required — anti-leakage)
 router.post('/', authenticate, requireUser, requirePhone, ctrl.submit);
@@ -17,7 +17,7 @@ router.get('/partner', authenticate, requirePartner, requireKyc, ctrl.getMyLeads
 // Static path: must stay above GET /partner/:id so it is never read as a lead id.
 router.get('/partner/pooled', authenticate, requirePartner, requireKyc, ctrl.getPooledLeads);
 router.get('/partner/:id', authenticate, requirePartner, requireKyc, ctrl.getLeadById);
-router.post('/partner/:id/schedule-visit', authenticate, requirePartner, requireKyc, ctrl.scheduleVisit);
+router.post('/partner/:id/schedule-visit', authenticate, requirePartner, requireKyc, visitBookingLimiter, ctrl.scheduleVisit);
 router.post('/partner/:id/resend-otp', authenticate, requirePartner, requireKyc, otpLimiter, ctrl.resendOtp);
 router.post('/partner/:id/request-otp-override', authenticate, requirePartner, requireKyc, ctrl.requestOtpOverride);
 router.post('/partner/:id/verify-otp', authenticate, requirePartner, requireKyc, otpLimiter, ctrl.verifyOtp);

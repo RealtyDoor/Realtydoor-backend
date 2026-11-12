@@ -5,7 +5,7 @@ jest.mock('../../src/modules/config/config.service', () => ({ getConfigNumber: j
 const prisma = require('../../src/lib/prisma');
 const leads = require('../../src/modules/leads/leads.service');
 
-const lead = (over = {}) => ({ id: 'l1', assignedPartnerId: 'p1', siteVisitOTP: '123456', otpAttempts: 0, otpLockedUntil: null,
+const lead = (over = {}) => ({ id: 'l1', assignedPartnerId: 'p1', status: 'SITE_VISIT_SCHEDULED', siteVisitOTP: '123456', otpAttempts: 0, otpLockedUntil: null,
   otpExpiresAt: new Date(Date.now() + 3600e3), siteVisitScheduledAt: new Date(Date.now() - 3600e3), ...over });
 
 // The counter is bumped by the database ({ increment: 1 }); the update returns the new count.

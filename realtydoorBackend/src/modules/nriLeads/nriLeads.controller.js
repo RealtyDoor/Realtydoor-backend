@@ -2,6 +2,7 @@ const prisma = require('../../lib/prisma');
 const { created } = require('../../utils/ApiResponse');
 const { z } = require('zod');
 const { notifyAdmins } = require('../../lib/notifications');
+const { normalizePhone } = require('../../lib/phoneUtils');
 
 const nriLeadSchema = z.object({
   name: z.string().min(2).max(100),
@@ -16,6 +17,9 @@ const nriLeadSchema = z.object({
 async function submit(req, res, next) {
   try {
     const data = nriLeadSchema.parse(req.body);
+    // Audit Nov 2026 (L12): store the number in the one standard form when it is a valid number, so it matches the same buyer's
+    // other leads. A number that does not parse is kept as typed: the admin can still call it.
+    data.phone = normalizePhone(data.phone) || data.phone;
     const lead = await prisma.nriLead.create({ data });
     // B79 — admins only had the sidebar count.
     await notifyAdmins({

@@ -148,7 +148,7 @@ describe('WATI webhook', () => {
     prisma.lead.findFirst.mockResolvedValue({ id: 'l1' });
     const r = await wati({ waId: '919000000001', text }, ok);
     expect(r.body).toEqual({ status: 'ok' });
-    expect(prisma.lead.findFirst.mock.calls[0][0]).toMatchObject({ where: { buyerPhone: '+919000000001', feedbackReceivedAt: null }, orderBy: { whatsappSentAt: 'desc' } });
+    expect(prisma.lead.findFirst.mock.calls[0][0]).toMatchObject({ where: { buyerPhone: '+919000000001', OR: [{ feedbackReceivedAt: null }, { feedbackReceivedAt: { isSet: false } }] }, orderBy: { whatsappSentAt: 'desc' } });
     expect(prisma.lead.update).toHaveBeenCalledWith({ where: { id: 'l1' }, data: { buyerFeedbackStatus: status, feedbackReceivedAt: expect.any(Date) } });
   });
   test.each([['yes please'], ['YES!'], ['4'], ['0'], ['maybe later'], [''], [' ']])('the reply %p is not a keyword and changes nothing', async (text) => {

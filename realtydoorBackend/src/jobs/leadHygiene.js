@@ -46,6 +46,7 @@ async function runOnce(now = new Date()) {
     const leads = await prisma.lead.findMany({
       where: { status: 'ASSIGNED', assignedPartnerId: { isSet: true } },
       include: { escrowTransactions: { select: { status: true } } },
+      orderBy: { createdAt: 'asc' }, // audit Nov 2026 (L11): oldest first, so a full batch never skips the same leads every run
       take: 500,
     });
     for (const lead of leads) {
@@ -83,6 +84,7 @@ async function runOnce(now = new Date()) {
     const registered = await prisma.lead.findMany({
       where: { addedByPartnerId: { isSet: true }, registrationLapsedAt: { isSet: false }, status: { in: ['ASSIGNED', 'UNASSIGNED'] } },
       include: { escrowTransactions: { select: { status: true } } },
+      orderBy: { createdAt: 'asc' }, // audit Nov 2026 (L11): oldest first, so a full batch never skips the same leads every run
       take: 500,
     });
     for (const lead of registered) {
@@ -115,6 +117,7 @@ async function runOnce(now = new Date()) {
     const held = await prisma.lead.findMany({
       where: { addedByPartnerId: { isSet: true }, registrationLapsedAt: { isSet: false }, status: { notIn: ['CLOSED', 'DROPPED', 'AWAITING_ADMIN'] } },
       include: { escrowTransactions: { select: { status: true, createdAt: true, heldAt: true, releasedAt: true } } },
+      orderBy: { createdAt: 'asc' }, // audit Nov 2026 (L11): oldest first, so a full batch never skips the same leads every run
       take: 500,
     });
     for (const lead of held) {
@@ -130,6 +133,7 @@ async function runOnce(now = new Date()) {
     const given = await prisma.lead.findMany({
       where: { assignedPartnerId: { isSet: true }, addedByPartnerId: { isSet: false }, status: 'ASSIGNED' },
       include: { escrowTransactions: { select: { status: true, createdAt: true, heldAt: true, releasedAt: true } } },
+      orderBy: { createdAt: 'asc' }, // audit Nov 2026 (L11): oldest first, so a full batch never skips the same leads every run
       take: 500,
     });
     for (const lead of given) {
@@ -151,6 +155,7 @@ async function runOnce(now = new Date()) {
   const booked = partnerLeadWindowDays <= 0 ? [] : await prisma.lead.findMany({
     where: { siteVisitScheduledAt: { lt: new Date(now.getTime() - 7 * 24 * HOUR) }, noShowFlaggedAt: { isSet: false }, visitNoShowConfirmedAt: { isSet: false }, isOtpVerified: false, status: { notIn: ['CLOSED', 'DROPPED'] } },
     select: { id: true, refCode: true, status: true, siteVisitScheduledAt: true, noShowFlaggedAt: true, visitNoShowConfirmedAt: true, otpVerifiedAt: true, isOtpVerified: true, visitOutcomeAt: true },
+    orderBy: { siteVisitScheduledAt: 'asc' },
     take: 200,
   });
   for (const lead of booked) {
@@ -163,13 +168,13 @@ async function runOnce(now = new Date()) {
   // Slow admin: a registration waiting too long for confirmation, or an extension request sitting undecided, is escalated once.
   if (leadLateHours > 0) {
     const cutoff = new Date(now.getTime() - leadLateHours * HOUR);
-    const waiting = await prisma.lead.findMany({ where: { status: 'AWAITING_ADMIN', createdAt: { lt: cutoff }, lateNotifiedAt: { isSet: false } }, select: { id: true, refCode: true }, take: 200 });
+    const waiting = await prisma.lead.findMany({ where: { status: 'AWAITING_ADMIN', createdAt: { lt: cutoff }, lateNotifiedAt: { isSet: false } }, select: { id: true, refCode: true }, orderBy: { createdAt: 'asc' }, take: 200 });
     for (const lead of waiting) {
       await notifyAdmins({ title: 'Registration waiting too long', message: `${lead.refCode || 'A lead'} has waited more than ${leadLateHours} hours for confirmation.`, type: 'LEAD_NEW', linkUrl: `/admin/leads/${lead.id}` }).catch(() => null);
       await prisma.lead.update({ where: { id: lead.id }, data: { lateNotifiedAt: now } });
       out.late += 1;
     }
-    const pending = await prisma.lead.findMany({ where: { holdExtensionRequestedAt: { lt: cutoff }, holdExtensionDecidedAt: { isSet: false }, holdExtensionEscalatedAt: { isSet: false } }, select: { id: true, refCode: true }, take: 200 });
+    const pending = await prisma.lead.findMany({ where: { holdExtensionRequestedAt: { lt: cutoff }, holdExtensionDecidedAt: { isSet: false }, holdExtensionEscalatedAt: { isSet: false } }, select: { id: true, refCode: true }, orderBy: { createdAt: 'asc' }, take: 200 });
     for (const lead of pending) {
       await notifyAdmins({ title: 'Extension request not decided', message: `${lead.refCode || 'A lead'}: a request for more time has waited more than ${leadLateHours} hours. The partner's clock is paused until you decide.`, type: 'LEAD_EXTENSION_REQUESTED', linkUrl: `/admin/leads/${lead.id}` }).catch(() => null);
       await prisma.lead.update({ where: { id: lead.id }, data: { holdExtensionEscalatedAt: now } });
@@ -180,13 +185,13 @@ async function runOnce(now = new Date()) {
   // The second, stronger alert: still undecided after 5 days.
   if (leadLateEscalateDays > 0) {
     const cutoff5 = new Date(now.getTime() - leadLateEscalateDays * 24 * HOUR);
-    const waiting5 = await prisma.lead.findMany({ where: { status: 'AWAITING_ADMIN', createdAt: { lt: cutoff5 }, lateEscalatedAt: { isSet: false } }, select: { id: true, refCode: true }, take: 200 });
+    const waiting5 = await prisma.lead.findMany({ where: { status: 'AWAITING_ADMIN', createdAt: { lt: cutoff5 }, lateEscalatedAt: { isSet: false } }, select: { id: true, refCode: true }, orderBy: { createdAt: 'asc' }, take: 200 });
     for (const lead of waiting5) {
       await notifyAdmins({ title: `Registration waiting ${leadLateEscalateDays} days`, message: `${lead.refCode || 'A lead'} has waited more than ${leadLateEscalateDays} days for confirmation. The partner is still waiting; please decide today.`, type: 'LEAD_NEW', linkUrl: `/admin/leads/${lead.id}` }).catch(() => null);
       await prisma.lead.update({ where: { id: lead.id }, data: { lateEscalatedAt: now } });
       out.lateFive += 1;
     }
-    const pending5 = await prisma.lead.findMany({ where: { holdExtensionRequestedAt: { lt: cutoff5 }, holdExtensionDecidedAt: { isSet: false }, holdExtensionEscalatedFiveAt: { isSet: false } }, select: { id: true, refCode: true }, take: 200 });
+    const pending5 = await prisma.lead.findMany({ where: { holdExtensionRequestedAt: { lt: cutoff5 }, holdExtensionDecidedAt: { isSet: false }, holdExtensionEscalatedFiveAt: { isSet: false } }, select: { id: true, refCode: true }, orderBy: { createdAt: 'asc' }, take: 200 });
     for (const lead of pending5) {
       await notifyAdmins({ title: `Extension request waiting ${leadLateEscalateDays} days`, message: `${lead.refCode || 'A lead'}: a request for more time has waited more than ${leadLateEscalateDays} days. The partner's clock is paused until you decide.`, type: 'LEAD_EXTENSION_REQUESTED', linkUrl: `/admin/leads/${lead.id}` }).catch(() => null);
       await prisma.lead.update({ where: { id: lead.id }, data: { holdExtensionEscalatedFiveAt: now } });
@@ -198,6 +203,7 @@ async function runOnce(now = new Date()) {
     const registered = await prisma.lead.findMany({
       where: { OR: [{ addedByPartnerId: { isSet: true } }, { assignedPartnerId: { isSet: true } }], registrationLapsedAt: { isSet: false }, status: { notIn: ['CLOSED', 'DROPPED', 'AWAITING_ADMIN'] }, windowWarnedAt: { isSet: false } },
       include: { escrowTransactions: { select: { createdAt: true, heldAt: true, releasedAt: true } } },
+      orderBy: { createdAt: 'asc' }, // audit Nov 2026 (L11): oldest first, so a full batch never skips the same leads every run
       take: 500,
     });
     for (const lead of registered) {

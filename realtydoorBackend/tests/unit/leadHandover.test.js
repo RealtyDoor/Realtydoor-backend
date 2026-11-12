@@ -161,9 +161,16 @@ describe('an approved drop frees the buyer at once (4 Nov 2026)', () => {
     expect(prisma.lead.update.mock.calls[0][0].data.registrationLapsedAt).toBeUndefined();
     prisma.lead.update.mockClear();
     prisma.lead.findUnique.mockResolvedValue(asked());
-    prisma.escrowTransaction.count.mockResolvedValue(1);
+    // A token that was paid and already released: the drop goes through, the registration stays for the owner to settle.
+    prisma.escrowTransaction.count.mockImplementation(async ({ where }) => (where.status.in.includes('RELEASED') ? 1 : 0));
     await leadsSvc.adminApproveDrop('l1', 'admin1', '1.1.1.1');
     expect(prisma.lead.update.mock.calls[0][0].data.registrationLapsedAt).toBeUndefined();
+  });
+  test('audit Nov 2026 (L9): a token still sitting in escrow blocks the drop until it is refunded or released', async () => {
+    prisma.lead.findUnique.mockResolvedValue(asked());
+    prisma.escrowTransaction.count.mockResolvedValue(1);
+    await expect(leadsSvc.adminApproveDrop('l1', 'admin1', '1.1.1.1')).rejects.toMatchObject({ statusCode: 409, data: { code: 'DROP_BLOCKED_MONEY_HELD' } });
+    expect(prisma.lead.update).not.toHaveBeenCalled();
   });
   test('a company-given lead has no registration to lapse', async () => {
     prisma.lead.findUnique.mockResolvedValue(asked({ addedByPartnerId: undefined }));

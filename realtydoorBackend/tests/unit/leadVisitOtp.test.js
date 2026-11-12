@@ -43,7 +43,8 @@ describe('scheduleVisit', () => {
     expect(prisma.lead.update).not.toHaveBeenCalled();
   });
   test('issues a fresh 6-digit code, clears any lock and attempt count, and sends it by WhatsApp only', async () => {
-    prisma.lead.findFirst.mockResolvedValue(lead({ otpAttempts: 2, otpLockedUntil: new Date(Date.now() + HOUR) }));
+    // A first booking (lead still ASSIGNED) starts clean. Re-booking a visit that is locked is refused: see audit2026_11_leads.test.js.
+    prisma.lead.findFirst.mockResolvedValue(lead({ status: 'ASSIGNED', otpAttempts: 2, otpLockedUntil: new Date(Date.now() - HOUR) }));
     const when = new Date(Date.now() + 24 * HOUR);
     const out = await leads.scheduleVisit('l1', 'p1', when);
     const data = prisma.lead.update.mock.calls[0][0].data;
