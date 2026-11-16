@@ -34,12 +34,12 @@ const settings = [
   { area: 'User & authentication > Username', setting: 'Username attribute', value: 'the instance must accept a username when our signup creates a user', source: 'CODE', risk: 'Our signup sends a generated username to createUser, but on the development instance both Username toggles (sign-up and sign-in) were off. If Clerk then refuses the field, phone signup fails. Prove with one test phone sign-up (audit A8); if refused, turn the Username attribute on here.' },
   { area: 'User & authentication > Password', setting: 'Sign-up with password', value: 'on', source: 'CODE', note: 'Our signup sends a generated strong password.' },
   { area: 'User & authentication > Password', setting: 'Add password to account', value: 'on', source: 'OBSERVED' },
-  { area: 'User & authentication > Password', setting: 'Minimum length / reject compromised passwords / enforce strength', value: '8 characters / on / on', source: 'OBSERVED' },
+  { area: 'User & authentication > Password', setting: 'Minimum length / reject compromised passwords / enforce strength', value: 'Clerk defaults: 10 characters / on / off', source: 'DECIDED', note: 'The old instance had 8 / on / on. Clerk itself recommends a longer minimum and no strength meter; our code creates passwords itself (long and random), so the stricter default is kept.' },
   { area: 'User & authentication > Password', setting: 'Device Trust', value: 'enabled', source: 'OBSERVED' },
   { area: 'User & authentication > User model', setting: 'First and last name', value: 'on and required', source: 'OBSERVED', note: 'Signup sends firstName and lastName.' },
   { area: 'User & authentication > User model', setting: 'Allow users to delete their account / change their phone number', value: 'on / on', source: 'OBSERVED', note: 'Account deletion is also handled by our own 30-day process; Clerk deletion fires user.deleted.' },
   { area: 'User & authentication > SSO connections', setting: 'Google (social provider, used for sign-in)', value: 'on, with OUR OWN Google OAuth client in production', source: 'CODE', note: 'Shared credentials only work in development. Add the redirect URI Clerk shows (https://clerk.<domain>/v1/oauth_callback) to the Google client; a person pastes the client id and secret.' },
-  { area: 'User & authentication > Multi-factor', setting: 'Authenticator app (TOTP)', value: 'on', source: 'DECIDED', note: 'The admin sign-in screen promises a code from an authenticator app. Pro feature. Not read on the development instance: confirm it.' },
+  { area: 'User & authentication > Multi-factor', setting: 'Authenticator app (TOTP)', value: 'on ("Require multi-factor" stays off: it would force every user)', source: 'DECIDED', note: 'The admin sign-in screen promises a code from an authenticator app. Pro feature.' },
   { area: 'User & authentication > Access mode', setting: 'Access mode', value: 'Open', source: 'OBSERVED' },
   // Sessions
   { area: 'Sessions', setting: 'Session lifetime', value: 'not set here', source: 'CODE', note: 'The 30-minute idle sign-out is done by the app (admin and partner screens). Not read on the development instance: confirm the Clerk lifetime is not shorter than a working day.' },
@@ -48,9 +48,14 @@ const settings = [
   { area: 'Account Portal > Customization', setting: 'Light mode primary color', value: '#2C2FEE', source: 'DECIDED', note: "The app's blue (--color-primary in globals.css)." },
   { area: 'Application settings > Branding', setting: 'Logo / favicon', value: 'public/pwa/icon-512.png / public/pwa/icon-192.png', source: 'DECIDED', note: 'The Realtydoor mark. Clerk takes png, jpeg, gif, webp (not svg).' },
   { area: 'Application settings > Branding', setting: 'Remove "Secured by Clerk" branding', value: 'on (Pro)', source: 'OBSERVED' },
-  { area: 'Application settings > Application details', setting: 'Application name / support email', value: 'Realtydoor / support@realtydoor.com', source: 'OBSERVED' },
+  { area: 'Application settings > Application details', setting: 'Application name / support email', value: 'Realtydoor Live while there are two applications (rename to Realtydoor once the old one is retired) / support@realtydoor.com', source: 'DECIDED' },
   // Webhooks
   { area: 'Developers > Webhooks', setting: `Endpoint https://<api host>${webhook.path}`, value: `events ${webhook.events.join(', ')}`, source: 'CODE', note: 'Copy the signing secret into CLERK_WEBHOOK_SECRET. Needs the public API host, so it comes after DNS and the server exist.' },
 ];
 
-module.exports = { application, webhook, roles, createUserFields, paths, settings };
+// What has been applied from this file, so the next person knows what is left. The settings that need a person or a later step stay open.
+const applied = [
+  { instance: 'Realtydoor Live, development (ins_3KxuPGjUlel9SZKFozrJynnqjha)', on: '2026-11-16', done: 'email sign-up and sign-in off; phone sign-in on with SMS code (sign-up off); first and last name required; authenticator app on; access mode open; account portal light mode and #2C2FEE; logo, favicon, support email; Secured-by-Clerk removed', notDone: 'Username attribute question (needs a test sign-up); session lifetime not read; production instance, own Google client and webhook (need DNS and the API host first)' },
+];
+
+module.exports = { applied, application, webhook, roles, createUserFields, paths, settings };
