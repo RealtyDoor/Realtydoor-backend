@@ -94,7 +94,7 @@ async function createServiceOrder(userId, serviceId) {
 // and a race between the two paths could create two. userId is only passed
 // by the buyer-facing verify controller (the webhook has no caller identity
 // to scope by, same reasoning as escrow's confirmPayment/buyerId).
-async function activateSubscription(orderId, paymentId, userId = null) {
+async function activateSubscription(orderId, paymentId, userId = null, webhookPayment = null) {
   const subscription = await prisma.userSubscription.findUnique({ where: { razorpayOrderId: orderId } });
   if (!subscription || (userId && subscription.userId !== userId)) {
     throw new ApiError(404, 'Subscription not found');
@@ -122,6 +122,18 @@ async function activateSubscription(orderId, paymentId, userId = null) {
     if (payment.amount !== Math.round(subscription.amountPaid * 100) || payment.currency !== 'INR') {
       throw new ApiError(400, "This payment's amount or currency does not match the order.", { code: 'AMOUNT_MISMATCH' });
     }
+  }
+
+  // Audit Nov 2026 (F6). The webhook's own payment record must match the order too; a mismatch is never activated.
+  if (!userId && webhookPayment && typeof webhookPayment.amount === 'number'
+    && (webhookPayment.amount !== (subscription.amountPaidPaise ?? Math.round(subscription.amountPaid * 100)) || webhookPayment.currency !== 'INR')) {
+    logger.error('[Services] A captured payment does not match its subscription order; not activated', { subscriptionId: subscription.id, orderId, paymentId });
+    await notifyAdmins({
+      title: 'A payment does not match a service order',
+      message: `Razorpay captured ${webhookPayment.amount} (paise) for a service order of ${subscription.amountPaidPaise ?? Math.round(subscription.amountPaid * 100)}. The plan was NOT activated. Check payment ${paymentId} in Razorpay.`,
+      type: 'SERVICE_AMOUNT_MISMATCH', linkUrl: '/admin/tickets',
+    }).catch(() => null);
+    return subscription;
   }
 
   const now = new Date();

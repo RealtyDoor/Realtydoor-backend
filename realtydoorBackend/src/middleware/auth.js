@@ -69,7 +69,12 @@ async function authenticate(req, res, next) {
     // never checks the token's azp claim against anything, so a valid
     // token for this same Clerk instance verifies regardless of which
     // origin it was actually issued for.
-    const payload = await clerk.verifyToken(token, { authorizedParties: getAllowedOrigins() });
+    let payload;
+    try {
+      payload = await clerk.verifyToken(token, { authorizedParties: getAllowedOrigins() });
+    } catch {
+      throw new ApiError(401, 'Invalid token'); // only a token that does not verify is a 401
+    }
     const clerkId = payload.sub;
 
     let dbUser = await prisma.user.findUnique({ where: { clerkId } });
@@ -109,7 +114,9 @@ async function authenticate(req, res, next) {
     req.user = { ...dbUser, role: dbUser.role, onboardingComplete: computeOnboardingComplete(dbUser) };
     next();
   } catch (err) {
-    next(err instanceof ApiError ? err : new ApiError(401, 'Invalid token'));
+    // Audit Nov 2026 (A7). A database or Clerk outage is not a bad token: answering 401 signs people out and sends the app into a
+    // sign-in loop during an outage. It is a 503 the app can show as "try again".
+    next(err instanceof ApiError ? err : new ApiError(503, 'The service is temporarily unavailable. Please try again in a moment.', { code: 'SERVICE_UNAVAILABLE' }));
   }
 }
 

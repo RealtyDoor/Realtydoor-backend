@@ -2,6 +2,7 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { createNotification } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
+const { withKeyLock } = require('../../lib/keyLock');
 
 // R29 — a buyer has at most one ACTIVE referral at a time, across every
 // advisor, so commission.service.js's lookup by phone always has a single
@@ -14,6 +15,13 @@ async function createReferral(advisorId, data, adminId = null, ip = null) {
     throw new ApiError(400, `Only an ADVISOR-persona partner can refer a client. This partner is ${advisor.partnerSubType || 'unset'}.`);
   }
 
+  // One at a time per phone, so two advisors submitting the same buyer at the same moment cannot both get an ACTIVE row.
+  const locked = await withKeyLock(`referral:${data.buyerPhone}`, () => createReferralLocked(advisorId, data, adminId, ip));
+  if (locked.busy) throw new ApiError(409, 'This phone number is being referred right now. Try again in a moment.', { code: 'REFERRAL_BUSY' });
+  return locked.value;
+}
+
+async function createReferralLocked(advisorId, data, adminId, ip) {
   const existing = await prisma.advisorReferral.findFirst({
     where: { buyerPhone: data.buyerPhone, status: 'ACTIVE' },
   });
@@ -114,9 +122,14 @@ async function revokeReferral(id, reason, adminId, ip, requirePartnerId = null) 
 // previewTermsForLead). Phone is the matching key for the reason explained
 // in the schema comment: a buyer's very first lead can predate their own
 // account, same as the referral itself can.
-async function getActiveReferralForPhone(buyerPhone) {
+// Audit Nov 2026 (P11). Only a referral that existed BEFORE the lead counts: an advisor who adds the buyer after the
+// enquiry came in did not bring them. Pass the lead's createdAt; without it the old behaviour (any active referral) applies.
+async function getActiveReferralForPhone(buyerPhone, leadCreatedAt = null) {
   if (!buyerPhone) return null;
-  return prisma.advisorReferral.findFirst({ where: { buyerPhone, status: 'ACTIVE' } });
+  return prisma.advisorReferral.findFirst({
+    where: { buyerPhone, status: 'ACTIVE', ...(leadCreatedAt ? { createdAt: { lte: leadCreatedAt } } : {}) },
+    orderBy: { createdAt: 'asc' },
+  });
 }
 
 module.exports = {

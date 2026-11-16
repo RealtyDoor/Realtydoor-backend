@@ -218,7 +218,7 @@ router.get('/escrow/:id/release-plan', requirePermission(['FINANCE', 'FINANCE_VI
 // BE-2 — the way out of HELD_PAYOUT_FAILED (release()'s BE-1 fix can leave an
 // escrow there when one payout leg fails after the other already succeeded).
 // Same FINANCE gate as release/refund above — these move real money too.
-router.get('/escrow/:id/payouts',                 requirePermission('FINANCE'), escrowCtrl.getPayouts);
+router.get('/escrow/:id/payouts',                 requirePermission(['FINANCE', 'FINANCE_VIEW']), escrowCtrl.getPayouts); // audit F19: reading is allowed to the read-only role
 router.post('/escrow/:id/payouts/retry',           requirePermission('FINANCE'), escrowCtrl.retryPayout);
 router.post('/escrow/:id/payouts/resolve',         requirePermission('FINANCE'), escrowCtrl.resolvePayout);
 router.post('/escrow/:id/payouts/refund-remaining', requirePermission('FINANCE'), escrowCtrl.refundRemaining);
@@ -379,7 +379,8 @@ router.get('/analytics/benchmarks', requirePermission(['LEADS', 'USERS', 'FINANC
 
 // Dispute management
 router.get('/disputes', requirePermission(['TICKETS', 'FINANCE', 'FINANCE_VIEW']), ctrl.listDisputes);
-router.patch('/disputes/:id', requirePermission(['TICKETS', 'FINANCE', 'FINANCE_VIEW']), ctrl.resolveDispute);
+// Audit Nov 2026 (F19): changing a dispute needs a write role; FINANCE_VIEW (read only) may look but not change it.
+router.patch('/disputes/:id', requirePermission(['TICKETS', 'FINANCE']), ctrl.resolveDispute);
 
 // Review moderation
 router.get('/reviews', requirePermission('TICKETS'), ctrl.listReviews);

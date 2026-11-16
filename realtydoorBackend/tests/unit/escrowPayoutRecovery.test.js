@@ -95,10 +95,10 @@ describe('retryPayout', () => {
   test('the partner leg uses the partner\'s verified payout account only', async () => {
     prisma.escrowTransaction.findUnique.mockResolvedValue(failed({ razorpayPayoutId: null, razorpayPartnerPayoutId: 'pout_p' }));
     prisma.lead.findUnique.mockResolvedValue({ assignedPartnerId: 'p1' });
-    prisma.user.findUnique.mockResolvedValue({ razorpayFundAccountId: 'fa_p', payoutAccountStatus: 'PENDING_CLARIFICATION' });
+    prisma.user.findUnique.mockResolvedValue({ kycStatus: 'VERIFIED', isSuspended: false, razorpayFundAccountId: 'fa_p', payoutAccountStatus: 'PENDING_CLARIFICATION' });
     await expect(svc.retryPayout('e1', { leg: 'partner' }, 'a1', 'ip')).rejects.toMatchObject({ data: { code: 'PARTNER_PAYOUT_ACCOUNT_NOT_ACTIVE' } });
     expect(rz.createPayout).not.toHaveBeenCalled();
-    prisma.user.findUnique.mockResolvedValue({ razorpayFundAccountId: 'fa_p', payoutAccountStatus: 'ACTIVE' });
+    prisma.user.findUnique.mockResolvedValue({ kycStatus: 'VERIFIED', isSuspended: false, razorpayFundAccountId: 'fa_p', payoutAccountStatus: 'ACTIVE' });
     await svc.retryPayout('e1', { leg: 'partner' }, 'a1', 'ip');
     expect(rz.createPayout.mock.calls[0][0]).toBe('fa_p');
   });

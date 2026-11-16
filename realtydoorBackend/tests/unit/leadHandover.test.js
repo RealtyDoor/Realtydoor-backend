@@ -1,7 +1,8 @@
 // Wave 2 of lead hygiene: a partner who can no longer work their leads, moving a lead that is already in progress, and drop reason codes.
 jest.mock('../../src/lib/prisma', () => ({
   lead: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), count: jest.fn() },
-  user: { findFirst: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
+  user: { findFirst: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  property: { count: jest.fn().mockResolvedValue(2) },
   escrowTransaction: { count: jest.fn().mockResolvedValue(0) },
 }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn().mockResolvedValue({}) }));
@@ -73,6 +74,9 @@ describe('suspending a user', () => {
     prisma.lead.findMany.mockResolvedValue([L(), L({ id: 'x', refCode: 'RD-L-X', escrowTransactions: [{ status: 'FROZEN' }] })]);
     const out = await admin.suspendUser('P1', true, 'fraud check', 'admin1', '1.1.1.1');
     expect(out).toMatchObject({ isSuspended: true, leadsReturned: 1, leadsNeedingDecision: ['RD-L-X'] });
+    // Audit Nov 2026 (P2): an ACTIVE payout account is frozen in the same step, and the result says how many listings went dark.
+    expect(prisma.user.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'P1', payoutAccountStatus: 'ACTIVE' }, data: expect.objectContaining({ payoutAccountStatus: 'SUSPENDED' }) }));
+    expect(out).toMatchObject({ payoutFrozen: true, listingsHidden: 2 });
   });
   test('a buyer, a reinstated partner and nothing else is touched', async () => {
     prisma.user.findUnique.mockResolvedValue({ id: 'U1', role: 'USER', isSuspended: false });

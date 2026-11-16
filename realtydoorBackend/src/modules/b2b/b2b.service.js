@@ -1,5 +1,6 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
+const { LIVE_PARTNER } = require('../../lib/partnerStanding');
 const { createNotification } = require('../../lib/notifications');
 
 // ─── B5.9–B5.11 — partner-to-partner inventory feed ──────────────────────────
@@ -35,6 +36,8 @@ function feedWhere(partnerId, filters = {}) {
   const where = {
     publishStatus: 'APPROVED',
     partnerId: { not: partnerId },
+    // Audit Nov 2026 (P2, P20): not the stock of a partner who is suspended, unverified or gone.
+    ...LIVE_PARTNER,
   };
   if (filters.city)     where.city = { equals: filters.city, mode: 'insensitive' };
   if (filters.locality) where.locality = { contains: filters.locality, mode: 'insensitive' };
@@ -118,7 +121,7 @@ async function getFeedCounts(partnerId) {
 // auto-connect either — admin/listing-partner action moves it to CONNECTED.
 async function expressInterest(partnerId, propertyId, message) {
   const property = await prisma.property.findFirst({
-    where: { id: propertyId, publishStatus: 'APPROVED' },
+    where: { id: propertyId, publishStatus: 'APPROVED', ...LIVE_PARTNER },
     select: { id: true, title: true, partnerId: true },
   });
   if (!property) throw new ApiError(404, 'Property not found');

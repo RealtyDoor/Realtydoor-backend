@@ -73,11 +73,17 @@ async function recordDeposit(ids, { challanNumber, bsrCode, depositedAt }, admin
   const when = depositedAt ? new Date(depositedAt) : new Date();
   if (Number.isNaN(when.getTime()) || when.getTime() > Date.now() + 24 * 3600e3) throw new ApiError(400, 'depositedAt is not a valid past date');
   const done = [];
+  // Audit Nov 2026 (F24). Every id is checked before the first one is written, so a bad id in the middle leaves nothing half done.
+  const rows = [];
   for (const id of ids) {
     const t = await prisma.tdsEntry.findUnique({ where: { id } });
     if (!t) throw new ApiError(404, `TDS entry ${id} not found`);
     if (t.depositedAt) throw new ApiError(409, `TDS entry ${id} is already deposited`, { code: 'ALREADY_DEPOSITED' });
     if (t.tdsPaise === 0) throw new ApiError(400, `TDS entry ${id} has no TDS to deposit`);
+    rows.push(t);
+  }
+  for (const t of rows) {
+    const id = t.id;
     const updated = await prisma.tdsEntry.update({ where: { id }, data: { depositedAt: when, challanNumber: challanNumber.trim(), bsrCode: bsrCode.trim() } });
     await ledger.onTdsDeposited(updated, { adminId });
     await createAuditLog({
@@ -93,10 +99,15 @@ async function recordReturn(ids, { returnQuarter, filedAt }, adminId, ip) {
   if (!returnQuarter?.trim()) throw new ApiError(400, 'returnQuarter is required (for example "2026-27 Q3")');
   const when = filedAt ? new Date(filedAt) : new Date();
   const done = [];
-  for (const id of ids) {
+  const rows = [];
+  for (const id of ids) { // audit Nov 2026 (F24): check all, then write
     const t = await prisma.tdsEntry.findUnique({ where: { id } });
     if (!t) throw new ApiError(404, `TDS entry ${id} not found`);
     if (t.tdsPaise > 0 && !t.depositedAt) throw new ApiError(409, `TDS entry ${id} is not deposited yet; a return reports deposited TDS`, { code: 'NOT_DEPOSITED' });
+    rows.push(t);
+  }
+  for (const t of rows) {
+    const id = t.id;
     const updated = await prisma.tdsEntry.update({ where: { id }, data: { returnQuarter: returnQuarter.trim(), returnFiledAt: when } });
     await createAuditLog({
       adminId, actorRole: 'ADMIN', action: 'TDS_RETURN_RECORDED', targetType: 'TdsEntry', targetId: id,
@@ -110,10 +121,15 @@ async function recordReturn(ids, { returnQuarter, filedAt }, adminId, ip) {
 async function recordForm16a(ids, { issuedAt }, adminId, ip) {
   const when = issuedAt ? new Date(issuedAt) : new Date();
   const done = [];
-  for (const id of ids) {
+  const rows = [];
+  for (const id of ids) { // audit Nov 2026 (F24): check all, then write
     const t = await prisma.tdsEntry.findUnique({ where: { id } });
     if (!t) throw new ApiError(404, `TDS entry ${id} not found`);
     if (t.tdsPaise > 0 && !t.returnFiledAt) throw new ApiError(409, `TDS entry ${id}: file the return before issuing Form 16A`, { code: 'RETURN_NOT_FILED' });
+    rows.push(t);
+  }
+  for (const t of rows) {
+    const id = t.id;
     const updated = await prisma.tdsEntry.update({ where: { id }, data: { form16aIssuedAt: when } });
     await createAuditLog({
       adminId, actorRole: 'ADMIN', action: 'TDS_FORM16A_ISSUED', targetType: 'TdsEntry', targetId: id,

@@ -15,7 +15,7 @@ function missingPriceMessage(data) {
 
 const createPropertySchema = z.object({
   title: z.string().min(5).max(200),
-  description: z.string().min(20),
+  description: z.string().min(20).max(10000), // Audit Nov 2026 (P14): was unbounded
   price: z.number().positive().optional(),
   monthlyRent: z.number().positive().optional(),
   priceNegotiable: z.boolean().optional(),
@@ -40,9 +40,9 @@ const createPropertySchema = z.object({
   city: z.string().min(2),
   state: z.string().min(2),
   pincode: z.string().regex(/^\d{6}$/),
-  latitude: z.number().optional(),
-  longitude: z.number().optional(),
-  nearbyLandmarks: z.array(z.string()).optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  nearbyLandmarks: z.array(z.string().max(200)).max(50).optional(),
 
   // 4.6 — the partner's own location evidence. mapLink is parsed into
   // mapLinkLatitude/Longitude on write (lib/mapLink.js, no geocoding service
@@ -52,7 +52,7 @@ const createPropertySchema = z.object({
   partnerPinLatitude: z.number().min(-90).max(90).optional(),
   partnerPinLongitude: z.number().min(-180).max(180).optional(),
   reraNumber: z.string().optional(),
-  bankApprovals: z.array(z.string()).optional(),
+  bankApprovals: z.array(z.string().max(100)).max(40).optional(),
 
   // 4.5 — a mortgaged unit cannot transfer without the lender's NOC.
   // isMortgaged is nullable rather than defaulted: null means "not recorded",
@@ -65,8 +65,8 @@ const createPropertySchema = z.object({
   // R19 — turns on the CO_OWNER_CONSENT checklist item (checklist.service.js).
   // Nullable, same reasoning as isMortgaged: null means "not recorded".
   hasCoOwners: z.boolean().optional(),
-  amenities: z.array(z.string()).optional(),
-  societyFeatures: z.array(z.string()).optional(),
+  amenities: z.array(z.string().max(100)).max(100).optional(),
+  societyFeatures: z.array(z.string().max(100)).max(100).optional(),
   metaTitle: z.string().max(60).optional(),
   metaDescription: z.string().max(160).optional(),
 
@@ -112,20 +112,21 @@ const updatePropertySchema = createPropertySchema.partial().extend({
 );
 
 const searchSchema = paginationSchema.extend({
-  q: z.string().optional(),
-  city: z.string().optional(),
-  locality: z.string().optional(),
-  propertyType: z.string().optional(),
-  listingType: z.string().optional(),
+  q: z.string().max(100).optional(),
+  city: z.string().max(100).optional(),
+  locality: z.string().max(100).optional(),
+  propertyType: z.string().max(100).optional(),
+  listingType: z.string().max(100).optional(),
   bhk: z.coerce.number().int().optional(),
   minPrice: z.coerce.number().optional(),
   maxPrice: z.coerce.number().optional(),
   minArea: z.coerce.number().optional(),
   maxArea: z.coerce.number().optional(),
-  furnishing: z.string().optional(),
-  propertyStatus: z.string().optional(),
-  isVerified: z.coerce.boolean().optional(),
-  amenities: z.string().optional(),
+  furnishing: z.string().max(100).optional(),
+  propertyStatus: z.string().max(100).optional(),
+  // Audit Nov 2026 (U5). z.coerce.boolean() turns the text "false" into true.
+  isVerified: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
+  amenities: z.string().max(500).optional(),
   sort: z.enum(['price_asc', 'price_desc', 'newest', 'area_asc']).optional(),
 });
 

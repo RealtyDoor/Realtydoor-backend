@@ -11,10 +11,10 @@ const createOrderSchema = z.object({
 
 const bankDetailsSchema = z.object({
   name:          z.string().min(1),
-  email:         z.string().email(),
+  email:         z.string().email().optional(), // audit Nov 2026 (F10): RazorpayX does not need one
   phone:         indianPhone,
   ifsc:          z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'Invalid IFSC code'),
-  accountNumber: z.string().min(1),
+  accountNumber: z.string().regex(/^\d{9,18}$/, 'Account number must be 9 to 18 digits'),
 });
 
 const releaseEscrowSchema = z.object({

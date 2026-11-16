@@ -3,6 +3,7 @@ jest.mock('../../src/lib/prisma', () => ({
   property: { findUnique: jest.fn(), update: jest.fn() },
   user: { findUnique: jest.fn() },
   localitySuggestion: { findFirst: jest.fn() },
+  listingConflict: { findFirst: jest.fn().mockResolvedValue(null) },
 }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn() }));
 jest.mock('../../src/lib/notifications', () => ({
@@ -18,7 +19,7 @@ const listing = { id: 'p1', partnerId: 'u1', title: 'Villa', slug: 'villa', city
 beforeEach(() => {
   jest.clearAllMocks();
   prisma.property.findUnique.mockResolvedValue(listing);
-  prisma.user.findUnique.mockResolvedValue({ email: 'p@x.com', notifEmail: false });
+  prisma.user.findUnique.mockResolvedValue({ email: 'p@x.com', notifEmail: false, role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: false });
   prisma.property.update.mockResolvedValue({ ...listing, publishStatus: 'APPROVED', isSearchable: true, isFeatured: false });
 });
 

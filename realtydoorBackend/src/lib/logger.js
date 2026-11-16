@@ -3,6 +3,21 @@ const { combine, timestamp, printf, colorize, errors, json } = format;
 
 const isDev = process.env.NODE_ENV !== 'production';
 
+// Audit Nov 2026 (O1). Log files are a bonus in production (CloudWatch reads the console). A server whose folder cannot be written to
+// (the Docker image runs as an unprivileged user) used to crash while loading this file; now it logs to the console only.
+function canWriteLogFiles() {
+  if (isDev || String(process.env.LOG_TO_FILES || '').toLowerCase() === 'false') return false;
+  try {
+    require('fs').mkdirSync('logs', { recursive: true });
+    require('fs').accessSync('logs', require('fs').constants.W_OK);
+    return true;
+  } catch {
+    console.warn('[logger] the logs folder is not writable: logging to the console only');
+    return false;
+  }
+}
+const FILE_LOGS = canWriteLogFiles();
+
 // Human-readable format for development
 const INLINE_KEYS = new Set(['method', 'url', 'statusCode', 'durationMs', 'role', 'ip']);
 
@@ -44,7 +59,7 @@ const logger = createLogger({
   defaultMeta: { service: 'realtydoor-api' },
   transports: [
     new transports.Console(),
-    ...(isDev ? [] : [
+    ...(!FILE_LOGS ? [] : [
       new transports.File({ filename: 'logs/error.log', level: 'error', maxsize: 10_485_760, maxFiles: 5 }),
       new transports.File({ filename: 'logs/combined.log', maxsize: 10_485_760, maxFiles: 10 }),
     ]),

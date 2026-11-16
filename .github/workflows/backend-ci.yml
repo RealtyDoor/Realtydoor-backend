@@ -34,6 +34,11 @@ jobs:
         env:
           RAZORPAY_KEY_ID: rzp_test_ci_placeholder
           RAZORPAY_KEY_SECRET: ci_placeholder_secret
+      # Audit Nov 2026 (E7). The attacker's-eye checks on the real app (forged tokens, bad input) were not run by CI.
+      - run: npx jest tests/security --forceExit
+        env:
+          RAZORPAY_KEY_ID: rzp_test_ci_placeholder
+          RAZORPAY_KEY_SECRET: ci_placeholder_secret
 
   # Builds the production image to prove the Dockerfile works and prints its size. Nothing is pushed anywhere.
   docker-image:

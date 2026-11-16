@@ -1,6 +1,6 @@
 // Asking a partner for specific documents instead of rejecting, and what closes that request.
 jest.mock('../../src/lib/prisma', () => ({
-  user: { findUnique: jest.fn(), update: jest.fn(), findMany: jest.fn(), findFirst: jest.fn() },
+  user: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 0 }), findMany: jest.fn(), findFirst: jest.fn() },
   lead: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn() },
 }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn().mockResolvedValue({}) }));
@@ -65,12 +65,12 @@ describe('what the request has to look like', () => {
 describe('a decision or a resubmission closes the request', () => {
   const CLEARED = { kycRequestedDocuments: [], kycRequestedNote: null, kycRequestedAt: null, kycRequestedDueAt: null, kycRequestedByAdminId: null };
   test('approving clears the checklist', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'p1', kycStatus: 'DOCUMENTS_REQUESTED', kycDocumentUrls: ['a.png'], panNumber: 'AABCR1234C' });
+    prisma.user.findUnique.mockResolvedValue({ id: 'p1', role: 'PARTNER', kycStatus: 'DOCUMENTS_REQUESTED', kycDocumentUrls: ['a.png'], panNumber: 'AABCR1234C' });
     await admin.verifyKyc('p1', 'APPROVE', null, 'adm1', 'ip');
     expect(prisma.user.update.mock.calls[0][0].data).toMatchObject({ kycStatus: 'VERIFIED', ...CLEARED });
   });
   test('rejecting clears the checklist', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'p1', kycStatus: 'DOCUMENTS_REQUESTED', kycDocumentUrls: ['a.png'] });
+    prisma.user.findUnique.mockResolvedValue({ id: 'p1', role: 'PARTNER', kycStatus: 'DOCUMENTS_REQUESTED', kycDocumentUrls: ['a.png'] });
     await admin.verifyKyc('p1', 'REJECT', 'Not readable', 'adm1', 'ip');
     expect(prisma.user.update.mock.calls[0][0].data).toMatchObject({ kycStatus: 'REJECTED', kycRejectionNote: 'Not readable', ...CLEARED });
   });

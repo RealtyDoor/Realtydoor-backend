@@ -2,6 +2,7 @@ jest.mock('../../src/lib/prisma', () => ({
   onboardingRequest: { findUnique: jest.fn(), update: jest.fn() },
   user: { findFirst: jest.fn() },
   project: { create: jest.fn(), delete: jest.fn() },
+  counter: { create: jest.fn().mockResolvedValue({}), deleteMany: jest.fn().mockResolvedValue({}) }, // the key lock (lib/keyLock)
 }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn().mockResolvedValue({}) }));
 jest.mock('../../src/lib/notifications', () => ({ notifyAdmins: jest.fn() }));

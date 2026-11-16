@@ -2,6 +2,7 @@ const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { createNotification } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
+const { listingOwnerBlocker } = require('../../lib/partnerStanding');
 
 // 4.11 — "all units go live together". Approving touches only Project; there
 // is no per-unit approval at all, so every AVAILABLE unit becomes visible
@@ -9,6 +10,11 @@ const { createAuditLog } = require('../../lib/auditLog');
 async function approveProject(id, adminId, ip) {
   const project = await prisma.project.findUnique({ where: { id }, include: { _count: { select: { units: true } } } });
   if (!project) throw new ApiError(404, 'Project not found');
+  // Audit Nov 2026 (P5). A project goes live with all its units, so it needs at least one, and a builder in good standing.
+  if (!project._count.units) throw new ApiError(400, 'This project has no units yet. Ask the builder to add them before approving.', { code: 'PROJECT_NO_UNITS' });
+  const builder = await prisma.user.findUnique({ where: { id: project.builderId }, select: { role: true, kycStatus: true, isSuspended: true, deletedAt: true } });
+  const ownerBlocker = listingOwnerBlocker(builder);
+  if (ownerBlocker) throw new ApiError(409, `${ownerBlocker.message} This project cannot be approved.`, { code: ownerBlocker.code });
 
   const updated = await prisma.project.update({
     where: { id },

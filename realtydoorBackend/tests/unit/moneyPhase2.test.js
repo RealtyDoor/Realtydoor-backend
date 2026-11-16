@@ -380,10 +380,10 @@ describe('registered-partner payout is blocked without an accepted tax invoice',
     prisma.lead.findUnique.mockResolvedValue({
       id: 'lead1', refCode: 'RD1', feePct: 2, dealPriceAtLock: 7500000, commissionLockedAt: new Date(), commissionVersion: 1, allocationLetterUrl: 'x', allocationLetterVerifiedAt: new Date(), buyerFeedbackStatus: 'VERIFIED_CLOSED',
       status: 'SITE_VISIT_DONE', assignedPartnerId: 'p1', property: { price: 7500000, title: 'Plot' }, dealPriceAtLock2: null,
-      assignedPartner: { id: 'p1', name: 'Asha', payoutAccountStatus: account ? 'ACTIVE' : null, razorpayFundAccountId: account ? 'fa_1' : null },
+      assignedPartner: { id: 'p1', name: 'Asha', role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: false, payoutAccountStatus: account ? 'ACTIVE' : null, razorpayFundAccountId: account ? 'fa_1' : null },
     });
     prisma.leadCommissionLine.findMany.mockResolvedValue([{ payeeRole: 'CLOSING_AGENT', payeeUserId: 'p1', pct: 50 }]);
-    prisma.user.findUnique.mockResolvedValue({ id: 'p1', name: 'Asha', panNumber: pan, gstin, razorpayFundAccountId: account ? 'fa_1' : null, payoutAccountStatus: account ? 'ACTIVE' : null, billingAddress: 'x' });
+    prisma.user.findUnique.mockResolvedValue({ id: 'p1', name: 'Asha', role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: false, panNumber: pan, gstin, razorpayFundAccountId: account ? 'fa_1' : null, payoutAccountStatus: account ? 'ACTIVE' : null, billingAddress: 'x' });
     prisma.tdsEntry.findMany.mockResolvedValue([]);
     // TdsEntry is append-only (upsert is refused by the Prisma guard): the code looks the row up and creates it only if missing.
     prisma.tdsEntry.findUnique.mockResolvedValue(null);

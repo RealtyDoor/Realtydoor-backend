@@ -50,7 +50,7 @@ async function reconcilePendingEscrows() {
     try {
       const captured = await fetchCapturedPayment(e.razorpayOrderId);
       if (captured) {
-        await confirmPayment(e.razorpayOrderId, captured.id);
+        await confirmPayment(e.razorpayOrderId, captured.id, null, { amount: captured.amount, currency: captured.currency });
         healed++;
       }
     } catch (err) {

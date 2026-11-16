@@ -2,7 +2,7 @@
 jest.mock('../../src/lib/prisma', () => ({
   lead: { findUnique: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn(), count: jest.fn(), create: jest.fn() },
   property: { findUnique: jest.fn() },
-  user: { findFirst: jest.fn(), findMany: jest.fn() },
+  user: { findFirst: jest.fn(), findMany: jest.fn(), findUnique: jest.fn() },
 }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn().mockResolvedValue({}) }));
 jest.mock('../../src/lib/notifications', () => ({
@@ -28,6 +28,8 @@ describe('a buyer enquires on their own, after a partner registered them for the
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.property.findUnique.mockResolvedValue(PROP);
+    // The listing's partner is in good standing (Audit Nov 2026, P2).
+    prisma.user.findUnique.mockResolvedValue({ role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: false });
     prisma.lead.count.mockResolvedValue(0);
     prisma.lead.create.mockImplementation(async ({ data }) => ({ id: 'new', ...data }));
     prisma.lead.update.mockImplementation(async ({ data, where }) => ({ id: where.id, refCode: 'RD-L-000001', buyerName: 'Asha', status: 'ASSIGNED', ...data }));

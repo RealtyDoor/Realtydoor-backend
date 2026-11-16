@@ -7,6 +7,7 @@ jest.mock('../../src/lib/prisma', () => ({
   partnerCommissionOverride: { findMany: jest.fn() },
   platformConfig: { findMany: jest.fn(), findUnique: jest.fn() },
   project: { findUnique: jest.fn() },
+  counter: { create: jest.fn().mockResolvedValue({}), deleteMany: jest.fn().mockResolvedValue({}) }, // the key lock (lib/keyLock)
   escrowTransaction: { findUnique: jest.fn() },
   leadCommissionLine: { findMany: jest.fn() },
   tdsEntry: { findMany: jest.fn() },
@@ -30,6 +31,7 @@ const lead = (over = {}) => ({
 
 beforeEach(() => {
   jest.resetAllMocks();
+  prisma.counter.create.mockResolvedValue({}); prisma.counter.deleteMany.mockResolvedValue({});
   require('../../src/modules/listings/integrity.service').isSelfListedByAgent.mockResolvedValue(false);
   require('../../src/modules/referrals/referral.service').getActiveReferralForPhone.mockResolvedValue(null);
   prisma.platformConfig.findMany.mockResolvedValue([]); // every setting at its default
@@ -128,7 +130,7 @@ describe('escrow release plan: partner commission with TDS', () => {
       id: 'lead1', refCode: 'RD1', feePct: 2, dealPriceAtLock: 7500000, commissionLockedAt: new Date(), commissionVersion: 1,
       allocationLetterUrl: 'x', buyerFeedbackStatus: 'VERIFIED_CLOSED', status: 'SITE_VISIT_DONE',
       assignedPartnerId: 'p1', property: { price: 7500000 },
-      assignedPartner: { id: 'p1', name: 'Asha', payoutAccountStatus: 'ACTIVE', razorpayFundAccountId: 'fa_1' },
+      assignedPartner: { id: 'p1', name: 'Asha', role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: false, payoutAccountStatus: 'ACTIVE', razorpayFundAccountId: 'fa_1' },
     });
     prisma.leadCommissionLine.findMany.mockResolvedValue([{ payeeRole: 'CLOSING_AGENT', payeeUserId: 'p1', pct: 50 }]);
     prisma.user.findUnique.mockResolvedValue(partner);
@@ -190,10 +192,10 @@ describe('BUG-049: release readiness needs the allocation letter VERIFIED, not o
     prisma.lead.findUnique.mockResolvedValue({
       id: 'lead1', refCode: 'RD1', feePct: 2, dealPriceAtLock: 7500000, commissionLockedAt: new Date(), commissionVersion: 1,
       buyerFeedbackStatus: 'VERIFIED_CLOSED', status: 'SITE_VISIT_DONE', assignedPartnerId: 'p1', property: { price: 7500000 },
-      assignedPartner: { id: 'p1', name: 'Asha', payoutAccountStatus: 'ACTIVE', razorpayFundAccountId: 'fa_1' }, ...letter,
+      assignedPartner: { id: 'p1', name: 'Asha', role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: false, payoutAccountStatus: 'ACTIVE', razorpayFundAccountId: 'fa_1' }, ...letter,
     });
     prisma.leadCommissionLine.findMany.mockResolvedValue([]);
-    prisma.user.findUnique.mockResolvedValue({ id: 'p1', name: 'Asha', panNumber: 'ABCDE1234F', gstin: null });
+    prisma.user.findUnique.mockResolvedValue({ id: 'p1', name: 'Asha', role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: false, panNumber: 'ABCDE1234F', gstin: null });
     prisma.tdsEntry.findMany.mockResolvedValue([]);
     return escrow.getReleasePlan('esc1');
   };

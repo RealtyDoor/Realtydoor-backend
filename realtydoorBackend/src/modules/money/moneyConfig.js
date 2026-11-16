@@ -27,7 +27,7 @@ const DEFINITIONS = {
   cancellation_charge_rupees: [2999, 'Cancellation charge kept from the token when a buyer cancels after the free window and before the allocation letter is verified. Shown at checkout.'],
   cancellation_charge_realtydoor_share_pct: [100, 'Share of the cancellation charge that is Realtydoor income; the rest is the seller. [OPEN: CA and lawyer]'],
   cancellation_charge_gst_pct: [18, 'GST % treated as included in Realtydoor part of the cancellation charge. [OPEN: CA]'],
-  escrow_hold_days:          [30, 'Days a token may be held before an automatic refund (job not built yet, T59).'],
+  escrow_hold_days:          [30, 'Days a token may be held before the daily hold-limit job alerts admins (and refunds a plain held token, only if escrow_hold_auto_refund is true).'],
   escrow_hold_auto_refund:   ['false', 'Refund tokens automatically at the hold limit (escrow_hold_days). "true" or "false". Off by default: with it off the daily job only alerts admins.'],
   escrow_token_platform_fee_pct: [0, 'Platform fee taken from the TOKEN at release. 0 under money model Rev 3 (the fee is on the seller invoice). Replaces the old escrow_platform_fee_pct, which is now ignored.'],
 
@@ -55,11 +55,21 @@ const DEFINITIONS = {
 
 const KEYS = Object.keys(DEFINITIONS);
 
+// Audit Nov 2026 (F25). Every number setting is zero or more; a "_pct" setting is at most 100.
+function inRange(key, n) {
+  if (n < 0) return false;
+  if (/_pct$/.test(key) && n > 100) return false;
+  return true;
+}
+
 function parseSettings(rows) {
   const raw = new Map(rows.map((r) => [r.key, r.value]));
+  // Audit Nov 2026 (F25). A blank value means "use the default"; Number('') is 0, which used to switch a setting off by accident.
+  // A value outside its sensible range (a negative number, a percentage above 100) is also ignored.
   const num = (k) => {
-    const n = Number(raw.get(k));
-    return raw.has(k) && Number.isFinite(n) ? n : DEFINITIONS[k][0];
+    const v = raw.get(k);
+    const n = typeof v === 'string' && v.trim() === '' ? NaN : Number(v);
+    return raw.has(k) && v != null && Number.isFinite(n) && inRange(k, n) ? n : DEFINITIONS[k][0];
   };
   const str = (k) => (raw.has(k) ? String(raw.get(k)) : DEFINITIONS[k][0]);
   return {

@@ -39,11 +39,18 @@ function start() {
           || lead.assignedPartner?.name
           || 'your agent';
 
-        await sendBuyerFeedbackRequest(lead.buyerPhone, partnerName);
-        await prisma.lead.update({
-          where: { id: lead.id },
+        // Audit Nov 2026 (O5). Claim first, send second (see whatsappFeedback.js).
+        const claim = await prisma.lead.updateMany({
+          where: { AND: [{ id: lead.id }, notYet('secondFollowupSentAt')] },
           data: { secondFollowupSentAt: new Date() },
         });
+        if (claim.count === 0) continue;
+        try {
+          await sendBuyerFeedbackRequest(lead.buyerPhone, partnerName);
+        } catch (err) {
+          await prisma.lead.updateMany({ where: { id: lead.id }, data: { secondFollowupSentAt: null } }).catch(() => null);
+          throw err;
+        }
         logger.info('[StillDecidingJob] Follow-up sent', { leadId: lead.id });
       } catch (err) {
         logger.error('[StillDecidingJob] Failed for lead', {

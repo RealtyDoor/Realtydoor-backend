@@ -43,11 +43,19 @@ function start() {
           || lead.assignedPartner?.name
           || 'your agent';
 
-        await sendBuyerFeedbackRequest(lead.buyerPhone, partnerName);
-        await prisma.lead.update({
-          where: { id: lead.id },
+        // Audit Nov 2026 (O5). Claim first, send second: the claim is a conditional write, so an overlapping run (or a second server)
+        // cannot send the same buyer the same message. If the send fails the claim is undone and the next run tries again.
+        const claim = await prisma.lead.updateMany({
+          where: { AND: [{ id: lead.id }, notYet('whatsappSentAt')] },
           data: { whatsappSentAt: new Date(), buyerFeedbackStatus: 'PENDING' },
         });
+        if (claim.count === 0) continue;
+        try {
+          await sendBuyerFeedbackRequest(lead.buyerPhone, partnerName);
+        } catch (err) {
+          await prisma.lead.updateMany({ where: { id: lead.id }, data: { whatsappSentAt: null, buyerFeedbackStatus: null } }).catch(() => null);
+          throw err;
+        }
         logger.info('[WhatsAppFeedbackJob] Feedback sent', { leadId: lead.id });
       } catch (err) {
         logger.error('[WhatsAppFeedbackJob] Failed for lead', {

@@ -7,6 +7,10 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
+// Audit Nov 2026 (F16). No Razorpay call waits for ever: after this a call fails as an unknown answer, which the payout code already
+// treats as "do not roll back, look it up". RAZORPAY_TIMEOUT_MS changes it.
+if (razorpay.api?.rq?.defaults) razorpay.api.rq.defaults.timeout = Number(process.env.RAZORPAY_TIMEOUT_MS) || 30000;
+
 // razorpay@2.9.x has no `contacts`, `payouts`, or fund-account-validation
 // resource wrappers, and its own `api.post()` helper doesn't forward custom
 // headers (needed below for the payout idempotency header) — so these go

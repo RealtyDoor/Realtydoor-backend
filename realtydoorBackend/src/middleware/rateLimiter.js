@@ -71,6 +71,34 @@ const visitBookingLimiter = rateLimit({
   message: rateLimitMessage('Too many visits booked in the last hour. Try again later.'),
 });
 
+// Audit Nov 2026 (P1, P8). Registering or changing a payout bank account creates a RazorpayX fund account and a bank
+// check each time; a partner needs it once or twice, never in a loop.
+const payoutAccountLimiter = rateLimit({
+  ...BASE,
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: rateLimitMessage('Too many bank account attempts. Try again in 1 hour.'),
+});
+
+// A new support ticket notifies every admin. Replies inside a ticket are capped per ticket in the service.
+const supportTicketLimiter = rateLimit({
+  ...BASE,
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: rateLimitMessage('Too many support tickets in the last hour. Reply on an open ticket instead.'),
+});
+
+// One review per buyer per listing is enforced by a unique index; this stops a script walking every listing.
+const reviewLimiter = rateLimit({
+  ...BASE,
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: rateLimitMessage('Too many reviews in the last hour. Try again later.'),
+});
+
 const authLimiter = rateLimit({
   ...BASE,
   windowMs: 15 * 60 * 1000,
@@ -214,4 +242,5 @@ module.exports = {
   documentLimiter, localitySuggestLimiter,
   defaultLimiter, perUserLimiter, otpLimiter, visitBookingLimiter, authLimiter, uploadLimiter, searchLimiter,
   otpSendLimiter, otpVerifyLimiter, perUserPhoneOtpLimiter, privacyActionLimiter,
+  payoutAccountLimiter, supportTicketLimiter, reviewLimiter,
 };

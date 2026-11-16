@@ -71,6 +71,9 @@ async function getPartnerTicketById(id) {
   return withPartner;
 }
 
+// Audit Nov 2026 (P19): the reply is typed text, so it goes into the email as text.
+const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
 async function updatePartnerTicket(id, { status, adminReply }, adminId, ip) {
   const existing = await prisma.partnerSupportTicket.findUnique({ where: { id } });
   if (!existing) throw new ApiError(404, 'Support ticket not found');
@@ -123,7 +126,7 @@ async function updatePartnerTicket(id, { status, adminReply }, adminId, ip) {
       to: partner.email,
       subject: `Re: ${existing.ticketNo} — ${existing.subject}`,
       html: adminReply !== undefined
-        ? `<p>${adminReply.replace(/\n/g, '<br>')}</p>`
+        ? `<p>${escapeHtml(adminReply).replace(/\n/g, '<br>')}</p>`
         : `<p>Your support ticket ${existing.ticketNo} is now <strong>${updated.status.replace('_', ' ')}</strong>.</p>`,
       user: partner,
     }).catch((err) => logger.error('[partnerTicketUpdate] email failed', { ticketId: id, error: err.message }));

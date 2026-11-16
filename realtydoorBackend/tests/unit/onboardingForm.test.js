@@ -1,5 +1,6 @@
 jest.mock('../../src/lib/prisma', () => ({
   onboardingRequest: { findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+  counter: { create: jest.fn().mockResolvedValue({}), deleteMany: jest.fn().mockResolvedValue({}) }, // the key lock (lib/keyLock)
 }));
 jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn().mockResolvedValue({}) }));
 jest.mock('../../src/lib/notifications', () => ({ notifyAdmins: jest.fn().mockResolvedValue({}) }));
@@ -128,14 +129,18 @@ describe('documents', () => {
   });
   test('over the limit it refuses and removes the file it just stored', async () => {
     const docs = Array.from({ length: f.MAX_PER_DOC_KEY }, (_, i) => ({ id: `d${i}`, key: 'photos' }));
+    // The list is read fresh inside the lock (Audit Nov 2026, P10), not taken from the row the caller holds.
+    prisma.onboardingRequest.findUnique.mockResolvedValue({ documents: docs });
     await expect(service.attachDocument(row({ documents: docs }), 'photos', { s3Key: 'onboarding/new.png' }, 'sender')).rejects.toMatchObject({ data: { code: 'TOO_MANY_FILES' } });
     expect(deleteFile).toHaveBeenCalledWith('onboarding/new.png');
   });
   test('removing a file deletes it from the list and the bucket', async () => {
     prisma.onboardingRequest.update.mockResolvedValue({});
+    prisma.onboardingRequest.findUnique.mockResolvedValue({ documents: [{ id: 'd1', key: 'a', s3Key: 'onboarding/a' }, { id: 'd2', key: 'b' }] });
     await service.removeDocument(row({ documents: [{ id: 'd1', key: 'a', s3Key: 'onboarding/a' }, { id: 'd2', key: 'b' }] }), 'd1');
     expect(prisma.onboardingRequest.update.mock.calls[0][0].data.documents).toEqual([{ id: 'd2', key: 'b' }]);
     expect(deleteFile).toHaveBeenCalledWith('onboarding/a');
+    prisma.onboardingRequest.findUnique.mockResolvedValue({ documents: [] });
     await expect(service.removeDocument(row(), 'zzz')).rejects.toMatchObject({ statusCode: 404 });
   });
 });

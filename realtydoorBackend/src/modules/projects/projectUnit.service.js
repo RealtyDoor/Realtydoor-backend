@@ -1,5 +1,6 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
+const { notifyAdmins } = require('../../lib/notifications');
 
 // Inventory management is independent of the project's own approval status
 // (4.10/R23) — a builder's compliance documents were vetted once at project
@@ -54,14 +55,41 @@ async function updateUnit(projectId, unitId, builderId, data) {
   await assertOwnsProject(projectId, builderId);
   const unit = await prisma.projectUnit.findFirst({ where: { id: unitId, projectId } });
   if (!unit) throw new ApiError(404, 'Unit not found in this project');
-  return prisma.projectUnit.update({ where: { id: unitId }, data: pickUnitFields(data) });
+  // Audit Nov 2026 (P9). The brokerage is charged on the unit's price, so the price of a sold unit is not the builder's
+  // to change: before this, a builder could mark a unit SOLD and lower its price ahead of the invoice.
+  const fields = pickUnitFields(data);
+  if (unit.status === 'SOLD' && fields.price !== undefined && fields.price !== unit.price) {
+    throw new ApiError(409, 'This unit is sold, so its price can no longer be changed. Contact support if the price was entered wrongly.', { code: 'UNIT_SOLD_PRICE_LOCKED' });
+  }
+  return prisma.projectUnit.update({ where: { id: unitId }, data: fields });
 }
 
 async function setUnitStatus(projectId, unitId, builderId, status) {
   await assertOwnsProject(projectId, builderId);
   const unit = await prisma.projectUnit.findFirst({ where: { id: unitId, projectId } });
   if (!unit) throw new ApiError(404, 'Unit not found in this project');
-  return prisma.projectUnit.update({ where: { id: unitId }, data: { status } });
+  if (unit.status === status) return unit;
+  // Audit Nov 2026 (P9). Once the brokerage invoice exists the sale is on record: only an admin can reopen it.
+  // Before the invoice, un-selling stays possible (a wrong click), but the admins are told, because "sold, then not sold"
+  // is also how a brokerage would be avoided.
+  if (unit.status === 'SOLD') {
+    const invoice = await prisma.builderInvoice.findUnique({ where: { unitId }, select: { id: true } });
+    if (invoice) {
+      throw new ApiError(409, 'A brokerage invoice has been raised for this unit, so it stays sold. Contact support to reopen it.', { code: 'UNIT_INVOICED' });
+    }
+  }
+  // Conditional on the status we read, so two changes at once do not both apply.
+  const moved = await prisma.projectUnit.updateMany({ where: { id: unitId, status: unit.status }, data: { status } });
+  if (!moved.count) throw new ApiError(409, 'This unit was just changed. Reload and try again.');
+  if (unit.status === 'SOLD') {
+    notifyAdmins({
+      title: 'Sold unit reopened by the builder',
+      message: `Unit ${unit.unitNumber} was moved from SOLD back to ${status} before a brokerage invoice was raised.`,
+      type: 'PROJECT_UNIT_REOPENED',
+      linkUrl: `/admin/projects/${projectId}`,
+    }).catch(() => {});
+  }
+  return prisma.projectUnit.findUnique({ where: { id: unitId } });
 }
 
 async function deleteUnit(projectId, unitId, builderId) {

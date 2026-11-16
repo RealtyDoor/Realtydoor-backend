@@ -5,6 +5,7 @@ const logger = require('../../lib/logger');
 const { createAuditLog } = require('../../lib/auditLog');
 const { notifyAdmins } = require('../../lib/notifications');
 const { deleteFile, copyFile } = require('../../lib/fileUpload');
+const { withKeyLock, withKeyLockWait } = require('../../lib/keyLock');
 const { buildListing } = require('../../lib/onboardingToListing');
 const f = require('../../lib/onboardingForm');
 
@@ -67,10 +68,27 @@ async function senderSubmit(token, body) {
 }
 
 /** Adds an uploaded file (already stored by the upload middleware) to the request's document list. */
+// Audit Nov 2026 (P10). The document list is one JSON value, so two uploads at once each wrote "the list I read plus my
+// file" and one file was lost. Changes to the list now take turns, and each reads the list fresh inside its turn.
+const docsBusy = () => new ApiError(409, 'Another file is still being saved. Please try again.', { code: 'DOCUMENTS_BUSY' });
+async function freshDocuments(id) {
+  const fresh = await prisma.onboardingRequest.findUnique({ where: { id }, select: { documents: true } });
+  return asList(fresh?.documents);
+}
+
 async function attachDocument(row, key, file, by) {
-  const docKey = f.cleanDocKey(key);
-  const docs = asList(row.documents);
   const rollback = () => (file.s3Key ? deleteFile(file.s3Key).catch(() => {}) : undefined);
+  try {
+    return await withKeyLockWait(`onboarding-docs:${row.id}`, () => attachDocumentLocked(row, key, file, by, rollback), { onBusy: docsBusy });
+  } catch (err) {
+    if (err?.data?.code === 'DOCUMENTS_BUSY') await rollback();
+    throw err;
+  }
+}
+
+async function attachDocumentLocked(row, key, file, by, rollback) {
+  const docKey = f.cleanDocKey(key);
+  const docs = await freshDocuments(row.id);
   if (docs.length >= f.MAX_DOCUMENTS || docs.filter((d) => d.key === docKey).length >= f.MAX_PER_DOC_KEY) {
     await rollback();
     throw new ApiError(400, 'That is the most files we can take for this item.', { code: 'TOO_MANY_FILES' });
@@ -84,10 +102,13 @@ async function attachDocument(row, key, file, by) {
 }
 
 async function removeDocument(row, docId) {
-  const docs = asList(row.documents);
-  const doc = docs.find((d) => d.id === docId);
-  if (!doc) throw new ApiError(404, 'File not found.');
-  await prisma.onboardingRequest.update({ where: { id: row.id }, data: { documents: docs.filter((d) => d.id !== docId), lastSavedAt: new Date() } });
+  const doc = await withKeyLockWait(`onboarding-docs:${row.id}`, async () => {
+    const docs = await freshDocuments(row.id);
+    const found = docs.find((d) => d.id === docId);
+    if (!found) throw new ApiError(404, 'File not found.');
+    await prisma.onboardingRequest.update({ where: { id: row.id }, data: { documents: docs.filter((d) => d.id !== docId), lastSavedAt: new Date() } });
+    return found;
+  }, { onBusy: docsBusy });
   if (doc.s3Key) deleteFile(doc.s3Key).catch((err) => logger.warn('[onboarding] could not delete file', { error: err.message }));
 }
 
@@ -164,6 +185,8 @@ async function adminUpdate(adminId, id, body, ip) {
     if (body.status === 'CONVERTED') throw new ApiError(400, 'Use "Create listing" to convert it.');
     data.status = body.status;
   }
+  // Audit Nov 2026 (P20). The link to the listing is written by "Create listing" only; it can be cleared here, never typed in.
+  if (body.convertedToId) throw new ApiError(400, 'The listing link is set by "Create listing". It cannot be entered by hand.', { code: 'CONVERTED_LINK_READ_ONLY' });
   if (body.convertedToType !== undefined) data.convertedToType = body.convertedToType || null;
   if (body.convertedToId !== undefined) data.convertedToId = body.convertedToId || null;
   if (body.propertyType !== undefined) data.propertyType = body.propertyType;
@@ -226,14 +249,27 @@ async function listingPreview(id) {
  * With createProject (new projects only) the builder's Project record is made first and the listing is created already linked to it;
  * if the listing then fails, that project is deleted too. The project starts with no units.
  */
-async function convertToListing(adminId, id, { partnerId, createProject = false }, ip) {
+async function convertToListing(adminId, id, opts, ip) {
+  // Audit Nov 2026 (P10). One conversion at a time per request: a double click used to pass the "already converted"
+  // check twice and make two listings. Copying files can take a while, hence the longer stale time.
+  const locked = await withKeyLock(`onboarding-convert:${id}`, () => convertToListingLocked(adminId, id, opts, ip), { staleSeconds: 180 });
+  if (locked.busy) throw new ApiError(409, 'This request is already being turned into a listing. Give it a moment.', { code: 'CONVERT_IN_PROGRESS' });
+  return locked.value;
+}
+
+async function convertToListingLocked(adminId, id, { partnerId, createProject = false }, ip) {
   const row = await prisma.onboardingRequest.findUnique({ where: { id } });
   if (!row) throw new ApiError(404, 'Onboarding request not found');
   // Checked on the link to the listing as well as the status, so a request that was somehow moved back can never make a second listing.
   if (row.status === 'CONVERTED' || row.convertedToId) throw new ApiError(409, 'This one has already become a listing.', { code: 'ALREADY_CONVERTED', propertyId: row.convertedToId });
   if (!CONVERTIBLE.includes(row.status)) throw new ApiError(409, 'Move it to "Ready to list" first, once the details are agreed.', { code: 'NOT_READY' });
-  const partner = await prisma.user.findFirst({ where: { id: partnerId, role: 'PARTNER', deletedAt: { isSet: false } }, select: { id: true, name: true } });
+  const partner = await prisma.user.findFirst({
+    where: { id: partnerId, role: 'PARTNER', OR: [{ deletedAt: null }, { deletedAt: { isSet: false } }] },
+    select: { id: true, name: true, isSuspended: true },
+  });
   if (!partner) throw new ApiError(400, 'Choose the partner account that will own this listing.', { code: 'PARTNER_REQUIRED' });
+  // KYC is not asked for here: the listing starts as pending, and approval refuses it until the partner is verified.
+  if (partner.isSuspended) throw new ApiError(400, 'This partner is suspended. Choose another partner, or lift the suspension first.', { code: 'PARTNER_SUSPENDED' });
 
   if (createProject && row.propertyType !== 'NEW_PROJECT') throw new ApiError(400, 'Only a new project can also become a builder project record.', { code: 'PROJECT_ONLY_FOR_NEW_PROJECT' });
   const { payload, problems, files, project: projectPlan } = buildListing(row);

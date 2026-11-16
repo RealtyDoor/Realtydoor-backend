@@ -24,10 +24,14 @@ COPY --chown=node:node package.json server.js ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node prisma ./prisma
 COPY --chown=node:node scripts ./scripts
+# The logger writes log files here; /app itself belongs to root. (If the folder is missing or read-only the logger falls back to the console.)
+RUN mkdir -p /app/logs && chown node:node /app/logs
 USER node
 EXPOSE 5000
 # Scheduled jobs run on every task unless RUN_JOBS=false: with more than one task, exactly one must keep them on.
+# Run it with a restart rule (docker run --restart unless-stopped): the server exits on purpose after an unexpected error.
 # The load balancer health check should use GET /health (or /api/health); this is the same check for plain Docker.
+# For an uptime alarm use GET /api/health/ready: it also checks the database.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||5000)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "server.js"]

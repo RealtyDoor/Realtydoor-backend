@@ -75,7 +75,7 @@ async function uploadImages(req, res, next) {
     const urls = (req.files || []).map(f => f.path);
     if (!urls.length) throw new ApiError(400, 'No images provided');
     const property = await service.addImages(req.params.id, req.user.id, urls);
-    success(res, property, 'Images uploaded');
+    success(res, property, property.pendingReview ? 'Photos uploaded. They go live after admin review.' : 'Images uploaded');
   } catch (err) { next(err); }
 }
 
@@ -84,7 +84,7 @@ async function uploadVideos(req, res, next) {
     const urls = (req.files || []).map(f => f.path);
     if (!urls.length) throw new ApiError(400, 'No videos provided');
     const property = await service.addVideos(req.params.id, req.user.id, urls);
-    success(res, property, 'Videos uploaded');
+    success(res, property, property.pendingReview ? 'Videos uploaded. They go live after admin review.' : 'Videos uploaded');
   } catch (err) { next(err); }
 }
 
@@ -93,7 +93,7 @@ async function uploadDocuments(req, res, next) {
     const files = req.files || [];
     if (!files.length) throw new ApiError(400, 'No documents provided');
     const property = await service.addDocuments(req.params.id, req.user.id, files);
-    success(res, property, 'Documents uploaded');
+    success(res, property, property.pendingReview ? 'Documents uploaded. They are added after admin review.' : 'Documents uploaded');
   } catch (err) { next(err); }
 }
 

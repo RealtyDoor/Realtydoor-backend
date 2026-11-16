@@ -1,5 +1,6 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
+const { withKeyLock } = require('../../lib/keyLock');
 const { createAuditLog } = require('../../lib/auditLog');
 const { createNotification } = require('../../lib/notifications');
 const logger = require('../../lib/logger');
@@ -248,7 +249,7 @@ async function previewTermsForLead(leadId) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
     select: {
-      id: true, assignedPartnerId: true, propertyId: true, buyerPhone: true, city: true,
+      id: true, assignedPartnerId: true, propertyId: true, buyerPhone: true, city: true, createdAt: true,
       property: { select: { id: true, city: true, price: true, partnerId: true, projectId: true } },
     },
   });
@@ -344,7 +345,7 @@ async function previewTermsForLead(leadId) {
   // admin to re-attach the same advisor by hand on every lead this buyer
   // generates. An explicit ADVISOR line already present (admin override,
   // or a different advisor named for this specific deal) always wins.
-  const referral = await getActiveReferralForPhone(lead.buyerPhone);
+  const referral = await getActiveReferralForPhone(lead.buyerPhone, lead.createdAt);
   if (referral && !lines.some((l) => l.payeeRole === 'ADVISOR')) {
     lines = [...lines, { payeeRole: 'ADVISOR', payeeUserId: referral.advisorId }];
   }
@@ -510,16 +511,52 @@ function computeAmounts(lead, lines) {
 // by computePlatformRetained below, never submitted. An ADVISOR line may
 // omit both pct and flatAmountPaise; when it does, their standard rate
 // (User.advisorStandardFeePaise) is used.
+function assertMoneyNotMoved(lead) {
+  const released = (lead.escrowTransactions || []).some((e) => ['RELEASED', 'HELD_PAYOUT_FAILED'].includes(e.status));
+  if (released || (lead.commissionStatus && lead.commissionStatus !== 'PENDING')) {
+    throw new ApiError(409, 'The money on this deal has already moved (token released or brokerage invoiced), so its rate can no longer be changed.', { code: 'DEAL_RATE_FROZEN' });
+  }
+}
+
+// Audit Nov 2026 (P4). Everyone named on a commission line must be someone we could pay: a partner, KYC verified,
+// not suspended and not deleted. A line with no payee falls to the assigned partner, who is checked the same way.
+async function assertPayeesInGoodStanding(lines, assignedPartnerId) {
+  const ids = [...new Set((lines || []).map((l) => l.payeeUserId ?? (ASSIGNED_PARTNER_ROLES.includes(l.payeeRole) ? assignedPartnerId : null)).filter(Boolean))];
+  if (!ids.length) return;
+  const users = await prisma.user.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true, role: true, kycStatus: true, isSuspended: true, deletedAt: true },
+  });
+  const byId = new Map(users.map((u) => [u.id, u]));
+  for (const id of ids) {
+    const u = byId.get(id);
+    const why = !u ? 'does not exist'
+      : u.deletedAt ? 'has deleted their account'
+      : u.role !== 'PARTNER' ? 'is not a partner'
+      : u.isSuspended ? 'is suspended'
+      : u.kycStatus !== 'VERIFIED' ? 'has no verified KYC'
+      : null;
+    if (why) {
+      throw new ApiError(400, `${u?.name || 'The payee'} cannot be put on a commission line: this account ${why}.`, { code: 'PAYEE_NOT_ELIGIBLE', payeeUserId: id });
+    }
+  }
+}
+
 async function setLeadTerms(leadId, { feePct, dealPrice, lines, note, rateMeta }, adminId, ip) {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
     select: {
       id: true, assignedPartnerId: true, commissionLockedAt: true, commissionVersion: true,
-      feePct: true, dealPriceAtLock: true, city: true, propertyId: true,
+      feePct: true, dealPriceAtLock: true, city: true, propertyId: true, commissionStatus: true,
+      escrowTransactions: { select: { status: true } },
       property: { select: { price: true, city: true, partnerId: true, projectId: true } },
     },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  // Audit Nov 2026 (P4). The terms are what the payout and the brokerage invoice are read from, so they are frozen once
+  // either has happened. This used to be checked only in setDealRate; the direct route had no guard at all.
+  assertMoneyNotMoved(lead);
+  await assertPayeesInGoodStanding(lines, lead.assignedPartnerId);
   const termsListingPartner = lead.property?.partnerId
     ? await prisma.user.findUnique({ where: { id: lead.property.partnerId }, select: { partnerSubType: true } })
     : null;
@@ -798,10 +835,13 @@ async function lockLeadTerms(leadId, adminId, ip) {
   }
   assertStoredLinesFitHeadroom(terms.lines, terms.amounts?.feeAmount ?? null, terms.amounts?.platformRetained ?? 0);
 
-  const locked = await prisma.lead.update({
-    where: { id: leadId },
+  // Conditional on "not locked yet", so two clicks lock once and notify once (Audit Nov 2026, P10).
+  const lockClaim = await prisma.lead.updateMany({
+    where: { id: leadId, OR: [{ commissionLockedAt: null }, { commissionLockedAt: { isSet: false } }] },
     data: { commissionLockedAt: new Date() },
   });
+  if (!lockClaim.count) throw new ApiError(400, 'Terms are already locked', { code: 'COMMISSION_LOCKED' });
+  const locked = await prisma.lead.findUnique({ where: { id: leadId } });
 
   await createAuditLog({
     adminId, action: 'COMMISSION_LOCKED', targetType: 'Lead', targetId: leadId,
@@ -821,8 +861,8 @@ async function lockLeadTerms(leadId, adminId, ip) {
       userId: line.payeeUserId,
       title: 'Commission locked',
       message: amt?.amount != null
-        ? `Your commission for this deal is locked at ₹${amt.amount.toLocaleString('en-IN')} (${line.pct}% of the fee).`
-        : `Your commission for this deal is locked at ${line.pct}% of the fee.`,
+        ? `Your commission for this deal is locked at ₹${amt.amount.toLocaleString('en-IN')}.`
+        : `Your commission for this deal is locked at ${line.pct}% of the brokerage fee.`,
       type: 'COMMISSION_LOCKED',
       linkUrl: '/partners/finance',
     });
@@ -860,6 +900,15 @@ async function invoiceLeadCommission(leadId, adminId, ip) {
     : null;
 
   const invoicedAt = new Date();
+  // Claim PENDING -> INVOICED before the PDF and the ledger entry, so two clicks raise one invoice (Audit Nov 2026, P10).
+  // Put back if the PDF or the upload fails.
+  const invoiceClaim = await prisma.lead.updateMany({
+    where: { id: leadId, commissionStatus: 'PENDING' },
+    data: { commissionStatus: 'INVOICED', invoicedAt },
+  });
+  if (!invoiceClaim.count) throw new ApiError(409, 'This commission was just invoiced by someone else.', { code: 'INVALID_COMMISSION_STATUS' });
+  let url;
+  try {
   const pdfBuffer = await buildCommissionReceiptPdf({
     refCode: lead.refCode,
     propertyTitle: lead.property?.title,
@@ -870,12 +919,12 @@ async function invoiceLeadCommission(leadId, adminId, ip) {
     invoicedAt,
     collectedAt: null,
   });
-  const { url } = await s3Upload(pdfBuffer, 'receipts', `receipt-${leadId}.pdf`, 'application/pdf');
-
-  const updated = await prisma.lead.update({
-    where: { id: leadId },
-    data: { commissionStatus: 'INVOICED', invoiceUrl: url, invoicedAt },
-  });
+  ({ url } = await s3Upload(pdfBuffer, 'receipts', `receipt-${leadId}.pdf`, 'application/pdf'));
+  await prisma.lead.update({ where: { id: leadId }, data: { invoiceUrl: url } });
+  } catch (err) {
+    await prisma.lead.updateMany({ where: { id: leadId, commissionStatus: 'INVOICED', invoicedAt }, data: { commissionStatus: 'PENDING', invoicedAt: null } }).catch(() => {});
+    throw err;
+  }
 
   if (lead.property?.partnerId) {
     await createNotification({
@@ -885,7 +934,8 @@ async function invoiceLeadCommission(leadId, adminId, ip) {
         ? `Your success fee of ₹${terms.amounts.feeAmount.toLocaleString('en-IN')} for "${lead.property.title}" is now due.`
         : `Your success fee for "${lead.property.title}" is now due.`,
       type: 'COMMISSION_INVOICED',
-      linkUrl: url,
+      // An in-app page, not the file: the bucket is private (Audit Nov 2026 A1, P12) and a raw link opens as "access denied".
+      linkUrl: '/partners/finance',
     });
   }
 
@@ -920,7 +970,8 @@ async function collectLeadCommission(leadId, adminId, ip, { tdsDeductedRupees = 
   assertTdsWithinInvoice(tdsDeductedRupees, invoice.totalPaise);
 
   const collectedAt = new Date();
-  await prisma.lead.update({ where: { id: leadId }, data: { commissionStatus: 'COLLECTED', collectedAt } });
+  const collectClaim = await prisma.lead.updateMany({ where: { id: leadId, commissionStatus: 'INVOICED' }, data: { commissionStatus: 'COLLECTED', collectedAt } });
+  if (!collectClaim.count) throw new ApiError(409, 'This commission was just marked collected or disputed by someone else.', { code: 'INVALID_COMMISSION_STATUS' });
 
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
@@ -979,13 +1030,14 @@ async function disputeLeadCommission(leadId, reason, adminId, ip) {
   }
 
   const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { adminNotes: true } });
-  const updated = await prisma.lead.update({
-    where: { id: leadId },
+  const disputeClaim = await prisma.lead.updateMany({
+    where: { id: leadId, commissionStatus: terms.commissionStatus },
     data: {
       commissionStatus: 'DISPUTED',
       adminNotes: `${lead.adminNotes ? `${lead.adminNotes} | ` : ''}[Commission disputed] ${reason}`,
     },
   });
+  if (!disputeClaim.count) throw new ApiError(409, 'The status of this commission just changed. Reload and try again.', { code: 'INVALID_COMMISSION_STATUS' });
 
   await createAuditLog({
     adminId, action: 'COMMISSION_DISPUTED', targetType: 'Lead', targetId: leadId,
@@ -1071,7 +1123,7 @@ async function sendFeeReminder(leadId, adminId, ip) {
     title: 'Success fee payment reminder',
     message: `Your success fee for "${lead.property.title}" is still due.`,
     type: 'COMMISSION_FEE_REMINDER',
-    linkUrl: lead.invoiceUrl || '/partners/finance',
+    linkUrl: '/partners/finance',
   });
 
   await createAuditLog({
@@ -1144,6 +1196,9 @@ async function updateRateCard(id, data, adminId, ip) {
 
   const { lines, ...rest } = data;
   const resolvedLines = lines ? resolveRateCardLines(lines) : null;
+  // Audit Nov 2026 (P19). The stored partner % and platform % of the deal price win over the lines when a rate is read
+  // (rateFromCard). After an edit to the fee or the lines they would be stale, so they are cleared and derived again.
+  if (rest.feePct !== undefined || resolvedLines) Object.assign(rest, { partnerRatePct: null, platformFeePct: null });
 
   // Version bumps on every content edit, so a lead can record which version
   // it was pre-filled from. Already-locked leads are unaffected — they read
@@ -1211,6 +1266,10 @@ async function createOverride(data, adminId, ip) {
   if (!partner) throw new ApiError(404, 'Partner not found');
   if (data.scope === 'SELECTED' && !data.propertyIds?.length) {
     throw new ApiError(400, 'A SELECTED override needs at least one propertyId', { code: 'OVERRIDE_NEEDS_PROPERTIES' });
+  }
+  // Audit Nov 2026 (P19): an override that has already ended would be saved and silently never apply.
+  if (data.validUntil && new Date(data.validUntil) <= new Date()) {
+    throw new ApiError(400, 'The end date of an override must be in the future.', { code: 'OVERRIDE_ALREADY_ENDED' });
   }
 
   const created = await prisma.partnerCommissionOverride.create({
@@ -1328,7 +1387,14 @@ async function getProjectRate(projectId) {
   return { project, card, platformDefault, effective };
 }
 
-async function setProjectRate(projectId, { partnerRatePct, platformFeePct, reason, sellerType }, adminId, ip) {
+async function setProjectRate(projectId, body, adminId, ip) {
+  // One writer at a time per project, so two saves cannot both find "no card yet" and create two (Audit Nov 2026, P10).
+  const locked = await withKeyLock(`project-rate:${projectId}`, () => setProjectRateLocked(projectId, body, adminId, ip));
+  if (locked.busy) throw new ApiError(409, 'This project rate is being saved right now. Try again in a moment.', { code: 'RATE_SAVE_IN_PROGRESS' });
+  return locked.value;
+}
+
+async function setProjectRateLocked(projectId, { partnerRatePct, platformFeePct, reason, sellerType }, adminId, ip) {
   const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true, title: true } });
   if (!project) throw new ApiError(404, 'Project not found');
 

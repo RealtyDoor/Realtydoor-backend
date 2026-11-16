@@ -180,11 +180,12 @@ describe('createOrder', () => {
     expect(prisma.escrowTransaction.create).not.toHaveBeenCalled();
   });
 
-  test('losing the one-active-escrow race gives the same clean 400', async () => {
+  test('losing the one-active-escrow race gives the same 409 and code as the pre-check (audit F9)', async () => {
     prisma.lead.findFirst.mockResolvedValue(lead());
     rz.createEscrowOrder.mockResolvedValue({ id: 'order_2' });
     prisma.escrowTransaction.create.mockRejectedValue(Object.assign(new Error('Unique constraint'), { code: 'P2002', meta: { target: 'escrow_active_lead_unique' } }));
-    await expect(svc.createOrder('l1', 'b1', 50000)).rejects.toMatchObject({ statusCode: 400 });
+    prisma.escrowTransaction.findFirst.mockResolvedValue({ id: 'winner' });
+    await expect(svc.createOrder('l1', 'b1', 50000)).rejects.toMatchObject({ statusCode: 409, data: { code: 'ESCROW_ALREADY_ACTIVE', escrowId: 'winner' } });
   });
 
   test('any other database error while storing the order is not swallowed', async () => {

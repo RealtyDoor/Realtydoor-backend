@@ -43,11 +43,11 @@ beforeEach(() => {
     id: 'lead1', refCode: 'RD1', feePct: 2, dealPriceAtLock: 7500000, commissionLockedAt: new Date(), commissionVersion: 1, allocationLetterUrl: 'x',
     allocationLetterVerifiedAt: new Date(), buyerFeedbackStatus: 'VERIFIED_CLOSED', status: 'SITE_VISIT_DONE', assignedPartnerId: 'p1',
     property: { price: 7500000, title: 'Plot' },
-    assignedPartner: { id: 'p1', name: 'Asha', payoutAccountStatus: 'ACTIVE', razorpayFundAccountId: 'fa_1' },
+    assignedPartner: { id: 'p1', name: 'Asha', role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: false, payoutAccountStatus: 'ACTIVE', razorpayFundAccountId: 'fa_1' },
   });
   prisma.leadCommissionLine.findMany.mockResolvedValue([{ payeeRole: 'CLOSING_AGENT', payeeUserId: 'p1', pct: 50 }]);
   // An unregistered partner (no GSTIN): paid at release with a voucher, so the partner leg is not deferred.
-  prisma.user.findUnique.mockResolvedValue({ id: 'p1', name: 'Asha', panNumber: 'ABCDE1234F', gstin: null, razorpayFundAccountId: 'fa_1', payoutAccountStatus: 'ACTIVE', billingAddress: 'x' });
+  prisma.user.findUnique.mockResolvedValue({ id: 'p1', name: 'Asha', role: 'PARTNER', kycStatus: 'VERIFIED', isSuspended: false, panNumber: 'ABCDE1234F', gstin: null, razorpayFundAccountId: 'fa_1', payoutAccountStatus: 'ACTIVE', billingAddress: 'x' });
   prisma.tdsEntry.findMany.mockResolvedValue([]);
   prisma.tdsEntry.findUnique.mockResolvedValue(null);
   prisma.tdsEntry.create.mockImplementation(async ({ data }) => ({ id: 't1', ...data }));

@@ -7,6 +7,7 @@ const CACHE_KEYS = require('../../lib/cacheKeys');
 const logger = require('../../lib/logger');
 const { recordOwnerReport } = require('../listings/integrity.service');
 const { canonicalizeCity, cityAliasQueryGroup } = require('../../lib/cityAlias');
+const { LIVE_PARTNER, listingOwnerBlocker } = require('../../lib/partnerStanding');
 
 const OBJECT_ID_RE = /^[0-9a-f]{24}$/i;
 
@@ -39,7 +40,7 @@ async function searchProperties(query, skip, limit, page) {
   const where = {
     publishStatus: 'APPROVED',
     isB2BOnly: false,
-    AND: [SEARCHABLE],
+    AND: [SEARCHABLE, LIVE_PARTNER],
   };
 
   if (query.q) {
@@ -253,8 +254,12 @@ async function getPropertyByIdOrSlug(idOrSlug, { countView = true, includePrivat
   // instead of just rendering without a "Listed by partner" card.
   property.partner = await prisma.user.findUnique({
     where: { id: property.partnerId },
-    select: { id: true, name: true, companyName: true, partnerSubType: true, kycStatus: true, profileImageUrl: true },
+    select: { id: true, name: true, companyName: true, partnerSubType: true, kycStatus: true, profileImageUrl: true, role: true, isSuspended: true, deletedAt: true },
   });
+  // Audit Nov 2026 (P2). Not public while the account behind it is suspended, deleted, unverified or gone.
+  if (listingOwnerBlocker(property.partner)) throw new ApiError(404, 'Property not found');
+  // Used for the check only; not part of the public partner card.
+  for (const k of ['role', 'isSuspended', 'deletedAt']) delete property.partner[k];
 
   // Fire-and-forget — a view counter shouldn't add latency to the page load,
   // and a lost increment under a race is harmless for this metric.
@@ -271,7 +276,7 @@ async function getPropertyByIdOrSlug(idOrSlug, { countView = true, includePrivat
         publishStatus: 'APPROVED', isB2BOnly: false,
         city: property.city, propertyType: property.propertyType,
         id: { not: property.id },
-        AND: [SEARCHABLE],
+        AND: [SEARCHABLE, LIVE_PARTNER],
       },
       take: 6,
       orderBy: { createdAt: 'desc' },
@@ -585,18 +590,34 @@ async function updateProperty(id, partnerId, data) {
   if (!property) throw new ApiError(404, 'Property not found');
   if (property.partnerId !== partnerId) throw new ApiError(403, 'Not your listing');
 
+  // Audit Nov 2026 (P15). An archived listing was taken down by an admin; it is not the partner's to change.
+  if (property.publishStatus === 'ARCHIVED') throw new ApiError(400, 'This listing is archived. Contact support to bring it back.', { code: 'LISTING_ARCHIVED' });
+
   const FORBIDDEN = ['publishStatus', 'isVerified', 'partnerId'];
   FORBIDDEN.forEach((f) => delete data[f]);
   if (data.city) data.city = canonicalizeCity(data.city);
 
   // Photos and videos can be removed or reordered here, never added by link: a new file has to be uploaded to the listing.
+  // On a live listing an uploaded file waits in the pending change request (Audit Nov 2026, P3), so those count as uploaded too.
+  const pending = property.publishStatus === 'APPROVED'
+    ? await prisma.propertyChangeRequest.findFirst({ where: { propertyId: id, status: 'PENDING' }, orderBy: { createdAt: 'desc' } })
+    : null;
+  const waiting = pendingUploads(property, pending);
   for (const field of ['images', 'videos']) {
-    if (data[field] && data[field].some((u) => !(property[field] || []).includes(u))) {
+    const known = [...(property[field] || []), ...waiting[field]];
+    if (data[field] && data[field].some((u) => !known.includes(u))) {
       throw new ApiError(400, `You can only remove or reorder the ${field} already on this listing. Upload new files instead.`);
     }
   }
 
   if (property.publishStatus === 'APPROVED') {
+    // A new edit replaces the pending one, but files uploaded since the last review are not thrown away with it.
+    for (const field of MEDIA_FIELDS) {
+      if (!waiting[field].length) continue;
+      const base = data[field] ?? property[field] ?? [];
+      const have = new Set(base.map(mediaKey));
+      data[field] = [...base, ...waiting[field].filter((x) => !have.has(mediaKey(x)))];
+    }
     const changes = diffProperty(property, data);
     const fieldCount = Object.keys(changes).length;
     if (!fieldCount) {
@@ -625,7 +646,9 @@ async function updateProperty(id, partnerId, data) {
   // review queue and the old checklist no longer applies. Without this the
   // listing would stay in CHANGES_REQUESTED forever, invisible to buyers and
   // absent from the admin's pending queue.
-  const resubmitting = property.publishStatus === 'CHANGES_REQUESTED';
+  // Audit Nov 2026 (P15). A rejected listing that the partner has edited goes back to review too. Before this it stayed
+  // REJECTED for ever: editable, but with no way to be looked at again. The rejection note is kept for the reviewer.
+  const resubmitting = ['CHANGES_REQUESTED', 'REJECTED'].includes(property.publishStatus);
   if (resubmitting) {
     data.publishStatus = 'PENDING_APPROVAL';
     data.requestedChanges = [];
@@ -647,7 +670,8 @@ async function updateProperty(id, partnerId, data) {
 
 async function getFeaturedProperties() {
   return withCache(CACHE_KEYS.FEATURED_PROPERTIES, 600, () => prisma.property.findMany({
-    where: { publishStatus: 'APPROVED', isFeatured: true },
+    // Audit Nov 2026 (P2, P16): the homepage follows the same rules as search.
+    where: { publishStatus: 'APPROVED', isFeatured: true, isB2BOnly: false, AND: [SEARCHABLE, LIVE_PARTNER] },
     take: 12,
     orderBy: { createdAt: 'desc' },
     select: {
@@ -660,41 +684,87 @@ async function getFeaturedProperties() {
   }));
 }
 
-async function addImages(id, partnerId, urls) {
+// Audit Nov 2026 (P3). A new photo, video or document used to go straight onto a live listing, while a text edit waited
+// for an admin. Now a file added to an APPROVED listing joins the pending change request (or opens one) and is public only
+// after review. A listing that is not live still takes the file directly: there is nothing published to protect.
+const MEDIA_FIELDS = ['images', 'videos', 'documents'];
+const MEDIA_CAPS = { images: 30, videos: 10, documents: 20 };
+const mediaKey = (x) => (x && typeof x === 'object' ? x.url : x);
+
+function decodeJson(v) {
+  if (v == null) return null;
+  try { return JSON.parse(v); } catch { return null; }
+}
+
+// Files sitting in a pending change request that are not on the live listing yet, per media field.
+function pendingUploads(property, pending) {
+  const out = { images: [], videos: [], documents: [] };
+  if (!pending) return out;
+  for (const field of MEDIA_FIELDS) {
+    const after = decodeJson(pending.changes?.[field]?.after);
+    if (!Array.isArray(after)) continue;
+    const live = new Set((property[field] || []).map(mediaKey));
+    out[field] = after.filter((x) => !live.has(mediaKey(x)));
+  }
+  return out;
+}
+
+async function addMedia(id, partnerId, field, items) {
   const property = await prisma.property.findUnique({ where: { id } });
   if (!property) throw new ApiError(404, 'Property not found');
   if (property.partnerId !== partnerId) throw new ApiError(403, 'Not your listing');
-  return prisma.property.update({
-    where: { id },
-    data: { images: { push: urls } },
-  });
+  if (property.publishStatus === 'ARCHIVED') throw new ApiError(400, 'This listing is archived');
+
+  const live = property.publishStatus === 'APPROVED';
+  const pending = live
+    ? await prisma.propertyChangeRequest.findFirst({ where: { propertyId: id, status: 'PENDING' }, orderBy: { createdAt: 'desc' } })
+    : null;
+  // What the listing would hold after this upload: the pending version of the field when there is one, else what is live.
+  const pendingAfter = decodeJson(pending?.changes?.[field]?.after);
+  const current = Array.isArray(pendingAfter) ? pendingAfter : (property[field] || []);
+  if (current.length + items.length > MEDIA_CAPS[field]) {
+    throw new ApiError(400, `A listing can hold at most ${MEDIA_CAPS[field]} ${field}. Remove some before adding more.`, { code: 'LISTING_MEDIA_LIMIT' });
+  }
+
+  if (!live) {
+    return prisma.property.update({ where: { id }, data: { [field]: { push: items } } });
+  }
+
+  const changes = {
+    ...(pending?.changes || {}),
+    [field]: { before: JSON.stringify(property[field] ?? null), after: JSON.stringify([...current, ...items]) },
+  };
+  const fieldCount = Object.keys(changes).length;
+  // Conditional on PENDING: if an admin decided the request in the meantime, open a new one rather than edit a closed one.
+  const merged = pending
+    ? await prisma.propertyChangeRequest.updateMany({ where: { id: pending.id, status: 'PENDING' }, data: { changes, fieldCount } })
+    : { count: 0 };
+  if (!merged.count) {
+    await prisma.propertyChangeRequest.create({
+      data: {
+        propertyId: id, partnerId, fieldCount: 1,
+        changes: { [field]: { before: JSON.stringify(property[field] ?? null), after: JSON.stringify([...(property[field] || []), ...items]) } },
+      },
+    });
+  }
+  return { ...property, pendingReview: true };
+}
+
+async function addImages(id, partnerId, urls) {
+  return addMedia(id, partnerId, 'images', urls);
 }
 
 async function addVideos(id, partnerId, urls) {
-  const property = await prisma.property.findUnique({ where: { id } });
-  if (!property) throw new ApiError(404, 'Property not found');
-  if (property.partnerId !== partnerId) throw new ApiError(403, 'Not your listing');
-  return prisma.property.update({
-    where: { id },
-    data: { videos: { push: urls } },
-  });
+  return addMedia(id, partnerId, 'videos', urls);
 }
 
 async function addDocuments(id, partnerId, files) {
-  const property = await prisma.property.findUnique({ where: { id } });
-  if (!property) throw new ApiError(404, 'Property not found');
-  if (property.partnerId !== partnerId) throw new ApiError(403, 'Not your listing');
-
   const docs = files.map((f) => ({
     name: f.originalname,
     url: f.path,
     uploadedAt: new Date().toISOString(),
   }));
-
-  return prisma.property.update({
-    where: { id },
-    data: { documents: { push: docs } },
-  });
+  return addMedia(id, partnerId, 'documents', docs);
 }
 
 async function getPropertyEditLogs(propertyId, partnerId) {
@@ -708,7 +778,7 @@ async function getPropertyEditLogs(propertyId, partnerId) {
 
 async function getConstructionUpdates(propertyId) {
   const property = await prisma.property.findFirst({
-    where: { id: propertyId, publishStatus: 'APPROVED' },
+    where: { id: propertyId, publishStatus: 'APPROVED', isB2BOnly: false, ...LIVE_PARTNER },
     select: { id: true },
   });
   if (!property) throw new ApiError(404, 'Property not found');

@@ -1,6 +1,7 @@
 const prisma = require('../../lib/prisma');
 const escrowTotals = require('../../lib/escrowTotals');
 const ApiError = require('../../utils/ApiError');
+const { PAYABLE_PARTNER_SELECT, partnerPayoutBlocker } = require('../../lib/partnerStanding');
 const { razorpay, createEscrowOrder, createPayoutContact, createPayoutFundAccount, createPayout, validateFundAccountOrWarn, refundPayment, findPayoutByReference } = require('../../lib/razorpay');
 const { createAuditLog } = require('../../lib/auditLog');
 const { createNotification, notifyAdmins } = require('../../lib/notifications');
@@ -269,7 +270,11 @@ async function createOrder(leadId, buyerId, amountInRupees) {
     // retry, refund()/release() both require a captured payment that was
     // never made, and the only way out was dropping the whole lead. Razorpay
     // orders don't expire, so just resume the same order_id instead of erroring.
-    const razorpayOrder = await razorpay.orders.fetch(existing.razorpayOrderId);
+    // Audit Nov 2026 (F9). A Razorpay outage while resuming is a 502 the buyer can retry, not a 500.
+    let razorpayOrder;
+    try { razorpayOrder = await razorpay.orders.fetch(existing.razorpayOrderId); } catch (err) {
+      throw new ApiError(502, `Could not fetch the existing Razorpay order: ${razorpayErrorText(err)}`, { code: 'RAZORPAY_ERROR' });
+    }
     const resumedBreakdown = checkoutBreakdown(Math.round(existing.amount * 100), await getMoneySettings(), { nri: await isNri() });
 
     if (razorpayOrder.status === 'paid') {
@@ -278,7 +283,10 @@ async function createOrder(leadId, buyerId, amountInRupees) {
       // exactly what the buyer re-opening this screen would surface. Self-heal
       // here rather than reopening a Checkout Razorpay would refuse a second
       // payment against anyway.
-      const payments = await razorpay.orders.fetchPayments(existing.razorpayOrderId);
+      let payments;
+      try { payments = await razorpay.orders.fetchPayments(existing.razorpayOrderId); } catch (err) {
+        throw new ApiError(502, `Could not check the payment with Razorpay: ${razorpayErrorText(err)}`, { code: 'RAZORPAY_ERROR' });
+      }
       const capturedPayment = payments.items?.find((p) => p.status === 'captured');
       if (capturedPayment) {
         const healed = await confirmPayment(existing.razorpayOrderId, capturedPayment.id, buyerId);
@@ -337,7 +345,9 @@ async function createOrder(leadId, buyerId, amountInRupees) {
     });
   } catch (err) {
     if (isEscrowLeadUniqueViolation(err)) {
-      throw new ApiError(400, 'An active escrow order already exists for this lead');
+      // Audit Nov 2026 (F9). The loser of a double click gets the same 409 and code as the pre-check, with the winner's id.
+      const winner = await prisma.escrowTransaction.findFirst({ where: { leadId, status: { in: ['HELD', 'PAYMENT_PENDING', 'HELD_PAYOUT_FAILED', 'FROZEN', 'PARTIALLY_REFUNDED'] } }, select: { id: true } }).catch(() => null);
+      throw new ApiError(409, 'An active escrow order already exists for this lead', { code: 'ESCROW_ALREADY_ACTIVE', ...(winner && { escrowId: winner.id }) });
     }
     throw err;
   }
@@ -408,7 +418,7 @@ async function refundDuplicatePayment(escrow, razorpayPaymentId) {
 // primary guard: it stops an authenticated user from confirming an order ID
 // that isn't theirs, which a valid signature alone wouldn't prevent since
 // signatures aren't scoped to the account making the HTTP request.
-async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null) {
+async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null, webhookPayment = null) {
   const escrow = await prisma.escrowTransaction.findUnique({ where: { razorpayOrderId } });
   if (!escrow || (buyerId && escrow.buyerId !== buyerId)) throw new ApiError(404, 'Escrow order not found');
   // Only ever transition out of PAYMENT_PENDING (or FAILED, see below) — covers
@@ -451,6 +461,21 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
     const expectedPaise = escrow.chargedPaise ?? Math.round(escrow.amount * 100);
     if (payment.amount !== expectedPaise || payment.currency !== 'INR') {
       throw new ApiError(400, "This payment's amount or currency does not match the order.", { code: 'AMOUNT_MISMATCH' });
+    }
+  }
+
+  // Audit Nov 2026 (F6). The webhook and the reconcile job carry the payment's own amount and currency: check them too, so no caller
+  // can mark a token paid for a different amount. A mismatch is never confirmed; admins are told and the order stays as it is.
+  if (!buyerId && webhookPayment && typeof webhookPayment.amount === 'number') {
+    const expected = escrow.chargedPaise ?? Math.round(escrow.amount * 100);
+    if (webhookPayment.amount !== expected || webhookPayment.currency !== 'INR') {
+      logger.error('[Escrow] A captured payment does not match its order; not confirmed', { escrowId: escrow.id, razorpayOrderId, razorpayPaymentId, paid: webhookPayment.amount, expected });
+      await notifyAdmins({
+        title: 'A payment does not match its token order',
+        message: `Razorpay captured ${webhookPayment.amount}${webhookPayment.currency ? ` ${webhookPayment.currency}` : ''} (paise) for an order of ${expected}. The token was NOT marked paid. Check payment ${razorpayPaymentId} in Razorpay.`,
+        type: 'ESCROW_AMOUNT_MISMATCH', linkUrl: '/admin/escrow',
+      }).catch(() => null);
+      return escrow;
     }
   }
 
@@ -695,7 +720,7 @@ async function getReleasePlan(escrowId) {
       allocationLetterUrl: true, allocationLetterVerifiedAt: true, buyerFeedbackStatus: true, status: true,
       assignedPartnerId: true,
       property: { select: { price: true } },
-      assignedPartner: { select: { id: true, name: true, payoutAccountStatus: true, razorpayFundAccountId: true } },
+      assignedPartner: { select: { name: true, ...PAYABLE_PARTNER_SELECT } },
     },
   });
   if (!lead) throw new ApiError(404, 'Lead not found for this escrow');
@@ -781,8 +806,8 @@ async function getReleasePlan(escrowId) {
     }] : []),
     {
       key: 'PARTNER_PAYOUT_ACCOUNT', blocking: false,
-      ok: lead.assignedPartner?.payoutAccountStatus === 'ACTIVE' && !!lead.assignedPartner?.razorpayFundAccountId,
-      detail: `payout account: ${lead.assignedPartner?.payoutAccountStatus || 'none'}`,
+      ok: !partnerPayoutBlocker(lead.assignedPartner),
+      detail: partnerPayoutBlocker(lead.assignedPartner)?.message || 'payout account: ACTIVE',
     },
   ];
 
@@ -915,7 +940,7 @@ async function release(escrowId, adminId, releaseData, ip) {
     const partner = lead?.assignedPartnerId
       ? await prisma.user.findUnique({
           where: { id: lead.assignedPartnerId },
-          select: { razorpayFundAccountId: true, payoutAccountStatus: true },
+          select: PAYABLE_PARTNER_SELECT,
         })
       : null;
 
@@ -924,10 +949,10 @@ async function release(escrowId, adminId, releaseData, ip) {
     }
     // The status exists precisely to stop money going to an account that
     // failed its check — falling back to ad-hoc creation here would walk
-    // straight around the clarification gate.
-    if (partner.payoutAccountStatus !== 'ACTIVE') {
-      throw new ApiError(400, `The assigned partner's payout account is ${partner.payoutAccountStatus || 'not set up'} — resolve that before releasing their share.`, { code: 'PARTNER_PAYOUT_ACCOUNT_NOT_ACTIVE' });
-    }
+    // straight around the clarification gate. Audit Nov 2026 (P2): the same
+    // gate now also refuses a suspended, deleted or KYC-unverified partner.
+    const payBlocker = partnerPayoutBlocker(partner);
+    if (payBlocker) throw new ApiError(400, payBlocker.message, { code: payBlocker.code });
     storedPartnerFundAccountId = partner.razorpayFundAccountId;
   }
 
@@ -1129,7 +1154,13 @@ async function release(escrowId, adminId, releaseData, ip) {
     } else {
       await prisma.escrowTransaction.update({
         where: { id: escrowId },
-        data: { status: 'HELD', releasedAt: null, releasedByAdminId: null },
+        // Audit Nov 2026 (F12). Back to HELD means the release never happened, so the split saved by the claim goes too.
+        data: {
+          status: 'HELD', releasedAt: null, releasedByAdminId: null,
+          netAmount: null, netAmountPaise: null, platformFeePaise: null, platformFeePct: null,
+          partnerShareAmount: null, partnerSharePaise: null,
+          partnerPaidFromCompany: null, partnerPayoutStatus: null, partnerGrossPaise: null, partnerTdsPaise: null, partnerGstPendingPaise: null,
+        },
       });
     }
     throw new ApiError(502, `RazorpayX error: ${providerMessage}`, { code: 'RAZORPAYX_ERROR' });
@@ -1338,10 +1369,9 @@ async function payDeferredPartnerCommission(escrowId, adminId, ip) {
     throw new ApiError(409, `No payout yet: this partner is GST-registered and the tax invoice is ${c.taxInvoiceStatus.toLowerCase().replace('_', ' ')}. Payout needs an uploaded and accepted tax invoice.`,
       { code: 'TAX_INVOICE_REQUIRED', taxInvoiceStatus: c.taxInvoiceStatus });
   }
-  const partner = await prisma.user.findUnique({ where: { id: c.partnerId }, select: { razorpayFundAccountId: true, payoutAccountStatus: true } });
-  if (!partner?.razorpayFundAccountId || partner.payoutAccountStatus !== 'ACTIVE') {
-    throw new ApiError(400, "The partner's payout account is not active.", { code: 'PARTNER_PAYOUT_ACCOUNT_NOT_ACTIVE' });
-  }
+  const partner = await prisma.user.findUnique({ where: { id: c.partnerId }, select: PAYABLE_PARTNER_SELECT });
+  const payBlocker = partnerPayoutBlocker(partner);
+  if (payBlocker) throw new ApiError(400, payBlocker.message, { code: payBlocker.code });
 
   const claim = await prisma.escrowTransaction.updateMany({ where: { id: escrowId, partnerPayoutStatus: escrow.partnerPayoutStatus }, data: { partnerPayoutStatus: 'claiming' } });
   if (claim.count === 0) throw new ApiError(409, 'This payout is already being processed');
@@ -1435,6 +1465,11 @@ async function refund(escrowId, adminId, ip, opts = {}) {
     throw new ApiError(409,
       'The allocation letter has been verified, so this token can no longer be refunded here. Raise a dispute instead.',
       { code: 'NOT_REFUNDABLE_AFTER_VERIFICATION' });
+  }
+
+  // Audit Nov 2026 (F22). A refund of nothing (the cancellation charge eats the whole token) is never sent to Razorpay.
+  if (!(quote.refundPaise > 0)) {
+    throw new ApiError(409, 'There is nothing to refund on this token after the cancellation charge. Decide the next step (release or dispute) in Escrow.', { code: 'NOTHING_TO_REFUND' });
   }
 
   // Same atomic-claim pattern as release() — see comment there.
@@ -1680,6 +1715,10 @@ async function getAllEscrow(filters, skip, limit) {
 // Real DB-side aggregates over the full table — the admin Escrow page's stat
 // cards and Platform Analytics' "Escrow GMV" previously sampled up to 50 rows
 // per status with no aggregate query at all (FRONTEND_HANDOFF_SPEC.md §11.1).
+// Audit Nov 2026 (F14). What was really sent back (the refunded paise), not the token amount: a refund after the free window keeps
+// the cancellation charge, so the token overstates it. Rows written before refundedAmountPaise existed fall back to the token amount.
+const refundedRupees = (agg) => (agg._sum.refundedAmountPaise ? agg._sum.refundedAmountPaise / 100 : (agg._sum.amount || 0));
+
 async function getEscrowStats() {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -1692,13 +1731,16 @@ async function getEscrowStats() {
     // 7 Nov 2026: frozen and part-refunded tokens hold money too, and a part-refunded one holds only what is left (see lib/escrowTotals).
     // Few rows are ever in these states at once, so they are read and added up in code rather than in the database.
     prisma.escrowTransaction.findMany({ where: { status: { in: escrowTotals.HOLDING_STATUSES } }, select: { status: true, amount: true, refundedAmountPaise: true } }),
-    prisma.escrowTransaction.aggregate({ where: { status: 'REFUNDED' }, _sum: { amount: true } }),
+    prisma.escrowTransaction.aggregate({ where: { status: 'REFUNDED' }, _sum: { amount: true, refundedAmountPaise: true } }),
     prisma.escrowTransaction.aggregate({
       where: { status: 'RELEASED', releasedAt: { gte: startOfMonth } },
       _sum: { amount: true },
     }),
+    // Audit Nov 2026 (F14). The average hold is over the 500 most recent releases, not every release ever made.
     prisma.escrowTransaction.findMany({
       where: { status: 'RELEASED', releasedAt: { not: null } },
+      orderBy: { releasedAt: 'desc' },
+      take: 500,
       select: { createdAt: true, releasedAt: true },
     }),
     prisma.escrowTransaction.count({ where: { status: 'HELD_PAYOUT_FAILED' } }),
@@ -1706,7 +1748,7 @@ async function getEscrowStats() {
     // show "held total and count", "released this month and count").
     prisma.escrowTransaction.aggregate({
       where: { status: 'REFUNDED', refundedAt: { gte: startOfMonth } },
-      _sum: { amount: true },
+      _sum: { amount: true, refundedAmountPaise: true },
     }),
     prisma.escrowTransaction.count({ where: { status: 'RELEASED', releasedAt: { gte: startOfMonth } } }),
   ]);
@@ -1717,9 +1759,9 @@ async function getEscrowStats() {
 
   return {
     heldSum: escrowTotals.sumHeld(holdingRows),
-    refundedSum: Math.round(((refundedAgg._sum.amount || 0) + escrowTotals.sumRefunded(holdingRows)) * 100) / 100,
+    refundedSum: Math.round((refundedRupees(refundedAgg) + escrowTotals.sumRefunded(holdingRows)) * 100) / 100,
     releasedSumThisMonth: releasedThisMonthAgg._sum.amount || 0,
-    refundedSumThisMonth: refundedThisMonthAgg._sum.amount || 0,
+    refundedSumThisMonth: refundedRupees(refundedThisMonthAgg),
     heldCount: holdingRows.length,
     releasedCountThisMonth: releasedThisMonthCount,
     avgHoldDays: Math.round(avgHoldDays * 10) / 10,

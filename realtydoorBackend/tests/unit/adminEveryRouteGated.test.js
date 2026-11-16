@@ -33,7 +33,8 @@ const RULES = [
   [(v, p) => /^\/(tickets|vendors|ratings|reviews|partner-support-tickets)/.test(p), 'TICKETS'],
   [(v, p) => /^\/contact/.test(p), ['LEADS', 'TICKETS']],
   [(v, p) => /^\/(nri-leads|video-tours)/.test(p), 'LEADS'],
-  [(v, p) => /^\/disputes/.test(p), ['TICKETS', 'FINANCE', 'FINANCE_VIEW']],
+  [(v, p) => /^\/disputes/.test(p) && v === 'get', ['TICKETS', 'FINANCE', 'FINANCE_VIEW']],
+  [(v, p) => /^\/disputes/.test(p), ['TICKETS', 'FINANCE']], // audit Nov 2026 (F19): changing a dispute needs a write role
   [(v, p) => /^\/wati/.test(p), ['LEADS', 'CONTENT']],
   [(v, p) => /^\/(content|services|team)/.test(p), 'CONTENT'],
 ];

@@ -6,6 +6,7 @@
 // not part of the normal release/refund lifecycle.
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
+const { PAYABLE_PARTNER_SELECT, partnerPayoutBlocker } = require('../../lib/partnerStanding');
 const {
   createPayoutContact, createPayoutFundAccount, createPayout,
   validateFundAccountOrWarn, refundPayment, rawGet, findPayoutByReference,
@@ -220,11 +221,10 @@ async function retryPayout(escrowId, { leg, sellerDetails, note }, adminId, ip) 
     // onboarded, already penny-drop-checked RazorpayX fund account.
     const lead = await prisma.lead.findUnique({ where: { id: escrow.leadId }, select: { assignedPartnerId: true } });
     const partner = lead?.assignedPartnerId
-      ? await prisma.user.findUnique({ where: { id: lead.assignedPartnerId }, select: { razorpayFundAccountId: true, payoutAccountStatus: true } })
+      ? await prisma.user.findUnique({ where: { id: lead.assignedPartnerId }, select: PAYABLE_PARTNER_SELECT })
       : null;
-    if (!partner?.razorpayFundAccountId || partner.payoutAccountStatus !== 'ACTIVE') {
-      throw new ApiError(400, "The assigned partner's payout account is not active — resolve that before retrying their share.", { code: 'PARTNER_PAYOUT_ACCOUNT_NOT_ACTIVE' });
-    }
+    const payBlocker = partnerPayoutBlocker(partner);
+    if (payBlocker) throw new ApiError(400, payBlocker.message, { code: payBlocker.code });
     fundAccountId = partner.razorpayFundAccountId;
   }
 

@@ -5,6 +5,7 @@ const CACHE_KEYS = require('../../lib/cacheKeys');
 const { buildLocalityReportPdf } = require('../../lib/pdfReport');
 const { canonicalizeCity, cityAliasQueryGroup } = require('../../lib/cityAlias');
 const { notifyAdmins } = require('../../lib/notifications');
+const { LIVE_PARTNER } = require('../../lib/partnerStanding');
 
 // Backend gaps handoff, 2026-10-10 (#7C) — same alias-group safety net as
 // properties.service.js's search, applied here too ("apply the same to
@@ -175,7 +176,7 @@ async function buildLocalityPage(city, locality) {
   if (!insight) throw new ApiError(404, 'No locality data found');
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const liveWhere = { city: insight.city, locality: insight.locality, publishStatus: 'APPROVED' };
+  const liveWhere = { city: insight.city, locality: insight.locality, publishStatus: 'APPROVED', isB2BOnly: false, ...LIVE_PARTNER };
 
   const [total, addedThisWeek, topPicks] = await Promise.all([
     prisma.property.count({ where: liveWhere }),

@@ -5,7 +5,7 @@ const { requireUser } = require('../../middleware/requireRole');
 const { requireOnboarded } = require('../../middleware/requireOnboarded');
 const { requirePhone } = require('../../middleware/requirePhone');
 const { userDocUploader } = require('../../lib/fileUpload');
-const { userUploadLimiter, otpLimiter, perUserLimiter, perUserPhoneOtpLimiter, privacyActionLimiter } = require('../../middleware/rateLimiter');
+const { userUploadLimiter, otpLimiter, perUserLimiter, perUserPhoneOtpLimiter, privacyActionLimiter, supportTicketLimiter } = require('../../middleware/rateLimiter');
 const { validateObjectId } = require('../../middleware/validateObjectId');
 
 router.use(authenticate, requireUser, perUserLimiter);
@@ -87,7 +87,7 @@ router.get('/subscriptions', ctrl.getSubscriptions);
 // Tickets
 router.get('/tickets',              ctrl.getMyTickets);
 router.get('/tickets/:id',          ctrl.getMyTicketById);
-router.post('/tickets',             requirePhone, ctrl.raiseTicket);
+router.post('/tickets',             requirePhone, supportTicketLimiter, ctrl.raiseTicket);
 router.patch('/tickets/:id/verify', ctrl.verifyTicket);
 router.patch('/tickets/:id/reopen', ctrl.reopenTicket);
 router.delete('/tickets/:id',       ctrl.withdrawTicket);
@@ -101,7 +101,7 @@ router.get('/loan',                   ctrl.getMyLoanApplications);
 router.get('/loan/:id',               ctrl.getLoanApplicationById);
 
 // Video tour requests (NRI feature — Phase 2)
-router.post('/video-tour',  requirePhone, ctrl.requestVideoTour);
+router.post('/video-tour',  requirePhone, supportTicketLimiter, ctrl.requestVideoTour);
 router.get('/video-tours',               ctrl.getMyVideoTours);
 
 // Disputes

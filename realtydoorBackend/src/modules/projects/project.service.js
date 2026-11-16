@@ -149,6 +149,9 @@ async function updateProject(id, builderId, data) {
 
   // Acting on an admin's requested fixes resubmits the project, same as
   // Property's own CHANGES_REQUESTED → PENDING_APPROVAL resubmission.
+  // Audit Nov 2026 (P15): a rejected project that has been edited goes back to review as well.
+  if (project.publishStatus === 'REJECTED' && Object.keys(patch).length) patch.publishStatus = 'PENDING_APPROVAL';
+
   if (project.publishStatus === 'CHANGES_REQUESTED' && Object.keys(patch).length) {
     patch.publishStatus = 'PENDING_APPROVAL';
     patch.requestedChanges = [];

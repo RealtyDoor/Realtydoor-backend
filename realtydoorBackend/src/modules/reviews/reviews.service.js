@@ -4,9 +4,16 @@ const ApiError = require('../../utils/ApiError');
 async function postReview(userId, { propertyId, rating, title, body }) {
   const property = await prisma.property.findFirst({
     where: { id: propertyId, publishStatus: 'APPROVED' },
-    select: { id: true },
+    select: { id: true, partnerId: true },
   });
   if (!property) throw new ApiError(404, 'Property not found');
+  // Audit Nov 2026 (P13). A review comes from a buyer who dealt with this listing: not its own partner, not staff,
+  // not another partner, and not someone who never enquired. An admin still approves each one before it shows.
+  if (property.partnerId === userId) throw new ApiError(403, 'You cannot review your own listing', { code: 'REVIEW_OWN_LISTING' });
+  const reviewer = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+  if (reviewer?.role !== 'USER') throw new ApiError(403, 'Only buyers can review a property', { code: 'REVIEW_BUYERS_ONLY' });
+  const enquiry = await prisma.lead.findFirst({ where: { propertyId, buyerId: userId }, select: { id: true } });
+  if (!enquiry) throw new ApiError(403, 'You can review a property after you have enquired about it', { code: 'REVIEW_NEEDS_ENQUIRY' });
 
   const existing = await prisma.propertyReview.findUnique({
     where: { userId_propertyId: { userId, propertyId } },

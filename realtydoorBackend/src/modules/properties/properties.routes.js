@@ -44,7 +44,7 @@ router.post('/:id/documents', authenticate, requirePartner, requireKyc, userUplo
 // certificate, khata, society NOC), distinct from the free-form uploads
 // above (brochures, floor plans). One file per documentType; a re-upload
 // replaces the previous attempt.
-router.post('/:id/checklist-documents', authenticate, requirePartner, userUploadLimiter, propertyDocUploader.single('document'), checklistCtrl.uploadChecklistDocument);
-router.get('/:id/checklist', authenticate, requirePartner, checklistCtrl.getMyChecklist);
+router.post('/:id/checklist-documents', authenticate, requirePartner, requireKyc, userUploadLimiter, propertyDocUploader.single('document'), checklistCtrl.uploadChecklistDocument);
+router.get('/:id/checklist', authenticate, requirePartner, requireKyc, checklistCtrl.getMyChecklist);
 
 module.exports = router;

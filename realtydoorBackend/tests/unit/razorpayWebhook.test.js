@@ -65,7 +65,7 @@ describe('payment.captured', () => {
     prisma.escrowTransaction.findUnique.mockResolvedValue({ id: 'e1' });
     const res = await call(captured('order_9', 'pay_9'));
     expect(res.body).toEqual({ status: 'ok' });
-    expect(confirmPayment).toHaveBeenCalledWith('order_9', 'pay_9');
+    expect(confirmPayment).toHaveBeenCalledWith('order_9', 'pay_9', null, { amount: undefined, currency: undefined });
     expect(prisma.webhookEvent.updateMany).toHaveBeenCalledWith({ where: { eventId: 'evt_1' }, data: { processedAt: expect.any(Date) } });
   });
 
@@ -73,7 +73,7 @@ describe('payment.captured', () => {
     prisma.escrowTransaction.findUnique.mockResolvedValue(null);
     prisma.userSubscription.findUnique.mockResolvedValue({ id: 's1' });
     await call(captured('order_s', 'pay_s'));
-    expect(activateSubscription).toHaveBeenCalledWith('order_s', 'pay_s');
+    expect(activateSubscription).toHaveBeenCalledWith('order_s', 'pay_s', null, { amount: undefined, currency: undefined });
     expect(confirmPayment).not.toHaveBeenCalled();
   });
 

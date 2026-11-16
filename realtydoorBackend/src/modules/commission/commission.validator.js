@@ -78,7 +78,7 @@ const createOverrideSchema = z.object({
 // differs from the listing price.
 const setLeadTermsSchema = z.object({
   feePct:    z.number().positive().max(100).optional(),
-  dealPrice: z.number().positive().optional(),
+  dealPrice: z.number().positive().max(1e11).optional(), // ₹10,000 crore: far above any real deal, stops a typo with extra zeros
   lines:     z.array(leadLineSchema).min(1).max(10),
   note:      z.string().max(500).optional(),
 });

@@ -1,5 +1,8 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
+const { LIVE_PARTNER, listingOwnerBlocker } = require('../../lib/partnerStanding');
+const { withKeyLock } = require('../../lib/keyLock');
+const { isTrustedMediaUrl } = require('../../lib/trustedUrl');
 const otpAuth = require('../../lib/otpAuth');
 const escrowService = require('../escrow/escrow.service');
 const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
@@ -280,14 +283,17 @@ async function rateLead(userId, leadId, { rating, comment }) {
   }
   if (lead.buyerRating != null) throw new ApiError(409, 'You have already rated this partner for this lead');
 
-  const updated = await prisma.lead.update({
-    where: { id: leadId },
+  // Audit Nov 2026 (U8). Written only while no rating is set, so a double click cannot rate twice.
+  const claim = await prisma.lead.updateMany({
+    where: { id: leadId, buyerId: userId, OR: [{ buyerRating: null }, { buyerRating: { isSet: false } }] },
     data: {
       buyerRating:        rating,
       buyerRatingComment: comment ?? null,
       buyerRatedAt:        new Date(),
     },
   });
+  if (claim.count === 0) throw new ApiError(409, 'You have already rated this partner for this lead');
+  const updated = await prisma.lead.findUnique({ where: { id: leadId } });
   return sanitizeLeadForBuyer(updated);
 }
 
@@ -403,15 +409,23 @@ async function confirmDeal(userId, leadId) {
 }
 
 async function toggleFavorite(userId, propertyId) {
-  const property = await prisma.property.findUnique({ where: { id: propertyId }, select: { id: true } });
-  if (!property) throw new ApiError(404, 'Property not found');
-
   const existing = await prisma.favorite.findFirst({ where: { userId, propertyId } });
   if (existing) {
-    await prisma.favorite.delete({ where: { id: existing.id } });
+    // Removing is always allowed, even once the listing is no longer live.
+    await prisma.favorite.deleteMany({ where: { id: existing.id } });
     return { favorited: false };
   }
-  await prisma.favorite.create({ data: { userId, propertyId } });
+  // Audit Nov 2026 (U1). Only a listing the public can see may be saved; an id of a draft or hidden listing answers like a missing one.
+  const property = await prisma.property.findFirst({
+    where: { id: propertyId, publishStatus: 'APPROVED', isB2BOnly: false, ...LIVE_PARTNER },
+    select: { id: true },
+  });
+  if (!property) throw new ApiError(404, 'Property not found');
+  try {
+    await prisma.favorite.create({ data: { userId, propertyId } });
+  } catch (err) {
+    if (err.code !== 'P2002') throw err; // a double click: the other request already saved it
+  }
   return { favorited: true };
 }
 
@@ -424,13 +438,26 @@ async function getFavorites(userId) {
           id: true, title: true, slug: true, price: true, monthlyRent: true,
           propertyType: true, listingType: true, bhk: true, locality: true,
           city: true, images: true, coverImageIndex: true, isVerified: true,
-          publishStatus: true, facing: true, furnishing: true,
+          publishStatus: true, facing: true, furnishing: true, isB2BOnly: true,
+          partner: { select: { role: true, kycStatus: true, isSuspended: true, deletedAt: true } },
         },
       },
     },
     orderBy: { savedAt: 'desc' },
   });
-  return favs.map((f) => ({ ...f.property, favoritedAt: f.savedAt }));
+  return favs.map((f) => {
+    const p = f.property;
+    const live = p && p.publishStatus === 'APPROVED' && !p.isB2BOnly && !listingOwnerBlocker(p.partner);
+    if (!live) {
+      // A saved listing that is no longer public shows as a placeholder, with none of its details.
+      return {
+        id: f.propertyId, title: 'This listing is no longer available', slug: null, images: [], unavailable: true,
+        publishStatus: p ? 'UNAVAILABLE' : 'REMOVED', favoritedAt: f.savedAt,
+      };
+    }
+    const { partner: _partner, isB2BOnly: _b2b, ...pub } = p;
+    return { ...pub, favoritedAt: f.savedAt };
+  });
 }
 
 async function updateProfile(userId, { notificationPreferences, city, ...rest }, ipAddress, userAgent) {
@@ -825,7 +852,15 @@ async function getSubscriptions(userId) {
   });
 }
 
+// Audit Nov 2026 (U7). Photos on a ticket must be files uploaded to our own storage: admins open these links.
+function assertOwnPhotoLinks(photos) {
+  if ((photos || []).some((u) => !isTrustedMediaUrl(u))) {
+    throw new ApiError(400, 'Photos must be uploaded here, not linked from another website.', { code: 'PHOTO_LINK_NOT_TRUSTED' });
+  }
+}
+
 async function raiseTicket(userId, subscriptionId, data) {
+  assertOwnPhotoLinks(data.photos);
   // Services aren't live yet — most tickets today have no subscription at
   // all. Only run the ownership/active checks when one was actually sent;
   // the 404-for-someone-else's-subscription behaviour is unchanged when it is.
@@ -941,6 +976,10 @@ async function getTicketComments(userId, ticketId) {
 async function addTicketComment(userId, ticketId, { text, photos }) {
   const ticket = await prisma.serviceTicket.findFirst({ where: { id: ticketId, userId } });
   if (!ticket) throw new ApiError(404, 'Ticket not found');
+  assertOwnPhotoLinks(photos);
+  // Audit Nov 2026 (U7). Each note rings every admin, so a ticket takes at most 100 from the buyer.
+  const mine = await prisma.ticketComment.count({ where: { ticketId, authorRole: 'USER' } });
+  if (mine >= 100) throw new ApiError(429, 'This ticket has reached its limit of notes. Please wait for our reply.', { code: 'TICKET_NOTE_LIMIT' });
 
   const comment = await prisma.ticketComment.create({
     data: { ticketId, authorId: userId, authorRole: 'USER', text, photos: photos || [] },
@@ -1071,19 +1110,21 @@ async function getLoanApplicationById(userId, loanId) {
 
 async function requestVideoTour(userId, propertyId, userNote) {
   const property = await prisma.property.findFirst({
-    where: { id: propertyId, publishStatus: 'APPROVED' },
+    where: { id: propertyId, publishStatus: 'APPROVED', ...LIVE_PARTNER },
     select: { id: true, title: true },
   });
   if (!property) throw new ApiError(404, 'Property not found');
 
-  const existing = await prisma.videoTourRequest.findFirst({
-    where: { userId, propertyId, status: { in: ['PENDING', 'ASSIGNED'] } },
+  // Audit Nov 2026 (U8). Check and write under one lock per buyer and listing, so a double click makes one request.
+  const locked = await withKeyLock(`videotour:${userId}:${propertyId}`, async () => {
+    const existing = await prisma.videoTourRequest.findFirst({
+      where: { userId, propertyId, status: { in: ['PENDING', 'ASSIGNED'] } },
+    });
+    if (existing) throw new ApiError(409, 'You already have a pending video tour request for this property');
+    return prisma.videoTourRequest.create({ data: { userId, propertyId, userNote } });
   });
-  if (existing) throw new ApiError(409, 'You already have a pending video tour request for this property');
-
-  const tour = await prisma.videoTourRequest.create({
-    data: { userId, propertyId, userNote },
-  });
+  if (locked.busy) throw new ApiError(409, 'You already have a pending video tour request for this property');
+  const tour = locked.value;
   // B79 — admins only had the sidebar count.
   await notifyAdmins({
     title: 'New video tour request',

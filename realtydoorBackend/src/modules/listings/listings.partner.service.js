@@ -63,10 +63,13 @@ async function withdrawMyChangeRequest(id, partnerId) {
     throw new ApiError(400, `This request is already ${cr.status} and cannot be withdrawn`);
   }
 
-  return prisma.propertyChangeRequest.update({
-    where: { id },
+  // Conditional on PENDING, so a withdrawal cannot land on top of an admin's approval made at the same moment.
+  const claim = await prisma.propertyChangeRequest.updateMany({
+    where: { id, status: 'PENDING' },
     data: { status: 'REJECTED', reviewNote: 'Withdrawn by partner', reviewedAt: new Date() },
   });
+  if (!claim.count) throw new ApiError(409, 'This request was just reviewed and can no longer be withdrawn');
+  return prisma.propertyChangeRequest.findUnique({ where: { id } });
 }
 
 module.exports = { listMyChangeRequests, withdrawMyChangeRequest };

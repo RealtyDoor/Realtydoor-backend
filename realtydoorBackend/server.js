@@ -31,7 +31,11 @@ function shutdown(exitCode) {
   }, SHUTDOWN_TIMEOUT_MS);
   forceTimer.unref();
 
-  server.close(() => {
+  // Audit Nov 2026 (O7). Stop taking new requests, stop the schedules and give a job that is mid-run a moment to finish, then close the
+  // database connection before exiting.
+  server.close(async () => {
+    try { await require('./src/jobs').stopJobs(Math.max(500, SHUTDOWN_TIMEOUT_MS - 1500)); } catch { /* exiting anyway */ }
+    try { await require('./src/lib/prisma').$disconnect(); } catch { /* exiting anyway */ }
     logger.info('Server closed');
     process.exit(exitCode);
   });

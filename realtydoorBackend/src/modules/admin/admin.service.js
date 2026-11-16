@@ -25,6 +25,7 @@ const { CONTACT_STATUSES } = require('../contact/contact.admin.validator');
 const { generate, expiresAt } = require('../../lib/otp');
 const logger = require('../../lib/logger');
 const { cacheDel, cacheDelPattern } = require('../../lib/cache');
+const { listingOwnerBlocker } = require('../../lib/partnerStanding');
 const dataAckService = require('../partners/dataAck.service');
 const { attachLoanDocuments } = require('../../lib/loanEligibility');
 const { canLinkLeadToUser } = require('../../lib/leadClaim');
@@ -1028,9 +1029,35 @@ async function fetchPropertyWithPartner(propertyId) {
   const property = await prisma.property.findUnique({ where: { id: propertyId } });
   if (!property) return null;
   property.partner = await prisma.user.findUnique({
-    where: { id: property.partnerId }, select: { email: true, notifEmail: true },
+    where: { id: property.partnerId }, select: { email: true, notifEmail: true, role: true, kycStatus: true, isSuspended: true, deletedAt: true },
   });
   return property;
+}
+
+// Audit Nov 2026 (P2). A partner who is suspended, or whose verified KYC is rejected, must not be paid until an admin has looked
+// again: an ACTIVE payout account is frozen in the same step. Only an admin can lift it (partners.service createPayoutAccount
+// refuses a SUSPENDED account). Their listings drop out of every public query on their own (lib/partnerStanding LIVE_PARTNER),
+// so only the cached pages need clearing.
+// Audit Nov 2026 (U9). A microsite page is cached for a minute; when its partner drops out of good standing (or comes back), clear it.
+async function clearMicrositeCachesFor(partnerId) {
+  try {
+    const props = (await prisma.property.findMany({ where: { partnerId }, select: { id: true } })) || [];
+    if (!props.length) return;
+    const sites = (await prisma.microsite.findMany({ where: { propertyId: { in: props.map((p) => p.id) } }, select: { slug: true } })) || [];
+    for (const m of sites) cacheDel(CACHE_KEYS.micrositeSlug(m.slug));
+  } catch (err) {
+    logger.warn('[admin] could not clear the microsite cache', { partnerId, error: err.message }); // the page expires by itself within a minute
+  }
+}
+
+async function freezePartnerStanding(userId, note) {
+  const frozen = await prisma.user.updateMany({
+    where: { id: userId, payoutAccountStatus: 'ACTIVE' },
+    data: { payoutAccountStatus: 'SUSPENDED', payoutAccountNote: note },
+  });
+  cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
+  await clearMicrositeCachesFor(userId);
+  return frozen.count > 0;
 }
 
 async function approveProperty(propertyId, adminId, ip, visibility = {}) {
@@ -1041,6 +1068,20 @@ async function approveProperty(propertyId, adminId, ip, visibility = {}) {
   // have one, and the public page only claims "RERA Verified" when isVerified).
   if (!property.images?.length) {
     throw new ApiError(400, 'Cannot approve a listing with no photos', { code: 'LISTING_NO_PHOTOS' });
+  }
+  // Audit Nov 2026 (P5). A listing cannot go public for an account that could not serve the buyer (suspended, deleted, KYC not
+  // verified, or gone), or while the owner of the property has an open complaint against it. Duplicate-unit and mandate-overlap
+  // conflicts stay advisory: they come from a heuristic, and the admin sees them on the same screen.
+  const ownerBlocker = listingOwnerBlocker(property.partner);
+  if (ownerBlocker) throw new ApiError(409, `${ownerBlocker.message} This listing cannot be approved.`, { code: ownerBlocker.code });
+  const ownerComplaint = await prisma.listingConflict.findFirst({
+    where: { propertyId, status: 'OPEN', type: { in: ['OWNER_DENIED_MANDATE', 'OWNER_REPORTED_UNAUTHORIZED'] } },
+    select: { id: true, type: true },
+  });
+  if (ownerComplaint) {
+    throw new ApiError(409, 'The property owner has an open complaint against this listing. Resolve it under Listing conflicts, then approve.', {
+      code: 'LISTING_OWNER_COMPLAINT_OPEN', conflictId: ownerComplaint.id, conflictType: ownerComplaint.type,
+    });
   }
 
   // A partner can list in a locality we have no details for yet (it was added from the listing form). Such a listing waits until
@@ -1295,6 +1336,9 @@ function kycRequestEffectiveStatus(user) {
 async function verifyKyc(userId, action, note, adminId, ip) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new ApiError(404, 'User not found');
+  // Audit Nov 2026 (P18). KYC belongs to partners; and approving twice re-sent the "verified" messages.
+  if (user.role !== 'PARTNER') throw new ApiError(400, 'KYC applies to partner accounts only.', { code: 'NOT_A_PARTNER' });
+  if (action === 'APPROVE' && user.kycStatus === 'VERIFIED') throw new ApiError(409, 'This partner is already verified.', { code: 'KYC_ALREADY_VERIFIED' });
 
   // B53 — partners were being marked VERIFIED with zero documents on file.
   // The PAN number is checked here too: without one the commission is taxed at the higher no-PAN rate.
@@ -1302,6 +1346,11 @@ async function verifyKyc(userId, action, note, adminId, ip) {
   if (blocker) throw new ApiError(400, blocker.message, { code: blocker.code });
 
   const kycStatus = action === 'APPROVE' ? 'VERIFIED' : 'REJECTED';
+
+  // Audit Nov 2026 (P2). Rejecting a partner who was verified takes away their payouts as well as their status.
+  const payoutFrozen = action !== 'APPROVE'
+    ? await freezePartnerStanding(userId, 'Frozen because KYC was rejected. An admin must reactivate this account after KYC is verified again.')
+    : false;
 
   const updated = await prisma.user.update({
     where: { id: userId },
@@ -1327,7 +1376,8 @@ async function verifyKyc(userId, action, note, adminId, ip) {
 
   await createAuditLog({
     adminId, action: `KYC_${action}`, targetType: 'User', targetId: userId,
-    after: { kycStatus }, ipAddress: ip,
+    before: { kycStatus: user.kycStatus, payoutAccountStatus: user.payoutAccountStatus ?? null },
+    after: { kycStatus, ...(payoutFrozen ? { payoutAccountStatus: 'SUSPENDED' } : {}) }, ipAddress: ip,
   });
 
   if (action === 'APPROVE') {
@@ -1341,6 +1391,8 @@ async function verifyKyc(userId, action, note, adminId, ip) {
     partnerService.promotePayoutAccountOnKycApproval(userId).catch((err) =>
       logger.warn('[verifyKyc] Failed to auto-promote payout account', { userId, error: err.message })
     );
+    // Their listings become public again (lib/partnerStanding LIVE_PARTNER); drop the cached lists.
+    cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
   } else {
     sendKycRejected(user.email, note, user).catch(() => {});
     // Stays silent until `kyc_rejected` is live in WATI (see wati-templates/17).
@@ -1925,9 +1977,15 @@ async function suspendUser(targetUserId, suspend, reason, adminId, ip) {
   // A suspended partner cannot work their leads, and the buyers on them must not wait: leads they have not started go back to the
   // pool, and the ones that cannot move (token held, visit done) are listed for an admin to settle.
   if (suspend && user.role === 'PARTNER') {
+    // Audit Nov 2026 (P2): suspension also freezes the payout account and hides their listings.
+    const payoutFrozen = await freezePartnerStanding(targetUserId, 'Frozen because the account was suspended. An admin must reactivate this payout account.');
+    const liveListings = await prisma.property.count({ where: { partnerId: targetUserId, publishStatus: 'APPROVED' } });
     const handover = await returnPartnerLeadsToPool(targetUserId, adminId, ip, 'suspended');
-    return { ...updated, leadsReturned: handover.moved, leadsNeedingDecision: handover.stuck };
+    return { ...updated, leadsReturned: handover.moved, leadsNeedingDecision: handover.stuck, payoutFrozen, listingsHidden: liveListings };
   }
+  // Lifting a suspension shows the listings again; the payout account stays frozen until an admin sets it ACTIVE.
+  if (!suspend) cacheDel(CACHE_KEYS.FEATURED_PROPERTIES, CACHE_KEYS.CITIES_SUMMARY);
+  await clearMicrositeCachesFor(targetUserId);
 
   return updated;
 }

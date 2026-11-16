@@ -5,6 +5,7 @@ const { createAuditLog } = require('../../lib/auditLog');
 const { cacheDel } = require('../../lib/cache');
 const CACHE_KEYS = require('../../lib/cacheKeys');
 const { withMapLinkCoords } = require('./location.service');
+const { canonicalizeCity } = require('../../lib/cityAlias');
 
 // Fields a partner must never set through a change request, mirroring the
 // FORBIDDEN list in properties.service.js. Re-applied here at approval time
@@ -145,6 +146,11 @@ async function approveChangeRequest(id, { adminId, adminName, note, force }, ip)
   }
 
   const property = cr.property;
+  // Audit Nov 2026 (P6). A change request is an edit to a LIVE listing. If the listing came down since (rejected,
+  // archived, sent back for changes), applying the old diff would edit something nobody is reviewing as live.
+  if (property.publishStatus !== 'APPROVED') {
+    throw new ApiError(409, `This listing is no longer live (${property.publishStatus}). Reject this request; the partner can edit the listing directly.`, { code: 'LISTING_NOT_LIVE' });
+  }
   const entries = Object.entries(cr.changes || {})
     .filter(([field]) => !FORBIDDEN_FIELDS.includes(field));
 
@@ -179,6 +185,15 @@ async function approveChangeRequest(id, { adminId, adminName, note, force }, ip)
 
   let data = {};
   for (const [field, pair] of entries) data[field] = decode(pair.after);
+  // Audit Nov 2026 (P6). The diff was valid when it was submitted; check it against today's rules before it goes live.
+  // Required lazily: properties.validator is not needed anywhere else in this file.
+  const { updatePropertySchema } = require('../properties/properties.validator');
+  const recheck = updatePropertySchema.safeParse(data);
+  if (!recheck.success) {
+    const first = recheck.error.issues[0];
+    throw new ApiError(400, `This request no longer passes the listing rules (${first?.path?.join('.') || 'value'}: ${first?.message || 'invalid'}). Reject it and ask the partner to resubmit.`, { code: 'CHANGE_REQUEST_INVALID' });
+  }
+  if (typeof data.city === 'string') data.city = canonicalizeCity(data.city);
   // 4.6 — if the approved diff changes mapLink, its parsed coordinates have to
   // move with it. These two derived fields are applied but deliberately not
   // written to the edit log: the log records what a human changed, and these
@@ -198,14 +213,31 @@ async function approveChangeRequest(id, { adminId, adminName, note, force }, ip)
     editNote: `Change request ${cr.id} approved by ${adminName}${note ? `: ${note}` : ''}`,
   }));
 
-  const [updated] = await prisma.$transaction([
-    prisma.property.update({ where: { id: property.id }, data }),
-    prisma.propertyChangeRequest.update({
-      where: { id },
-      data: { status: 'APPROVED', reviewedByAdminId: adminId, reviewNote: note || null, reviewedAt: new Date() },
-    }),
-    ...logRows.map((row) => prisma.propertyEditLog.create({ data: row })),
-  ]);
+  // Claim the request first, conditional on it still being PENDING, so a double click, or an approval racing the
+  // partner's withdrawal, applies the diff at most once. Put back if the write itself fails.
+  const claim = await prisma.propertyChangeRequest.updateMany({
+    where: { id, status: 'PENDING' },
+    data: { status: 'APPROVED', reviewedByAdminId: adminId, reviewNote: note || null, reviewedAt: new Date() },
+  });
+  if (!claim.count) throw new ApiError(409, 'This request was already decided or withdrawn.', { code: 'CHANGE_REQUEST_ALREADY_DECIDED' });
+  let updated;
+  try {
+    [updated] = await prisma.$transaction([
+      prisma.property.update({ where: { id: property.id }, data }),
+      ...logRows.map((row) => prisma.propertyEditLog.create({ data: row })),
+    ]);
+  } catch (err) {
+    await prisma.propertyChangeRequest.updateMany({
+      where: { id, status: 'APPROVED', reviewedByAdminId: adminId },
+      data: { status: 'PENDING', reviewedByAdminId: null, reviewNote: null, reviewedAt: null },
+    }).catch(() => {});
+    throw err;
+  }
+
+  // A new address can collide with another listing; same detector as at submission, and never fatal.
+  if (entries.some(([f]) => ['address', 'locality', 'city', 'pincode', 'unitNumber', 'floorNumber', 'towerName', 'projectName'].includes(f))) {
+    require('./integrity.service').detectConflicts(property.id).catch(() => {});
+  }
 
   await createNotification({
     userId: cr.partnerId,
@@ -228,6 +260,8 @@ async function approveChangeRequest(id, { adminId, adminName, note, force }, ip)
   if (updated.city !== property.city || updated.locality !== property.locality) {
     cacheDel(CACHE_KEYS.localityPage(updated.city, updated.locality));
   }
+  // Required lazily: microsite.service pulls in properties.service.
+  require('../microsites/microsite.service').invalidateCacheForPropertyStatusChange(property.id).catch(() => {});
 
   return { property: updated, appliedFields: entries.map(([f]) => f), forcedOverConflicts: conflicts };
 }
@@ -242,10 +276,12 @@ async function rejectChangeRequest(id, { adminId, note }, ip) {
     throw new ApiError(400, `This request is already ${cr.status} and cannot be rejected`);
   }
 
-  const updated = await prisma.propertyChangeRequest.update({
-    where: { id },
+  const claim = await prisma.propertyChangeRequest.updateMany({
+    where: { id, status: 'PENDING' },
     data: { status: 'REJECTED', reviewedByAdminId: adminId, reviewNote: note, reviewedAt: new Date() },
   });
+  if (!claim.count) throw new ApiError(409, 'This request was already decided or withdrawn.', { code: 'CHANGE_REQUEST_ALREADY_DECIDED' });
+  const updated = await prisma.propertyChangeRequest.findUnique({ where: { id } });
 
   await createNotification({
     userId: cr.partnerId,

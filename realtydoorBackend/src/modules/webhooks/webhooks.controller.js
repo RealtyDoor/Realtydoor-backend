@@ -121,11 +121,12 @@ async function razorpay(req, res) {
 
     if (event === 'payment.captured') {
       const { order_id: orderId, id: paymentId } = payload.payment.entity;
+      const paymentEntity = { amount: payload.payment.entity.amount, currency: payload.payment.entity.currency };
 
       // Route: escrow payment
       const escrow = await prisma.escrowTransaction.findUnique({ where: { razorpayOrderId: orderId } });
       if (escrow) {
-        await confirmPayment(orderId, paymentId);
+        await confirmPayment(orderId, paymentId, null, paymentEntity);
       } else {
         // Route: service subscription payment. BE-3 — activateSubscription is
         // the one atomic path shared with the buyer-facing verify-payment
@@ -134,7 +135,7 @@ async function razorpay(req, res) {
         // the other is a no-op.
         const subscription = await prisma.userSubscription.findUnique({ where: { razorpayOrderId: orderId } });
         if (subscription) {
-          await activateSubscription(orderId, paymentId);
+          await activateSubscription(orderId, paymentId, null, paymentEntity);
         }
       }
     }

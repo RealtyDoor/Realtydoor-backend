@@ -4,6 +4,7 @@ const ApiError = require('../../utils/ApiError');
 const { createNotification, notifyAdmins } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const logger = require('../../lib/logger');
+const { withKeyLock } = require('../../lib/keyLock');
 const { createPayoutContact, createPayoutFundAccount, validateFundAccountOrWarn, rawGet } = require('../../lib/razorpay');
 const kycVerification = require('../../lib/kycVerification');
 
@@ -163,8 +164,12 @@ async function updateProfile(partnerId, data) {
   FORBIDDEN.forEach((f) => delete data[f]);
   // Money model Rev 3: a partner may ADD a PAN when none is on file (it decides
   // the TDS rate); an existing PAN can only be changed by admin.
+  const current = await prisma.user.findUnique({
+    where: { id: partnerId },
+    select: { panNumber: true, gstin: true, reraNumber: true, name: true, companyName: true, partnerSubType: true, kycStatus: true },
+  });
+  if (!current) throw new ApiError(404, 'User not found');
   if (data.panNumber) {
-    const current = await prisma.user.findUnique({ where: { id: partnerId }, select: { panNumber: true } });
     if (current?.panNumber && current.panNumber.trim().toUpperCase() !== data.panNumber) {
       throw new ApiError(409, 'Your PAN is already on file. To change it, contact support.', { code: 'PAN_LOCKED' });
     }
@@ -173,7 +178,32 @@ async function updateProfile(partnerId, data) {
     data.panVerifiedName = null;
     data.panVerifiedAt = null;
   }
-  return prisma.user.update({ where: { id: partnerId }, data });
+  // Audit Nov 2026 (P7). What an admin verified must not change quietly afterwards.
+  const changed = (f) => data[f] !== undefined && (data[f] || null) !== (current[f] || null);
+  const verified = current.kycStatus === 'VERIFIED';
+  // The partner type decides the rate card and what the account may do (builder projects, advisor referrals).
+  if (verified && changed('partnerSubType')) {
+    throw new ApiError(409, 'Your partner type was verified with your KYC. To change it, contact support.', { code: 'PARTNER_TYPE_LOCKED' });
+  }
+  // A new GSTIN or RERA number has not been checked: the old "verified" result must not carry over to it.
+  if (changed('gstin')) Object.assign(data, { gstinVerificationStatus: null, gstinVerifiedName: null, gstinVerifiedAt: null });
+  if (changed('reraNumber')) Object.assign(data, { reraVerificationStatus: null, reraVerifiedName: null, reraVerifiedAt: null });
+  const identityChanged = ['name', 'companyName', 'gstin', 'reraNumber'].filter(changed);
+
+  const updated = await prisma.user.update({ where: { id: partnerId }, data });
+
+  if (verified && identityChanged.length) {
+    // Re-run the automatic registry checks on the new values, and tell the admins: the change itself is already in the
+    // audit log (withIdentityAudit below), this puts it in front of someone.
+    runAutomatedKycChecks(partnerId).catch((err) => logger.warn('[Partners] re-check after profile change failed', { partnerId, error: err.message }));
+    notifyAdmins({
+      title: 'Verified partner changed their details',
+      message: `${updated.name || 'A partner'} changed ${identityChanged.join(', ')} after KYC was verified. Check that the KYC documents still match.`,
+      type: 'KYC_UPDATE',
+      linkUrl: `/admin/users/${partnerId}`,
+    }).catch(() => {});
+  }
+  return updated;
 }
 
 async function uploadProfilePhoto(partnerId, url) {
@@ -187,6 +217,8 @@ async function uploadProfilePhoto(partnerId, url) {
 async function getListing(partnerId, id) {
   const property = await prisma.property.findFirst({ where: { id, partnerId } });
   if (!property) throw new ApiError(404, 'Listing not found');
+  // Audit Nov 2026 (P19). Staff-only notes and ids are not part of the partner's view of their own listing.
+  for (const k of ['adminEditNote', 'changesRequestedByAdminId']) delete property[k];
   return property;
 }
 
@@ -518,12 +550,24 @@ async function listPayoutAccounts(filters, skip, limit) {
 async function createPayoutAccount(partnerId, data, kycStatus) {
   const partner = await prisma.user.findUnique({
     where: { id: partnerId },
-    select: { id: true, name: true, email: true, phone: true, payoutAccountStatus: true, razorpayContactId: true },
+    select: { id: true, name: true, email: true, phone: true, payoutAccountStatus: true, razorpayContactId: true, razorpayFundAccountId: true, panNumber: true },
   });
   if (!partner) throw new ApiError(404, 'User not found');
   if (partner.payoutAccountStatus === 'ACTIVE') {
     throw new ApiError(409, 'A payout account is already active. Contact support to change your bank details.', { code: 'PAYOUT_ACCOUNT_EXISTS' });
   }
+  // Audit Nov 2026 (P1). A frozen account stays frozen: only an admin lifts SUSPENDED. Before this, posting new bank
+  // details here brought a suspended partner straight back to ACTIVE.
+  if (partner.payoutAccountStatus === 'SUSPENDED') {
+    throw new ApiError(409, 'Your payout account is on hold. Contact support.', { code: 'PAYOUT_ACCOUNT_SUSPENDED' });
+  }
+  // The PAN decides the TDS rate and is locked once on file (same rule as updateProfile).
+  const panOnFile = partner.panNumber ? partner.panNumber.trim().toUpperCase() : null;
+  if (data.panNumber && panOnFile && panOnFile !== data.panNumber.trim().toUpperCase()) {
+    throw new ApiError(409, 'Your PAN is already on file. To change it, contact support.', { code: 'PAN_LOCKED' });
+  }
+  // A second registration (an admin asked for clarification, or the first bank check failed) never activates itself.
+  const isResubmission = !!partner.razorpayFundAccountId;
 
   // Reuse the contact across retries — RazorpayX would otherwise accumulate a
   // duplicate contact for this partner on every failed attempt.
@@ -569,6 +613,13 @@ async function createPayoutAccount(partnerId, data, kycStatus) {
     status = 'PENDING_VALIDATION';
     note = 'Awaiting KYC verification before this account can receive payouts.';
   }
+  // Audit Nov 2026 (P1). New bank details after a first registration wait for an admin (PATCH
+  // /admin/partners/:id/payout-account/status). NEEDS_CLARIFICATION is kept rather than PENDING_VALIDATION,
+  // because promotePayoutAccountOnKycApproval turns PENDING_VALIDATION into ACTIVE without a look at the bank account.
+  if (status === 'ACTIVE' && isResubmission) {
+    status = 'NEEDS_CLARIFICATION';
+    note = 'New bank details submitted. Waiting for an admin to review them.';
+  }
 
   const updated = await prisma.user.update({
     where: { id: partnerId },
@@ -582,11 +633,21 @@ async function createPayoutAccount(partnerId, data, kycStatus) {
       bankAccountNo: data.accountNumber,
       bankIfsc: data.ifsc,
       bankLinkedAt: new Date(),
-      ...(data.panNumber && { panNumber: data.panNumber }),
+      // A first PAN only; it has not been checked yet.
+      ...(data.panNumber && !panOnFile && { panNumber: data.panNumber.trim().toUpperCase(), panVerificationStatus: null, panVerifiedName: null, panVerifiedAt: null }),
       ...(data.bankName && { bankName: data.bankName }),
     },
     select: PAYOUT_PUBLIC_FIELDS,
   });
+
+  if (isResubmission) {
+    notifyAdmins({
+      title: 'Payout account resubmitted',
+      message: `${partner.name || 'A partner'} submitted new bank details. Review and activate the payout account.`,
+      type: 'PAYOUT_ACCOUNT_UPDATE',
+      linkUrl: '/admin/escrow/route-accounts',
+    }).catch(() => {});
+  }
 
   return maskPayout(updated);
 }
@@ -637,13 +698,15 @@ async function requestPayoutAccountChange(partnerId, { legalName, accountNumber,
     throw new ApiError(400, 'No payout account is registered yet — use POST /partner/payout-account to register one first.', { code: 'NO_FUND_ACCOUNT' });
   }
 
-  const existingChange = await prisma.payoutAccountChange.findFirst({ where: { partnerId, status: 'PENDING' } });
-  if (existingChange) {
-    throw new ApiError(409, 'A payout account change request is already pending review.', { code: 'CHANGE_ALREADY_PENDING' });
-  }
-
-  const change = await prisma.payoutAccountChange.create({
-    data: { partnerId, legalName, accountNumber, ifsc, bankName, reason },
+  // One request at a time per partner (withKeyLock), so two clicks cannot leave two PENDING rows (Audit Nov 2026, P10).
+  const change = await withKeyLock(`payout-change:${partnerId}`, async () => {
+    const existingChange = await prisma.payoutAccountChange.findFirst({ where: { partnerId, status: 'PENDING' } });
+    if (existingChange) {
+      throw new ApiError(409, 'A payout account change request is already pending review.', { code: 'CHANGE_ALREADY_PENDING' });
+    }
+    return prisma.payoutAccountChange.create({
+      data: { partnerId, legalName, accountNumber, ifsc, bankName, reason },
+    });
   });
 
   // H4 fix — deliberately NOT touching payoutAccountStatus here. It was
@@ -671,9 +734,16 @@ async function requestPayoutAccountChange(partnerId, { legalName, accountNumber,
 async function setPayoutAccountStatus(partnerId, status, note, adminId, ip) {
   const partner = await prisma.user.findFirst({
     where: { id: partnerId, role: 'PARTNER' },
-    select: { id: true, email: true, phone: true, payoutAccountStatus: true, razorpayContactId: true, razorpayFundAccountId: true },
+    select: { id: true, email: true, phone: true, payoutAccountStatus: true, razorpayContactId: true, razorpayFundAccountId: true, kycStatus: true, isSuspended: true },
   });
   if (!partner) throw new ApiError(404, 'Partner not found');
+  // Audit Nov 2026 (P2, P17). ACTIVE means "may be paid", so it needs what a payout needs.
+  if (status === 'ACTIVE' && partner.kycStatus !== 'VERIFIED') {
+    throw new ApiError(409, "This partner's KYC is not verified. Verify KYC before activating the payout account.", { code: 'PARTNER_KYC_NOT_VERIFIED' });
+  }
+  if (status === 'ACTIVE' && partner.isSuspended) {
+    throw new ApiError(409, 'This partner is suspended. Lift the suspension before activating the payout account.', { code: 'PARTNER_SUSPENDED' });
+  }
 
   let pendingChange = await prisma.payoutAccountChange.findFirst({ where: { partnerId, status: 'PENDING' } });
 

@@ -6,7 +6,7 @@ const updateProfileSchema = z.object({
   bio:             z.string().max(1000).optional(),
   websiteUrl:      z.string().url('Invalid URL').optional().or(z.literal('')),
   profileImageUrl: z.string().url('Invalid URL').optional(),
-  partnerSubType:  z.string().max(50).optional(),
+  partnerSubType:  z.enum(['AGENT', 'BUILDER', 'ADVISOR', 'OWNER']).optional(), // was any string: an unknown value reached Prisma as a 500
   // B1.6 / B1.8 / admin 3.2-3.3 — structured instead of "read it off the
   // uploaded KYC PDF". panNumber (money model Rev 3: PAN is required for
   // payouts, TDS is 20% without it) may be added by the partner ONLY while none
@@ -14,7 +14,8 @@ const updateProfileSchema = z.object({
   // 409 PAN_LOCKED), since it would invalidate what admin verified.
   panNumber:       z.string().trim().toUpperCase().regex(/^[A-Z]{5}\d{4}[A-Z]$/, 'Invalid PAN (format ABCDE1234F)').optional(),
   reraNumber:      z.string().max(60).optional(),
-  gstin:           z.string().max(20).optional(),
+  // Audit Nov 2026 (P7): a real GSTIN, or empty to clear it.
+  gstin:           z.string().trim().toUpperCase().regex(/^\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}Z[A-Z\d]{1}$/, 'Invalid GSTIN format').optional().or(z.literal('')),
   coverageAreas:   z.array(z.string().min(1).max(100)).max(50).optional(),
   address:         z.string().max(500).optional(),
 }).refine(

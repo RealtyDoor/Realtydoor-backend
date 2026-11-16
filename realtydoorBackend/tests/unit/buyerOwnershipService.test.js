@@ -94,7 +94,7 @@ describe('partnerAddLead: any live listing (28 Oct 2026, owner decision)', () =>
   test('looks the property up among all approved listings, not only the partner\'s own', async () => {
     await leads.partnerAddLead('A', data);
     const where = prisma.property.findFirst.mock.calls[0][0].where;
-    expect(where).toEqual({ id: 'prop1', publishStatus: 'APPROVED' });
+    expect(where).toMatchObject({ id: 'prop1', publishStatus: 'APPROVED' });
     expect(where).not.toHaveProperty('partnerId');
   });
   test('a listing that is not approved is still refused', async () => {

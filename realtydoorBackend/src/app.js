@@ -71,6 +71,22 @@ if (process.env.NODE_ENV !== 'test') {
 // /api/health too: the public API host (tunnel / load balancer) only forwards /api/*, so uptime checks need it there (BUG-021).
 app.get(['/health', '/api/health'], (req, res) => res.json({ status: 'ok', ts: Date.now() }));
 
+// Audit Nov 2026 (O3). Ready = the database answers (3 s limit). For the uptime alarm; /health stays the cheap "process is up" check
+// that container restarts use, so a database blip does not make Docker restart a healthy server.
+app.get('/api/health/ready', async (req, res) => {
+  const prisma = require('./lib/prisma');
+  let timer;
+  try {
+    await Promise.race([
+      prisma.$runCommandRaw({ ping: 1 }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), 3000); }),
+    ]);
+    res.json({ status: 'ok', ts: Date.now() });
+  } catch {
+    res.status(503).json({ status: 'unavailable', ts: Date.now() });
+  } finally { clearTimeout(timer); }
+});
+
 // ── API routes ────────────────────────────────────────────────────────────────
 // Global baseline rate limit — route-specific limiters (auth, OTP, upload,
 // search) stack tighter caps on top of this for the endpoints that need it.

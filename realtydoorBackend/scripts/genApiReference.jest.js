@@ -10,7 +10,10 @@ process.env.CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY || 'sk_test_dummy';
 jest.mock('../src/lib/prisma', () => new Proxy({}, { get: () => new Proxy(() => {}, { get: () => () => Promise.reject(new Error('db')), apply: () => Promise.reject(new Error('db')) }) }));
 
 const tag = (fn, t) => Object.assign(fn, { gate: t });
-jest.mock('../src/middleware/auth', () => ({ authenticate: Object.assign((req, res, next) => next(), { gate: { kind: 'auth' } }) }));
+jest.mock('../src/middleware/auth', () => ({
+  authenticate: Object.assign((req, res, next) => next(), { gate: { kind: 'auth' } }),
+  optionalAuthenticate: Object.assign((req, res, next) => next(), { gate: { kind: 'optionalAuth' } }),
+}));
 jest.mock('../src/middleware/requireRole', () => {
   const requireRole = (...roles) => Object.assign((req, res, next) => next(), { gate: { kind: 'role', roles } });
   return { requireRole, requireAdmin: requireRole('ADMIN'), requirePartner: requireRole('PARTNER', 'ADMIN'), requireUser: requireRole('USER', 'PARTNER', 'ADMIN') };
@@ -52,7 +55,7 @@ function flatten(router, prefix = '', inherited = []) {
 
 function who(gates) {
   const g = (k) => gates.filter((x) => x.kind === k);
-  if (!g('auth').length && !g('role').length) return 'Public (no sign-in)';
+  if (!g('auth').length && !g('role').length) return g('optionalAuth').length ? 'Public (sign-in optional)' : 'Public (no sign-in)';
   const roles = g('role').map((x) => x.roles.join(' or ')).filter((r, i, a) => a.indexOf(r) === i);
   const role = roles.length ? roles[roles.length - 1] : 'any signed-in user';
   const perm = g('perm').map((x) => x.scopes.join(' or '));
@@ -73,6 +76,7 @@ test('write the API reference', () => {
   const routes = [
     { method: 'GET', path: '/health', gates: [], handler: '(inline)' },
     { method: 'GET', path: '/api/health', gates: [], handler: '(inline)' },
+    { method: 'GET', path: '/api/health/ready', gates: [], handler: '(inline, checks the database)' },
     ...flatten(hooks, '/api/webhooks'),
     ...flatten(root, '/api'),
   ];

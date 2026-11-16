@@ -1,7 +1,7 @@
 // Commission terms and the seller-fee states PENDING -> INVOICED -> COLLECTED (DISPUTED as a side exit):
 // each state change is allowed only from the right state, TDS cannot exceed the invoice, a frozen deal rate cannot be edited.
 jest.mock('../../src/lib/prisma', () => ({
-  lead: { findUnique: jest.fn(), update: jest.fn() },
+  lead: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   leadCommissionLine: { findMany: jest.fn() },
   user: { findUnique: jest.fn() },
   platformConfig: { findMany: jest.fn() },
@@ -36,6 +36,8 @@ beforeEach(() => {
   prisma.platformConfig.findMany.mockResolvedValue([]);
   prisma.leadCommissionLine.findMany.mockResolvedValue([line]);
   prisma.lead.update.mockImplementation(async ({ data }) => ({ ...row(), ...data }));
+  // Each state change is one conditional write (Audit Nov 2026, P10): it lands when the row is still in the expected state.
+  prisma.lead.updateMany.mockResolvedValue({ count: 1 });
   prisma.user.findUnique.mockResolvedValue({ name: 'Owner' });
 });
 const leadIs = (over, extra = {}) => prisma.lead.findUnique.mockImplementation(async ({ select }) => {
@@ -70,6 +72,7 @@ describe('lockLeadTerms', () => {
     prisma.lead.findUnique.mockResolvedValue(row());
     await expect(svc.lockLeadTerms('l1', 'a1', 'ip')).rejects.toMatchObject({ data: { code: 'COMMISSION_LOCKED' } });
     expect(prisma.lead.update).not.toHaveBeenCalled();
+    expect(prisma.lead.updateMany).not.toHaveBeenCalled();
   });
   test('terms with no lines cannot be locked', async () => {
     prisma.lead.findUnique.mockResolvedValue(row({ commissionLockedAt: null }));
@@ -81,6 +84,7 @@ describe('lockLeadTerms', () => {
     prisma.leadCommissionLine.findMany.mockResolvedValue([{ payeeRole: 'CLOSING_AGENT', payeeUserId: 'p1', pct: 80 }, { payeeRole: 'LISTING_AGENT', payeeUserId: 'p2', pct: 40 }]);
     await expect(svc.lockLeadTerms('l1', 'a1', 'ip')).rejects.toBeDefined();
     expect(prisma.lead.update).not.toHaveBeenCalled();
+    expect(prisma.lead.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -130,7 +134,8 @@ describe('invoice -> collect -> dispute', () => {
   test('invoicing stores the receipt, moves to INVOICED, audits, and books the ledger once', async () => {
     leadIs({});
     await svc.invoiceLeadCommission('l1', 'a1', 'ip');
-    expect(prisma.lead.update.mock.calls[0][0].data).toMatchObject({ commissionStatus: 'INVOICED', invoiceUrl: 'https://bucket/receipts/r.pdf' });
+    expect(prisma.lead.updateMany.mock.calls[0][0]).toMatchObject({ where: { id: 'l1', commissionStatus: 'PENDING' }, data: { commissionStatus: 'INVOICED' } });
+    expect(prisma.lead.update.mock.calls[0][0].data).toEqual({ invoiceUrl: 'https://bucket/receipts/r.pdf' });
     expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'COMMISSION_INVOICED' }));
     expect(ledger.onBrokerageInvoiced).toHaveBeenCalledTimes(1);
     // 2,00,000 fee + 18% GST
@@ -140,17 +145,19 @@ describe('invoice -> collect -> dispute', () => {
     prisma.lead.findUnique.mockResolvedValue(row({ commissionStatus }));
     await expect(svc.collectLeadCommission('l1', 'a1', 'ip')).rejects.toMatchObject({ data: { code: 'INVALID_COMMISSION_STATUS' } });
     expect(prisma.lead.update).not.toHaveBeenCalled();
+    expect(prisma.lead.updateMany).not.toHaveBeenCalled();
   });
   test.each([[-1], [23_600_001], [1e12]])('TDS of %p rupees on a 2,36,000 invoice is refused before anything is marked collected', async (tds) => {
     leadIs({ commissionStatus: 'INVOICED' });
     await expect(svc.collectLeadCommission('l1', 'a1', 'ip', { tdsDeductedRupees: tds })).rejects.toMatchObject({ statusCode: 400 });
     expect(prisma.lead.update).not.toHaveBeenCalled();
+    expect(prisma.lead.updateMany).not.toHaveBeenCalled();
     expect(ledger.onBrokerageReceived).not.toHaveBeenCalled();
   });
   test('collecting with TDS books the receipt and the TDS receivable', async () => {
     leadIs({ commissionStatus: 'INVOICED' });
     await svc.collectLeadCommission('l1', 'a1', 'ip', { tdsDeductedRupees: 4000 });
-    expect(prisma.lead.update.mock.calls[0][0].data).toMatchObject({ commissionStatus: 'COLLECTED' });
+    expect(prisma.lead.updateMany.mock.calls[0][0]).toMatchObject({ where: { id: 'l1', commissionStatus: 'INVOICED' }, data: { commissionStatus: 'COLLECTED' } });
     expect(ledger.onBrokerageReceived.mock.calls[0][2]).toEqual({ adminId: 'a1', tdsDeductedPaise: 400000 });
     expect(ledger.recordSafe).toHaveBeenCalledWith(expect.objectContaining({ type: 'TDS_RECEIVABLE', grossPaise: 400000 }));
   });
@@ -163,10 +170,11 @@ describe('invoice -> collect -> dispute', () => {
     prisma.lead.findUnique.mockResolvedValue(row({ commissionStatus }));
     await expect(svc.disputeLeadCommission('l1', 'why', 'a1', 'ip')).rejects.toMatchObject({ data: { code: 'INVALID_COMMISSION_STATUS' } });
     expect(prisma.lead.update).not.toHaveBeenCalled();
+    expect(prisma.lead.updateMany).not.toHaveBeenCalled();
   });
   test.each(['PENDING', 'INVOICED'])('a %s fee can be disputed; the reason is appended to the notes, not replacing them', async (commissionStatus) => {
     prisma.lead.findUnique.mockImplementation(async ({ select }) => (select?.adminNotes ? { adminNotes: 'earlier note' } : row({ commissionStatus })));
     await svc.disputeLeadCommission('l1', 'seller disagrees', 'a1', 'ip');
-    expect(prisma.lead.update.mock.calls[0][0].data).toEqual({ commissionStatus: 'DISPUTED', adminNotes: 'earlier note | [Commission disputed] seller disagrees' });
+    expect(prisma.lead.updateMany.mock.calls[0][0]).toEqual({ where: { id: 'l1', commissionStatus }, data: { commissionStatus: 'DISPUTED', adminNotes: 'earlier note | [Commission disputed] seller disagrees' } });
   });
 });

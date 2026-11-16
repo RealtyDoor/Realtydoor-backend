@@ -4,6 +4,8 @@
 // the seller via a RazorpayX Payout (direct bank transfer, no Route
 // onboarding) or refunds to the buyer via the original Payment Gateway charge.
 // A Lead cannot be marked CLOSED unless an EscrowTransaction { status: HELD } exists.
+// Other states a token can be in (audit Nov 2026): FROZEN (dispute), PARTIALLY_REFUNDED (refund only, never released for the rest),
+// HELD_PAYOUT_FAILED (a payout leg failed or is unconfirmed: see the payout tools), RELEASED, REFUNDED, FAILED, CANCELLED.
 
 model EscrowTransaction {
   id                String       @id @default(auto()) @map("_id") @db.ObjectId

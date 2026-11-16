@@ -14,7 +14,7 @@ const { requirePartner } = require('../../middleware/requireRole');
 const { requireKyc } = require('../../middleware/requireKyc');
 const { kycDocUploader, dealDocUploader, partnerProfilePhotoUploader, taxInvoiceUploader } = require('../../lib/fileUpload');
 const moneyCtrl = require('../money/money.controller');
-const { uploadLimiter, userUploadLimiter, otpLimiter, perUserLimiter } = require('../../middleware/rateLimiter');
+const { uploadLimiter, userUploadLimiter, otpLimiter, perUserLimiter, visitBookingLimiter, payoutAccountLimiter, supportTicketLimiter } = require('../../middleware/rateLimiter');
 
 router.use(authenticate, requirePartner, perUserLimiter);
 
@@ -33,7 +33,8 @@ router.post('/kyc', uploadLimiter, kycDocUploader.array('documents', 5), ctrl.su
 router.post('/leads',                       requireKyc, leadsCtrl.partnerAddLead);
 router.get('/leads',                        requireKyc, leadsCtrl.getMyLeads);
 router.get('/leads/:id',                    requireKyc, leadsCtrl.getLeadById);
-router.post('/leads/:id/schedule-visit',    requireKyc, leadsCtrl.scheduleVisit);
+// Same limiter as the /leads/partner/:id/schedule-visit twin (Audit Nov 2026 L5, P8): booking sends the buyer a WhatsApp code.
+router.post('/leads/:id/schedule-visit',    requireKyc, visitBookingLimiter, leadsCtrl.scheduleVisit);
 router.post('/leads/:id/resend-otp',        requireKyc, otpLimiter, leadsCtrl.resendOtp);
 router.post('/leads/:id/request-otp-override', requireKyc, leadsCtrl.requestOtpOverride);
 router.post('/leads/:id/verify-otp',        requireKyc, otpLimiter, leadsCtrl.verifyOtp);
@@ -107,9 +108,9 @@ router.patch('/settings', ctrl.updateSettings);
 router.get('/bank-account',   requireKyc, ctrl.getBankAccount);
 // B12.1/B12.4 — RazorpayX payout account (no Route onboarding).
 router.get('/payout-account',  ctrl.getPayoutAccount);
-router.post('/payout-account', ctrl.createPayoutAccount);
+router.post('/payout-account', payoutAccountLimiter, ctrl.createPayoutAccount);
 // BE-14 — the only way to change an ACTIVE account's bank details.
-router.post('/payout-account/change-request', ctrl.requestPayoutAccountChange);
+router.post('/payout-account/change-request', payoutAccountLimiter, ctrl.requestPayoutAccountChange);
 router.patch('/bank-account', requireKyc, ctrl.updateBankAccount);
 
 // R8 — billing details (for the commission invoice).
@@ -126,7 +127,7 @@ router.patch('/referrals/:id/revoke', requireKyc, referralCtrl.revokeMine);
 
 // Support tickets (Help & Support page)
 router.get('/support-tickets',      ctrl.getSupportTickets);
-router.post('/support-tickets',     ctrl.createSupportTicket);
+router.post('/support-tickets',     supportTicketLimiter, ctrl.createSupportTicket);
 router.get('/support-tickets/:id',  validateObjectId('id'), ctrl.getSupportTicketById);
 router.post('/support-tickets/:id/reply', validateObjectId('id'), ctrl.replyToSupportTicket);
 

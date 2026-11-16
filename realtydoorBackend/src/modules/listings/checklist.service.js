@@ -395,7 +395,7 @@ async function recordOwnerConfirmationResponse(id, { status, note }, adminId, ip
 
 module.exports = {
   OWNER_DOCUMENT_TYPES, UPLOADABLE_OWNER_DOCUMENT_TYPES, CONFIRMATION_WINDOW_MS,
-  getChecklist,
+  getChecklist, checklistFor,
   uploadChecklistDocument, verifyChecklistDocument, rejectChecklistDocument,
   requestOwnerConfirmation, recordOwnerConfirmationResponse,
 };

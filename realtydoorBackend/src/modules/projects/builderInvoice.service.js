@@ -64,7 +64,8 @@ async function createInvoice(unitId, adminId, ip) {
     title: 'Brokerage invoice issued',
     message: `A brokerage invoice of ₹${amount.toLocaleString('en-IN')} for unit ${unit.unitNumber} (${unit.project.title}) is now due.`,
     type: 'BUILDER_INVOICE_ISSUED',
-    linkUrl: url,
+    // An in-app page, not the file: the bucket is private (Audit Nov 2026 A1, P12).
+    linkUrl: '/partners/projects',
   });
 
   await createAuditLog({
@@ -83,7 +84,9 @@ async function collectInvoice(id, adminId, ip) {
   }
 
   const collectedAt = new Date();
-  const updated = await prisma.builderInvoice.update({ where: { id }, data: { status: 'COLLECTED', collectedAt } });
+  const claim = await prisma.builderInvoice.updateMany({ where: { id, status: 'INVOICED' }, data: { status: 'COLLECTED', collectedAt } });
+  if (!claim.count) throw new ApiError(409, 'This invoice was just collected or disputed by someone else.', { code: 'INVALID_INVOICE_STATUS' });
+  const updated = await prisma.builderInvoice.findUnique({ where: { id } });
 
   await createNotification({
     userId: invoice.builderId,
@@ -111,10 +114,9 @@ async function disputeInvoice(id, reason, adminId, ip) {
     throw new ApiError(400, `Cannot dispute from status ${invoice.status}`, { code: 'INVALID_INVOICE_STATUS' });
   }
 
-  const updated = await prisma.builderInvoice.update({
-    where: { id },
-    data: { status: 'DISPUTED', disputeNote: reason },
-  });
+  const claim = await prisma.builderInvoice.updateMany({ where: { id, status: 'INVOICED' }, data: { status: 'DISPUTED', disputeNote: reason } });
+  if (!claim.count) throw new ApiError(409, 'This invoice was just collected or disputed by someone else.', { code: 'INVALID_INVOICE_STATUS' });
+  const updated = await prisma.builderInvoice.findUnique({ where: { id } });
 
   await createAuditLog({
     adminId, action: 'BUILDER_INVOICE_DISPUTED', targetType: 'BuilderInvoice', targetId: id,
