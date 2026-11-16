@@ -5,8 +5,9 @@ const unitSvc = require('./projectUnit.service');
 const adminSvc = require('./project.admin.service');
 const {
   createProjectSchema, updateProjectSchema, bulkAddUnitsSchema, unitSchema, setUnitStatusSchema,
-  rejectProjectSchema, requestProjectChangesSchema, setApprovalItemSchema, setBrokerageSchema,
+  rejectProjectSchema, requestProjectChangesSchema, setApprovalItemSchema, setBrokerageSchema, adminStatusSchema, adminBulkStatusSchema,
 } = require('./project.validator');
+const inventorySvc = require('./inventory.service');
 
 // ─── Public ───────────────────────────────────────────────────────────────────
 
@@ -63,8 +64,9 @@ async function addUnit(req, res, next) {
 
 async function bulkAddUnits(req, res, next) {
   try {
-    const { units } = bulkAddUnitsSchema.parse(req.body);
-    const result = await unitSvc.bulkAddUnits(req.params.id, req.user.id, units);
+    const { units, dryRun } = bulkAddUnitsSchema.parse(req.body);
+    const result = await unitSvc.bulkAddUnits(req.params.id, req.user.id, units, { dryRun, ip: req.ip });
+    if (result.dryRun) return success(res, result, `${result.validCount} unit(s) ready to add, ${result.errorCount} refused`);
     created(res, result, `${result.createdCount} unit(s) added${result.failedCount ? `, ${result.failedCount} failed` : ''}`);
   } catch (err) { next(err); }
 }
@@ -142,7 +144,57 @@ async function setBrokerage(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// ─── Admin inventory ──────────────────────────────────────────────────────────
+
+async function inventoryList(req, res, next) {
+  try {
+    const { page, limit, skip } = parsePagination({ ...req.query, limit: req.query.limit || '50' });
+    const { data, total } = await inventorySvc.listUnits(req.query, skip, limit);
+    success(res, paginate(data, total, page, limit));
+  } catch (err) { next(err); }
+}
+
+async function inventorySummary(req, res, next) {
+  try { success(res, await inventorySvc.summary(req.query)); } catch (err) { next(err); }
+}
+
+async function inventorySetStatus(req, res, next) {
+  try {
+    const body = adminStatusSchema.parse(req.body);
+    success(res, await inventorySvc.setStatus(req.params.unitId, body, req.user.id, req.ip), `Unit marked ${body.status}`);
+  } catch (err) { next(err); }
+}
+
+async function inventoryBulkStatus(req, res, next) {
+  try {
+    const { unitIds, ...body } = adminBulkStatusSchema.parse(req.body);
+    success(res, await inventorySvc.bulkSetStatus(unitIds, body, req.user.id, req.ip));
+  } catch (err) { next(err); }
+}
+
+async function inventoryExport(req, res, next) {
+  try {
+    const { buffer, rows } = await inventorySvc.exportUnits(req.query, req.user.id, req.ip);
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="realtydoor-inventory-${stamp}.xlsx"`,
+      'Cache-Control': 'private, no-store',
+      'X-Row-Count': String(rows),
+    });
+    res.send(Buffer.from(buffer));
+  } catch (err) { next(err); }
+}
+
+async function inventoryImport(req, res, next) {
+  try {
+    const { units, dryRun } = bulkAddUnitsSchema.parse(req.body);
+    success(res, await inventorySvc.importUnits(req.params.id, units, { dryRun, actor: { id: req.user.id, role: 'ADMIN' }, ip: req.ip }));
+  } catch (err) { next(err); }
+}
+
 module.exports = {
+  inventoryList, inventorySummary, inventorySetStatus, inventoryBulkStatus, inventoryExport, inventoryImport,
   search, getBySlug,
   create, getMine, listMine, update, addUnit, bulkAddUnits, updateUnit, setUnitStatus, deleteUnit,
   listAdmin, getAdmin, approve, reject, requestChanges, setApprovalItem, setBrokerage,

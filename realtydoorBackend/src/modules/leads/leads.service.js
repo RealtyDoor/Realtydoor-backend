@@ -1,5 +1,6 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
+const { ON_MARKET } = require('../properties/availability.service');
 const { LIVE_PARTNER, listingOwnerBlocker } = require('../../lib/partnerStanding');
 const { formatContact, maskPhone, maskEmail } = require('../../lib/phoneUtils');
 const { generate, expiresAt, isExpired, isLocked, lockUntil, maxAttemptsReached, MAX_ATTEMPTS } = require('../../lib/otp');
@@ -128,9 +129,11 @@ function sanitizeLeadForBuyer(lead) {
 }
 
 async function submitLead(data, user) {
-  const property = await prisma.property.findUnique({ where: { id: data.propertyId }, select: { id: true, title: true, publishStatus: true, partnerId: true } });
+  const property = await prisma.property.findUnique({ where: { id: data.propertyId }, select: { id: true, title: true, publishStatus: true, partnerId: true, availability: true } });
   if (!property) throw new ApiError(404, 'Property not found');
   if (property.publishStatus !== 'APPROVED') throw new ApiError(400, 'This property is not currently available for enquiry');
+  // Inventory: a sold or rented listing takes no new enquiries.
+  if (['SOLD', 'RENTED'].includes(property.availability)) throw new ApiError(409, `This property has been ${property.availability.toLowerCase()} and is no longer available.`, { code: 'LISTING_NOT_AVAILABLE' });
   // Audit Nov 2026 (P2). No enquiry on a listing whose partner is suspended, unverified or gone: nobody would answer it.
   const listingOwner = await prisma.user.findUnique({ where: { id: property.partnerId }, select: { role: true, kycStatus: true, isSuspended: true, deletedAt: true } });
   if (listingOwnerBlocker(listingOwner)) throw new ApiError(400, 'This property is not currently available for enquiry');
@@ -282,7 +285,7 @@ async function addPartnerLeadLocked(partnerId, data) {
   // the ownership rules below (one mobile number is one buyer) still apply.
   // B10 — only a live (approved) listing: a rejected or pending one is not something a buyer can be sent to.
   const property = await prisma.property.findFirst({
-    where: { id: data.propertyId, publishStatus: 'APPROVED', ...LIVE_PARTNER },
+    where: { id: data.propertyId, publishStatus: 'APPROVED', ...LIVE_PARTNER, ...ON_MARKET },
     select: { id: true, title: true },
   });
   if (!property) throw new ApiError(404, 'Property not found among live listings');

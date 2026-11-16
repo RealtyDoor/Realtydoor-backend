@@ -151,6 +151,15 @@ router.patch('/projects/:id/approve',        requirePermission('LISTINGS'), proj
 router.patch('/projects/:id/reject',         requirePermission('LISTINGS'), projectCtrl.reject);
 router.patch('/projects/:id/request-changes', requirePermission('LISTINGS'), projectCtrl.requestChanges);
 router.patch('/projects/:id/approvals/:item', requirePermission('LISTINGS'), projectCtrl.setApprovalItem);
+// Inventory (units of every builder project): one list, status changes with a reason, bulk change, Excel export, checked import.
+// Static segments first; /inventory/units/:unitId/status takes the unit's own id.
+router.patch('/properties/:id/availability', validateObjectId('id'), requirePermission('LISTINGS'), require('../properties/availability.controller').set);
+router.get('/inventory',                 requirePermission('LISTINGS'), projectCtrl.inventoryList);
+router.get('/inventory/summary',         requirePermission('LISTINGS'), projectCtrl.inventorySummary);
+router.get('/inventory/export',          requirePermission('LISTINGS'), projectCtrl.inventoryExport);
+router.post('/inventory/units/bulk-status', requirePermission('LISTINGS'), projectCtrl.inventoryBulkStatus);
+router.patch('/inventory/units/:unitId/status', validateObjectId('unitId'), requirePermission('LISTINGS'), projectCtrl.inventorySetStatus);
+router.post('/projects/:id/units/import', validateObjectId('id'), requirePermission('LISTINGS'), projectCtrl.inventoryImport);
 // R28 — admin-only; a builder cannot set their own brokerage rate.
 router.patch('/projects/:id/brokerage',       requirePermission('COMMISSION'), projectCtrl.setBrokerage);
 

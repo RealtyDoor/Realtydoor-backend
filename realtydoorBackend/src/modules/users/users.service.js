@@ -1110,7 +1110,7 @@ async function getLoanApplicationById(userId, loanId) {
 
 async function requestVideoTour(userId, propertyId, userNote) {
   const property = await prisma.property.findFirst({
-    where: { id: propertyId, publishStatus: 'APPROVED', ...LIVE_PARTNER },
+    where: { id: propertyId, publishStatus: 'APPROVED', ...LIVE_PARTNER, ...require('../properties/availability.service').ON_MARKET },
     select: { id: true, title: true },
   });
   if (!property) throw new ApiError(404, 'Property not found');

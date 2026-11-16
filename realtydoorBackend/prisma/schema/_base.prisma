@@ -25,6 +25,14 @@ enum PartnerSubType {
   OWNER
 }
 
+// Is the listing still on the market? Not set (null) means available. SOLD is for a sale listing, RENTED for a rent or lease listing.
+enum PropertyAvailability {
+  AVAILABLE
+  ON_HOLD
+  SOLD
+  RENTED
+}
+
 enum PropertyType {
   FLAT
   INDEPENDENT_HOUSE

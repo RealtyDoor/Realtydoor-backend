@@ -41,6 +41,11 @@ model Property {
   changesRequestedByAdminId String?   @db.ObjectId
   isB2BOnly         Boolean        @default(false)
 
+  // Inventory (audit Nov 2026): optional on purpose, so every existing listing (field missing) reads as available. SOLD and RENTED
+  // listings leave search and the homepage but keep their page, with a ribbon, so shared links still work; they take no new enquiries.
+  availability          PropertyAvailability?
+  availabilityChangedAt DateTime?
+
   // Physical details
   bhk            Int?
   bathrooms      Int?

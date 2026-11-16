@@ -34,8 +34,18 @@ const unitSchema = z.object({
   floorNumber: z.number().int().optional(),
 });
 
+// Each row is checked on its own by the import code (one bad row must not refuse the whole file), so rows are not validated here.
 const bulkAddUnitsSchema = z.object({
-  units: z.array(unitSchema).min(1).max(500),
+  units: z.array(z.any()).min(1).max(500),
+  dryRun: z.boolean().optional(),
+});
+
+const adminStatusSchema = z.object({
+  status: z.enum(['AVAILABLE', 'BOOKED', 'SOLD', 'ON_HOLD']),
+  reason: z.string().trim().min(5, 'Give a reason of at least 5 characters').max(300),
+});
+const adminBulkStatusSchema = adminStatusSchema.extend({
+  unitIds: z.array(z.string().regex(/^[a-f\d]{24}$/i, 'Invalid ID')).min(1).max(200),
 });
 
 const setUnitStatusSchema = z.object({
@@ -62,5 +72,5 @@ const setBrokerageSchema = z.object({
 
 module.exports = {
   createProjectSchema, updateProjectSchema, unitSchema, bulkAddUnitsSchema, setUnitStatusSchema,
-  rejectProjectSchema, requestProjectChangesSchema, setApprovalItemSchema, setBrokerageSchema,
+  rejectProjectSchema, requestProjectChangesSchema, setApprovalItemSchema, setBrokerageSchema, adminStatusSchema, adminBulkStatusSchema,
 };

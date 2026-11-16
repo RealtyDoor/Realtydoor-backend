@@ -28,6 +28,8 @@ const OBJECT_ID_RE = /^[0-9a-f]{24}$/i;
 // assigns where.OR for the free-text query, which would overwrite a top-level
 // OR and silently drop the visibility filter from every keyword search.
 const SEARCHABLE = { OR: [{ isSearchable: true }, { isSearchable: { isSet: false } }] };
+// Inventory: a sold or rented listing keeps its page but is not offered in search, peers or the homepage.
+const { ON_MARKET } = require('./availability.service');
 
 const SORT_MAP = {
   price_asc: { price: 'asc' },
@@ -40,7 +42,7 @@ async function searchProperties(query, skip, limit, page) {
   const where = {
     publishStatus: 'APPROVED',
     isB2BOnly: false,
-    AND: [SEARCHABLE, LIVE_PARTNER],
+    AND: [SEARCHABLE, LIVE_PARTNER, ON_MARKET],
   };
 
   if (query.q) {
@@ -119,7 +121,7 @@ async function searchProperties(query, skip, limit, page) {
     id: true, title: true, slug: true, price: true, monthlyRent: true,
     propertyType: true, listingType: true, propertyStatus: true,
     bhk: true, balconies: true, carpetArea: true, locality: true, city: true,
-    images: true, coverImageIndex: true, isVerified: true, isFeatured: true,
+    images: true, coverImageIndex: true, isVerified: true, isFeatured: true, availability: true,
     reraNumber: true, createdAt: true, facing: true, furnishing: true,
     previousPrice: true, priceChange6m: true, unitsLeft: true, viewsThisWeek: true,
     // Used by the property detail page's peer-comparison ("Better/below
@@ -211,7 +213,7 @@ function withValuePresence(where, field, present) {
 // listing papers, loan and co-owner details, admin notes and ids, the partner's own map pin, the B2B commission offer.
 // A new column must be added to one of the two lists; tests/unit/audit2026_11_access.test.js fails until it is.
 const PUBLIC_PROPERTY_FIELDS = [
-  'id', 'title', 'slug', 'description', 'price', 'previousPrice', 'priceChange6m', 'monthlyRent', 'priceNegotiable',
+  'id', 'title', 'slug', 'description', 'availability', 'price', 'previousPrice', 'priceChange6m', 'monthlyRent', 'priceNegotiable',
   'propertyType', 'listingType', 'propertyStatus', 'publishStatus', 'isFeatured', 'isFeaturedProject', 'isSearchable', 'isB2BOnly',
   'bhk', 'bathrooms', 'balconies', 'carpetArea', 'builtUpArea', 'plotArea', 'floorNumber', 'totalFloors', 'ageOfProperty',
   'furnishing', 'facing', 'possessionDate', 'unitsLeft', 'viewsThisWeek', 'developer', 'projectId', 'landAreaValue', 'landAreaUnit',
@@ -223,7 +225,7 @@ const PUBLIC_PROPERTY_FIELDS = [
 const PRIVATE_PROPERTY_FIELDS = [
   'rejectionNote', 'adminEditNote', 'requestedChanges', 'requestedChangesNote', 'changesRequestedAt', 'changesRequestedByAdminId',
   'partnerPinLatitude', 'partnerPinLongitude', 'locationVerifiedByAdminId', 'isMortgaged', 'mortgageLender', 'loanNocStatus',
-  'loanNocUrl', 'hasCoOwners', 'documents', 'commissionSplitOffer', 'b2bUrgent',
+  'loanNocUrl', 'hasCoOwners', 'documents', 'commissionSplitOffer', 'b2bUrgent', 'availabilityChangedAt',
 ];
 function pickPublicProperty(property) {
   const out = {};
@@ -276,7 +278,7 @@ async function getPropertyByIdOrSlug(idOrSlug, { countView = true, includePrivat
         publishStatus: 'APPROVED', isB2BOnly: false,
         city: property.city, propertyType: property.propertyType,
         id: { not: property.id },
-        AND: [SEARCHABLE, LIVE_PARTNER],
+        AND: [SEARCHABLE, LIVE_PARTNER, ON_MARKET],
       },
       take: 6,
       orderBy: { createdAt: 'desc' },
@@ -671,7 +673,7 @@ async function updateProperty(id, partnerId, data) {
 async function getFeaturedProperties() {
   return withCache(CACHE_KEYS.FEATURED_PROPERTIES, 600, () => prisma.property.findMany({
     // Audit Nov 2026 (P2, P16): the homepage follows the same rules as search.
-    where: { publishStatus: 'APPROVED', isFeatured: true, isB2BOnly: false, AND: [SEARCHABLE, LIVE_PARTNER] },
+    where: { publishStatus: 'APPROVED', isFeatured: true, isB2BOnly: false, AND: [SEARCHABLE, LIVE_PARTNER, ON_MARKET] },
     take: 12,
     orderBy: { createdAt: 'desc' },
     select: {

@@ -74,6 +74,8 @@ router.get('/listings',    requireKyc, ctrl.getMyListings);
 router.get('/listings/change-requests',              requireKyc, listingCtrl.myChangeRequests);
 router.patch('/listings/change-requests/:id/withdraw', requireKyc, listingCtrl.withdrawChangeRequest);
 router.get('/listings/:id', requireKyc, ctrl.getListing);
+// Inventory: mark my live listing available, on hold, sold or rented.
+router.patch('/listings/:id/availability', requireKyc, validateObjectId('id'), require('../properties/availability.controller').set);
 
 // 4.10 / 4.11 — builder's own projects and unit inventory (KYC required).
 // Static segments above /projects/:id for the same reason as /listings above.

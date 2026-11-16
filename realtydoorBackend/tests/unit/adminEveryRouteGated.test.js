@@ -18,7 +18,7 @@ const RULES = [
   [(v, p) => v === 'get' && (p === '/leads' || p === '/leads/:id'), ['LEADS', 'SALES']],
   [(v, p) => p === '/routing-rules', 'LEADS'],
   [(v, p) => v === 'get' && p === '/projects/:id/commission-rate', ['LISTINGS', 'COMMISSION']],
-  [(v, p) => /^\/(properties|projects|microsites)/.test(p), 'LISTINGS'],
+  [(v, p) => /^\/(properties|projects|microsites|inventory)/.test(p), 'LISTINGS'],
   [(v, p) => /^\/builder-invoices/.test(p), ['FINANCE', 'FINANCE_VIEW']],
   [(v, p) => /^\/(kyc|documents)/.test(p), 'KYC'],
   [(v, p) => v === 'get' && /^\/escrow/.test(p), ['FINANCE', 'FINANCE_VIEW']],

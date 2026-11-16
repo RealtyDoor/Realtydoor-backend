@@ -1,6 +1,7 @@
 const prisma = require('../../lib/prisma');
 const ApiError = require('../../utils/ApiError');
 const { notifyAdmins } = require('../../lib/notifications');
+const inventory = require('./inventory.service');
 
 // Inventory management is independent of the project's own approval status
 // (4.10/R23) — a builder's compliance documents were vetted once at project
@@ -25,30 +26,24 @@ function pickUnitFields(data) {
 async function addUnit(projectId, builderId, data) {
   await assertOwnsProject(projectId, builderId);
   try {
-    return await prisma.projectUnit.create({ data: { ...pickUnitFields(data), projectId } });
+    const unit = await prisma.projectUnit.create({ data: { ...pickUnitFields(data), projectId } });
+    await inventory.syncProjectListingFigures(projectId);
+    return unit;
   } catch (err) {
     if (err.code === 'P2002') throw new ApiError(409, `Unit "${data.unitNumber}" already exists in this project`);
     throw err;
   }
 }
 
-// Builders enter inventory in bulk, not one row at a time (a real project
-// can have hundreds of units) — one call, one response reporting both
-// successes and the specific rows that collided, so a single duplicate
-// doesn't silently drop the rest of a large batch.
-async function bulkAddUnits(projectId, builderId, units) {
+// Builders enter inventory in bulk, not one row at a time (a real project can have hundreds of units). Every row is checked on its
+// own, so one bad or repeated row does not hold back the rest; `dryRun` answers what would happen and writes nothing (the CSV
+// preview). The answer keeps the older field names (createdCount, failedCount, failed) next to the new ones.
+async function bulkAddUnits(projectId, builderId, units, { dryRun = false, ip = null } = {}) {
   await assertOwnsProject(projectId, builderId);
-  const created = [];
-  const failed = [];
-  for (const u of units) {
-    try {
-      created.push(await prisma.projectUnit.create({ data: { ...pickUnitFields(u), projectId } }));
-    } catch (err) {
-      if (err.code === 'P2002') failed.push({ unitNumber: u.unitNumber, reason: 'duplicate unit number' });
-      else failed.push({ unitNumber: u.unitNumber, reason: err.message });
-    }
-  }
-  return { createdCount: created.length, failedCount: failed.length, created, failed };
+  const r = await inventory.importUnits(projectId, units, { dryRun, actor: { id: builderId, role: 'PARTNER' }, ip });
+  if (r.dryRun) return r;
+  const failed = r.errors.map((e) => ({ unitNumber: e.unitNumber, reason: e.reason, row: e.row }));
+  return { ...r, failedCount: failed.length, failed };
 }
 
 async function updateUnit(projectId, unitId, builderId, data) {
@@ -61,7 +56,9 @@ async function updateUnit(projectId, unitId, builderId, data) {
   if (unit.status === 'SOLD' && fields.price !== undefined && fields.price !== unit.price) {
     throw new ApiError(409, 'This unit is sold, so its price can no longer be changed. Contact support if the price was entered wrongly.', { code: 'UNIT_SOLD_PRICE_LOCKED' });
   }
-  return prisma.projectUnit.update({ where: { id: unitId }, data: fields });
+  const updated = await prisma.projectUnit.update({ where: { id: unitId }, data: fields });
+  await inventory.syncProjectListingFigures(projectId);
+  return updated;
 }
 
 async function setUnitStatus(projectId, unitId, builderId, status) {
@@ -89,6 +86,7 @@ async function setUnitStatus(projectId, unitId, builderId, status) {
       linkUrl: `/admin/projects/${projectId}`,
     }).catch(() => {});
   }
+  await inventory.syncProjectListingFigures(projectId);
   return prisma.projectUnit.findUnique({ where: { id: unitId } });
 }
 
@@ -99,7 +97,9 @@ async function deleteUnit(projectId, unitId, builderId) {
   if (unit.status !== 'AVAILABLE') {
     throw new ApiError(400, `Cannot delete a unit that is ${unit.status} — set it back to AVAILABLE first if this was entered in error`);
   }
-  return prisma.projectUnit.delete({ where: { id: unitId } });
+  const removed = await prisma.projectUnit.delete({ where: { id: unitId } });
+  await inventory.syncProjectListingFigures(projectId);
+  return removed;
 }
 
 module.exports = { addUnit, bulkAddUnits, updateUnit, setUnitStatus, deleteUnit };
