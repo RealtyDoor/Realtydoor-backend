@@ -6,7 +6,7 @@ const GOOD = {
   NODE_ENV: 'production', DATABASE_URL: 'mongodb://x', CLERK_SECRET_KEY: 'k', CLERK_WEBHOOK_SECRET: 'k', RAZORPAY_KEY_ID: 'k', RAZORPAY_KEY_SECRET: 'k',
   RAZORPAY_WEBHOOK_SECRET: 'k', RAZORPAYX_ACCOUNT_NUMBER: '1', WATI_API_ENDPOINT: 'https://wati.example.com', WATI_ACCESS_TOKEN: 'k', WATI_WEBHOOK_TOKEN: 'tok',
   AWS_ACCESS_KEY_ID: 'k', AWS_SECRET_ACCESS_KEY: 'k', AWS_REGION: 'ap-south-2', AWS_S3_BUCKET: 'b', GMAIL_APP_PASSWORD: 'k', EMAIL_FROM: 'a@b.in',
-  FRONTEND_URL: 'https://www.realtydoor.com', OTP_HASH_SECRET: 'x'.repeat(16),
+  FRONTEND_URL: 'https://www.realtydoor.com', OTP_HASH_SECRET: 'x'.repeat(16), AUDIT_HMAC_SECRET: 'y'.repeat(20),
 };
 const ENV = process.env;
 let exit; let err;
@@ -18,8 +18,8 @@ afterEach(() => { process.env = ENV; exit.mockRestore(); err.mockRestore(); });
 const check = (env) => { process.env = { ...env }; try { validateEnv(); return 'ok'; } catch { return 'exit'; } };
 
 test('a complete production environment boots', () => expect(check(GOOD)).toBe('ok'));
-test('a complete development environment boots without the WATI webhook token', () => {
-  const { WATI_WEBHOOK_TOKEN, ...rest } = GOOD;
+test('a complete development environment boots without the WATI webhook token or the audit-log secret', () => {
+  const { WATI_WEBHOOK_TOKEN, AUDIT_HMAC_SECRET, ...rest } = GOOD;
   expect(check({ ...rest, NODE_ENV: 'development' })).toBe('ok');
 });
 test.each([
@@ -34,6 +34,9 @@ test.each([
   ['no Razorpay webhook secret', { RAZORPAY_WEBHOOK_SECRET: '' }],
   ['no Clerk webhook secret', { CLERK_WEBHOOK_SECRET: undefined }],
   ['a WATI endpoint that is not a URL', { WATI_API_ENDPOINT: 'nope' }],
+  ['no audit-log secret in production (G3)', { AUDIT_HMAC_SECRET: undefined }],
+  ['an audit-log secret under 16 characters', { AUDIT_HMAC_SECRET: 'short' }],
+  ['the audit-log secret equal to the OTP secret', { AUDIT_HMAC_SECRET: 'x'.repeat(16) }],
 ])('refuses to boot with %s', (_n, change) => {
   expect(check({ ...GOOD, ...change })).toBe('exit');
   expect(exit).toHaveBeenCalledWith(1);

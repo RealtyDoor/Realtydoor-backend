@@ -44,6 +44,9 @@ const envSchema = z.object({
   OTP_EXPIRY_MINUTES: z.string().default('120'),
   OTP_MAX_ATTEMPTS: z.string().default('3'),
   OTP_HASH_SECRET: z.string().min(16, 'OTP_HASH_SECRET must be at least 16 characters'),
+  // Audit Nov 2026 (G3). Signs the audit-log chain. It used to fall back to OTP_HASH_SECRET, so one leaked secret would have let someone
+  // forge both. Required, separate and long in production; never change it afterwards (the chain check would fail).
+  AUDIT_HMAC_SECRET: z.string().optional(),
   DEV_EXPOSE_OTP: z.string().optional(),
   DEV_API_KEY: z.string().optional(),
 }).refine(
@@ -58,6 +61,9 @@ const envSchema = z.object({
 ).refine(
   (env) => !(env.NODE_ENV === 'production' && !env.WATI_WEBHOOK_TOKEN),
   { message: 'WATI_WEBHOOK_TOKEN must be set in production — without it, the WATI webhook accepts unauthenticated requests (fake replies, fake delivery events).', path: ['WATI_WEBHOOK_TOKEN'] }
+).refine(
+  (env) => env.NODE_ENV !== 'production' || (!!env.AUDIT_HMAC_SECRET && env.AUDIT_HMAC_SECRET.length >= 16 && env.AUDIT_HMAC_SECRET !== env.OTP_HASH_SECRET),
+  { message: 'AUDIT_HMAC_SECRET must be set in production, at least 16 characters, and different from OTP_HASH_SECRET (it signs the audit-log chain; never change it afterwards).', path: ['AUDIT_HMAC_SECRET'] }
 );
 
 function validateEnv() {
