@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { check } = require('./productionSpec');
 
 const envSchema = z.object({
   // Security fix, 2026-10-13 (B3) — no default. The dev-bypass gate
@@ -52,18 +53,6 @@ const envSchema = z.object({
 }).refine(
   (env) => Boolean(env.AWS_ACCESS_KEY_ID) === Boolean(env.AWS_SECRET_ACCESS_KEY),
   { message: 'Set both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or neither (neither = use the task IAM role).', path: ['AWS_ACCESS_KEY_ID'] }
-).refine(
-  (env) => !(env.NODE_ENV === 'production' && env.DEV_EXPOSE_OTP === 'true'),
-  { message: 'DEV_EXPOSE_OTP must not be set to "true" in production — it echoes real OTP codes in API responses.', path: ['DEV_EXPOSE_OTP'] }
-).refine(
-  (env) => !(env.NODE_ENV === 'production' && env.DEV_API_KEY),
-  { message: 'DEV_API_KEY must not be set in production — it is a full auth bypass with no password/signature check.', path: ['DEV_API_KEY'] }
-).refine(
-  (env) => !(env.NODE_ENV === 'production' && !env.WATI_WEBHOOK_TOKEN),
-  { message: 'WATI_WEBHOOK_TOKEN must be set in production — without it, the WATI webhook accepts unauthenticated requests (fake replies, fake delivery events).', path: ['WATI_WEBHOOK_TOKEN'] }
-).refine(
-  (env) => env.NODE_ENV !== 'production' || (!!env.AUDIT_HMAC_SECRET && env.AUDIT_HMAC_SECRET.length >= 16 && env.AUDIT_HMAC_SECRET !== env.OTP_HASH_SECRET),
-  { message: 'AUDIT_HMAC_SECRET must be set in production, at least 16 characters, and different from OTP_HASH_SECRET (it signs the audit-log chain; never change it afterwards).', path: ['AUDIT_HMAC_SECRET'] }
 );
 
 function validateEnv() {
@@ -71,6 +60,17 @@ function validateEnv() {
   if (!result.success) {
     console.error('Invalid environment variables:\n', result.error.flatten().fieldErrors);
     process.exit(1);
+  }
+  // Production-only refusals (a login bypass key, OTP echo, no WATI webhook token, no separate audit secret, ...) come from the one
+  // list of settings, src/config/productionSpec.js, so this check, .env.example and the runbook cannot disagree.
+  if (process.env.NODE_ENV === 'production') {
+    const problems = check(process.env, { profile: 'boot' });
+    for (const p of problems.filter((x) => x.level === 'warn')) console.warn(`Warning: ${p.key} ${p.message}`);
+    const fails = problems.filter((x) => x.level === 'fail');
+    if (fails.length) {
+      console.error('Refusing to start in production:\n' + fails.map((f) => `  ${f.key} ${f.message}`).join('\n'));
+      process.exit(1);
+    }
   }
 }
 
