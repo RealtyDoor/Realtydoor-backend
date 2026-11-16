@@ -8,3 +8,6 @@ coverage/
 *.log
 .DS_Store
 logs/*.log
+
+# Lead exports hold real people's details
+exports/
