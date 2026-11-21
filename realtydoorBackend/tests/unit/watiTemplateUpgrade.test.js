@@ -50,6 +50,10 @@ describe('image versions of templates', () => {
     expect(imageTemplateName('phone_verification_otp')).toBeNull();
     expect(resolve('site_visit_otp', new Set(['site_visit_otp_img']))).toBe('site_visit_otp');
   });
+  test('welcome_buyer goes to welcome_buyer_v2 once it is live (Meta rejected the first two)', () => {
+    expect(resolve('welcome_buyer', new Set())).toBe('welcome_buyer');
+    expect(resolve('welcome_buyer', new Set(['welcome_buyer_v2']))).toBe('welcome_buyer_v2');
+  });
   test('every mapped image exists in the website\'s public folder', () => {
     const dir = path.resolve(__dirname, '../../../../admin-nextjs/public/whatsapp');
     for (const img of new Set(Object.values(IMAGE_FOR))) expect(fs.existsSync(path.join(dir, `${img}.jpg`))).toBe(true);

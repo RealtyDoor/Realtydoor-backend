@@ -209,6 +209,9 @@ const TEMPLATE_UPGRADES = {
   nri_video_tour_scheduled: 'nri_video_tour_scheduled_v2',
   lead_registration_received: 'lead_registration_received_v2',
   lead_registration_confirmed: 'lead_registration_confirmed_v2',
+  // 21 Nov 2026: Meta rejected welcome_buyer and welcome_buyer_img (a plain "welcome" reads as marketing). welcome_buyer_v2 is reworded as an
+  // account-created notice with the image header built in. A rejected name cannot be reused, so this is how welcome_buyer reaches it.
+  welcome_buyer: 'welcome_buyer_v2',
 };
 
 /** The template to actually send: the new version when it is live, otherwise the name as asked for. */
