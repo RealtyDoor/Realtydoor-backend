@@ -89,7 +89,8 @@ describe('confirming a payment', () => {
   const pending = { id: 'e1', buyerId: 'b1', leadId: 'l1', razorpayOrderId: 'order_1', status: 'PAYMENT_PENDING', amount: 50000, chargedPaise: TOKEN, processingFeePaise: 0 };
   const held = { ...pending, status: 'HELD', razorpayPaymentId: 'pay_1', heldAt: new Date() };
   const pay = (amount) => ({ order_id: 'order_1', status: 'captured', amount, currency: 'INR' });
-  const flush = () => new Promise((r) => setTimeout(r, 20));
+  // Waits for the fire-and-forget email instead of a fixed 20 ms, which was too short when every test file runs at once (flaky, 21 Nov 2026).
+  const flush = async () => { for (let i = 0; i < 100 && !email.sendEscrowHeld.mock.calls.length; i++) await new Promise((r) => setTimeout(r, 10)); };
   beforeEach(() => {
     jest.resetAllMocks();
     notifications.createNotification.mockResolvedValue(); notifications.notifyAdmins.mockResolvedValue();

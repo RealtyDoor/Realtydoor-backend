@@ -212,9 +212,50 @@ const TEMPLATE_UPGRADES = {
 };
 
 /** The template to actually send: the new version when it is live, otherwise the name as asked for. */
+// Branded image versions (21 Nov 2026): the same wording as the newest text version, with a fixed image header set when the template
+// is created in WATI (images: admin-nextjs/public/whatsapp/, served at https://www.realtydoor.com/whatsapp/<image>.jpg). Named
+// <base>_img. Like every upgrade, one is sent only once it is listed in WATI_LIVE_TEMPLATES after Meta approves it. Plan:
+// admin-nextjs/docs/WHATSAPP_IMAGE_SET.md; each template's copy: admin-nextjs/docs/WHATSAPP_IMAGE_TEMPLATES.md. One-time-code templates cannot carry images (Meta's Authentication category).
+const IMAGE_FOR = {
+  welcome_buyer: 'wa-welcome-buyer',
+  welcome_partner: 'wa-welcome-partner', kyc_approved: 'wa-welcome-partner',
+  escrow_token_received: 'wa-token-held', partner_token_held: 'wa-token-held',
+  escrow_refunded: 'wa-refund',
+  escrow_payment_failed: 'wa-payment-failed',
+  escrow_released: 'wa-deal-closed', partner_tax_invoice_needed: 'wa-deal-closed',
+  partner_payout_failed: 'wa-payout',
+  visit_reminder: 'wa-visit',
+  nri_video_tour_scheduled: 'wa-video-tour',
+  buyer_feedback_request: 'wa-feedback',
+  buyer_ticket_update: 'wa-support', partner_support_reply: 'wa-support', contact_reply: 'wa-support', ticket_vendor_dispatched: 'wa-support',
+  dispute_update: 'wa-dispute',
+  loan_status_update: 'wa-loan',
+  listing_approved: 'wa-listing-live',
+  listing_rejected: 'wa-listing-changes', listing_changes_requested: 'wa-listing-changes',
+  kyc_rejected: 'wa-kyc',
+  partner_tax_invoice_accepted: 'wa-tax-invoice', partner_tax_invoice_rejected: 'wa-tax-invoice',
+  lead_assigned_notice: 'wa-new-lead',
+  lead_registration_received: 'wa-lead-registration', lead_registration_confirmed: 'wa-lead-registration',
+  lead_registration_not_credited: 'wa-lead-registration', lead_registration_rejected: 'wa-lead-registration', lead_registration_lapsed: 'wa-lead-registration',
+  lead_hold_ending: 'wa-lead-timer', lead_extension_approved: 'wa-lead-timer', lead_extension_declined: 'wa-lead-timer',
+  lead_drop_approved: 'wa-lead-timer', lead_drop_rejected: 'wa-lead-timer', lead_given_checkin: 'wa-lead-timer',
+  onboarding_form_ready: 'wa-onboarding', onboarding_form_received: 'wa-onboarding',
+  partner_buyer_cancelled: 'wa-brand',
+};
+const baseName = (name) => String(name).replace(/_v\d+$/, '').replace(/_img$/, '');
+const imageTemplateName = (name) => (IMAGE_FOR[baseName(name)] ? `${baseName(name)}_img` : null);
+
+/** The template to actually send: its branded image version when that is live, else the newest live text version, else the name asked for. */
 function resolveTemplate(name, live = LIVE_TEMPLATES) {
-  const upgraded = TEMPLATE_UPGRADES[name];
-  return upgraded && live.has(upgraded) ? upgraded : name;
+  const img = imageTemplateName(name);
+  if (img && live.has(img)) return img;
+  let pick = name;
+  const seen = new Set([name]);
+  for (let next = TEMPLATE_UPGRADES[name]; next && !seen.has(next); next = TEMPLATE_UPGRADES[next]) {
+    seen.add(next);
+    if (live.has(next)) pick = next;
+  }
+  return pick;
 }
 
 // WhatsApp copies of the lead-rule messages (4 Nov 2026). Not sent until each name is added to WATI_LIVE_TEMPLATES once Meta approves it.
@@ -294,7 +335,7 @@ async function sendOnboardingWhatsApp(phone, template, { name, project, formLink
   return sendTemplateMessage(phone, template, parameters, {});
 }
 
-module.exports = { LEAD_RULE_TEMPLATES, TEMPLATE_UPGRADES, resolveTemplate, liveSet,
+module.exports = { LEAD_RULE_TEMPLATES, TEMPLATE_UPGRADES, IMAGE_FOR, imageTemplateName, resolveTemplate, liveSet,
   sendTemplateMessage,
   sendSiteVisitOtp,
   sendLeadAssignedNotice,

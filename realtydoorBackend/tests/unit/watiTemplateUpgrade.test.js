@@ -29,3 +29,29 @@ describe('resolveTemplate', () => {
     expect(LEAD_RULE_TEMPLATES).toContain('lead_registration_received');
   });
 });
+
+// Branded image versions (21 Nov 2026).
+describe('image versions of templates', () => {
+  const { IMAGE_FOR, imageTemplateName, resolveTemplate: resolve } = require('../../src/lib/wati');
+  const fs = require('fs');
+  const path = require('path');
+  test('an image version is sent only once it is live; until then the newest live text version, as before', () => {
+    expect(resolve('escrow_refunded', new Set(['escrow_refunded_v2']))).toBe('escrow_refunded_v2');
+    expect(resolve('escrow_refunded', new Set(['escrow_refunded_v2', 'escrow_refunded_img']))).toBe('escrow_refunded_img');
+    expect(resolve('escrow_refunded', new Set())).toBe('escrow_refunded');
+  });
+  test('an older or newer text name finds the same image version', () => {
+    const live = new Set(['visit_reminder_img']);
+    expect(resolve('visit_reminder_v2', live)).toBe('visit_reminder_img');
+    expect(imageTemplateName('buyer_feedback_request_v2')).toBe('buyer_feedback_request_img');
+  });
+  test('one-time-code templates never get an image version', () => {
+    expect(imageTemplateName('site_visit_otp')).toBeNull();
+    expect(imageTemplateName('phone_verification_otp')).toBeNull();
+    expect(resolve('site_visit_otp', new Set(['site_visit_otp_img']))).toBe('site_visit_otp');
+  });
+  test('every mapped image exists in the website\'s public folder', () => {
+    const dir = path.resolve(__dirname, '../../../../admin-nextjs/public/whatsapp');
+    for (const img of new Set(Object.values(IMAGE_FOR))) expect(fs.existsSync(path.join(dir, `${img}.jpg`))).toBe(true);
+  });
+});
