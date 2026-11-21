@@ -31,6 +31,11 @@ const SPEC = [
   e('PORT', 'core', 'Port the API listens on.', { default: '5000', example: '5000' }),
   e('FRONTEND_URL', 'core', 'Public site address; links in emails and PDFs are built from it.', { boot: 'required', example: 'http://localhost:3000', pattern: LIVE_HOST, patternHint: 'must be an https address, not localhost' }),
   e('FRONTEND_URLS', 'core', 'Every host that may call the API (CORS), https, comma separated: site, app, admin and partner.', { example: 'http://localhost:3000', launchRequired: true }),
+  e('PARTNER_PORTAL_URL', 'core', 'Where partners sign in, printed in the welcome and KYC emails. Unset = built from FRONTEND_URL (www becomes partner).', { example: 'https://partner.realtydoor.com' }),
+  e('BUYER_APP_URL', 'core', 'Where buyers sign in, printed in the welcome email. Unset = built from FRONTEND_URL (www becomes app).', { example: 'https://app.realtydoor.com' }),
+  e('BLOCK_DISPOSABLE_EMAILS', 'core', 'true refuses a NEW account whose email is a temporary-mail address (src/lib/disposableEmail.js). Unset = off. Turn on with Clerk\'s own "Block disposable email addresses" setting.', { example: 'true' }),
+  e('DISPOSABLE_EMAIL_EXTRA_DOMAINS', 'core', 'Extra temporary-mail domains to refuse, comma separated (added to the built-in list). Only used when BLOCK_DISPOSABLE_EMAILS is true.', { example: 'example-temp.com' }),
+  e('ONBOARDING_LINK_KEY', 'auth', 'Optional key that protects the saved copy of each build-out form link (src/lib/linkVault.js). Unset = derived from OTP_HASH_SECRET. Long and random; changing it makes old saved links unreadable (press New link).', { secret: true, example: '' }),
   e('SUPPORT_EMAIL', 'core', 'Address shown to users who need help.', { example: 'support@example.com' }),
 
   // ── Database and cache ───────────────────────────────────────────────

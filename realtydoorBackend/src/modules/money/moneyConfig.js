@@ -12,11 +12,12 @@ const DEFINITIONS = {
   // Commission (platform default; a project / property / city card or a
   // partner override beats it, see moneyModel.resolveCommissionRate).
   default_partner_rate_pct:  [1, 'Partner commission, % of the final deal price (same below and above 1 crore).'],
-  default_platform_fee_pct:  [1, 'Realtydoor platform fee, % of the final deal price, charged to the seller or developer on top of the partner rate.'],
+  default_platform_fee_pct:  [0, 'Realtydoor platform fee, % of the final deal price, charged to the seller or developer on top of the partner rate. 0 since 21 Nov 2026 (owner: "keep platform fee 0 as of now"; was 1). Locked deals keep the rate they were agreed at.'],
   commission_gst_pct:        [18, 'GST % on the seller / developer invoice (partner rate + platform fee) and on a registered partner commission.'],
 
   // Buyer processing fee (token / 0.9764 at the standard rate).
-  processing_fee_enabled:    ['true', 'Charge the buyer a separate payment processing fee on the token. "true" or "false".'],
+  processing_fee_enabled:    ['false', 'LOCKED to false (owner, 20 Nov 2026). Realtydoor adds no processing fee: Razorpay\'s Customer Fee Bearer is permanent and Razorpay collects its own charge at checkout. A future Realtydoor platform fee would be a separate feature, not this.'],
+  processing_fee_bearer:     ['CUSTOMER', 'LOCKED to CUSTOMER (owner, 20 Nov 2026: permanent, no rollback). Razorpay\'s Customer Fee Bearer: our order is the token only and Razorpay shows and collects its own charge at checkout (the payment Razorpay reports is the token plus its charge; a refund does not return that charge). Applies to every Razorpay payment, service plans too.'],
   processing_fee_gateway_pct: [2, 'Payment gateway charge % used to size the processing fee (Razorpay standard 2%). Confirm the account rate.'],
   processing_fee_gateway_pct_nri: [3, 'Payment gateway charge % used to size the processing fee for a buyer marked NRI (a foreign card costs Razorpay 3% + GST instead of 2% + GST).'],
   processing_fee_gateway_gst_pct: [18, 'GST % the gateway adds on its own charge.'],
@@ -79,7 +80,12 @@ function parseSettings(rows) {
       gstPct: num('commission_gst_pct'),
     },
     processingFee: {
-      enabled: str('processing_fee_enabled') !== 'false',
+      // CUSTOMER (Razorpay's Customer Fee Bearer) means we add no fee of our own, whatever processing_fee_enabled says.
+      // Owner, 20 Nov 2026: Razorpay's Customer Fee Bearer is permanent, no rollback. Realtydoor never adds a fee of its own;
+      // Razorpay shows and collects its charge at checkout. Locked here so no stored value (a seeded PLATFORM row, an old
+      // processing_fee_enabled) can ever put our fee back on top of Razorpay's: that would charge the buyer twice.
+      bearer: 'CUSTOMER',
+      enabled: false,
       gatewayPct: num('processing_fee_gateway_pct'),
       gatewayPctNri: num('processing_fee_gateway_pct_nri'),
       gatewayGstPct: num('processing_fee_gateway_gst_pct'),

@@ -346,6 +346,8 @@ router.post('/onboarding/:id/notes',           validateObjectId('id'), requirePe
 router.post('/onboarding/:id/reopen',          validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.reopen);
 router.get('/onboarding/:id/listing-preview',  validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.listingPreview);
 router.post('/onboarding/:id/convert',         validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.convert);
+router.post('/onboarding/:id/copy-link',       validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.copyLink);
+router.post('/onboarding/:id/resend',          validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.resend);
 router.post('/onboarding/:id/revoke',          validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.revoke);
 router.post('/onboarding/:id/documents/:docKey', validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.validateDocKey, onboardingDocUploader.single('file'), onboardingCtrl.adminUpload);
 router.delete('/onboarding/:id/documents/:docId', validateObjectId('id'), requirePermission('LISTINGS'), onboardingCtrl.adminRemoveFile);

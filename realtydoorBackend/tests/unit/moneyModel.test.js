@@ -7,7 +7,7 @@ const rs = (r) => m.toPaise(r);
 
 describe('defaults', () => {
   test('match the Revision 3 decisions', () => {
-    expect(S.commission).toEqual({ partnerRatePct: 1, platformFeePct: 1, gstPct: 18 });
+    expect(S.commission).toEqual({ partnerRatePct: 1, platformFeePct: 0, gstPct: 18 }); // platform fee 0 since 21 Nov 2026
     expect(S.refund.freeWindowHours).toBe(48);
     expect(S.refund.cancellationChargePaise).toBe(299900);
     expect(S.tds).toMatchObject({ ratePct: 2, noPanRatePct: 20, thresholdPaise: 2000000, missingPanAction: 'DEDUCT_HIGHER' });
@@ -35,7 +35,9 @@ describe('defaults', () => {
 });
 
 describe('processingFee (token / 0.9764, rounded up to the rupee)', () => {
-  const fee = (rupees) => m.processingFee(rs(rupees), S.processingFee);
+  // The formula is kept for old records; the fee itself is locked off since 20 Nov 2026 (Customer Fee Bearer), so pass it on here.
+  const ON = { ...S.processingFee, enabled: true };
+  const fee = (rupees) => m.processingFee(rs(rupees), ON);
   test.each([
     [50000, 51209, 1209],
     [100000, 102418, 2418],
@@ -61,7 +63,7 @@ describe('processingFee (token / 0.9764, rounded up to the rupee)', () => {
     expect(r).toMatchObject({ feePaise: 0, totalPaise: rs(50000) });
   });
   test('follows a negotiated gateway rate', () => {
-    const r = m.processingFee(rs(100000), { ...S.processingFee, gatewayPct: 1.5 });
+    const r = m.processingFee(rs(100000), { ...ON, gatewayPct: 1.5 });
     expect(r.totalPaise).toBe(Math.ceil(10000000 / (1 - 0.015 * 1.18) / 100) * 100);
   });
   test('rejects a bad token', () => {

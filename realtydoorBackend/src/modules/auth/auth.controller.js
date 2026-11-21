@@ -7,6 +7,7 @@ const logger = require('../../lib/logger');
 const authService = require('./auth.service');
 const { formatProfileSettings } = require('../users/users.service');
 const { sendWelcomeEmail } = require('../../lib/email');
+const { sendWelcomeWhatsApp } = require('../../lib/wati');
 const { notifyAdmins } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const {
@@ -161,6 +162,7 @@ async function setRole(req, res, next) {
     // other real "became a partner" moment (an existing buyer upgrading),
     // not just a brand-new account.
     sendWelcomeEmail(user.email, user.name, 'PARTNER', user).catch(() => {});
+    if (user.phoneVerified) sendWelcomeWhatsApp(user.id, 'PARTNER').catch(() => {});
     success(res, { role: user.role });
   } catch (err) {
     next(err instanceof ApiError ? err : new ApiError(500, err.message));

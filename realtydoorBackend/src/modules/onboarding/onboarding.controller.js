@@ -95,6 +95,12 @@ async function addNote(req, res, next) {
 async function reopen(req, res, next) {
   try { success(res, await service.adminReopen(req.user.id, req.params.id, reopenSchema.parse(req.body || {}).expiresInDays, req.ip), 'New link created'); } catch (err) { next(err); }
 }
+async function copyLink(req, res, next) {
+  try { noStore(res); success(res, await service.adminCopyLink(req.user.id, req.params.id, req.ip)); } catch (err) { next(err); }
+}
+async function resend(req, res, next) {
+  try { success(res, await service.adminResend(req.user.id, req.params.id, req.ip), 'Link sent'); } catch (err) { next(err); }
+}
 async function revoke(req, res, next) {
   try { success(res, await service.adminRevoke(req.user.id, req.params.id, req.ip), 'Link switched off'); } catch (err) { next(err); }
 }
@@ -131,7 +137,7 @@ async function convert(req, res, next) {
 }
 
 module.exports = {
-  listingPreview, convert,
+  listingPreview, convert, copyLink, resend,
   requireLink, senderGet, senderSave, senderSubmit, senderUpload, senderRemoveFile,
   list, get, create, update, addNote, reopen, revoke, validateDocKey, adminUpload, adminRemoveFile,
   createSchema, updateSchema, convertSchema,

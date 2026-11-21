@@ -27,15 +27,14 @@ describe('settings', () => {
 });
 
 describe('checkoutBreakdown', () => {
-  test('a normal buyer: 2% + GST, total ₹51,209, gateway pct 2', () => {
+  // Customer Fee Bearer locked 20 Nov 2026: nobody pays a fee of ours; the NRI rate stays recorded (Razorpay's own rate for those cards).
+  test('a normal buyer: the total is the token, gateway pct 2 recorded', () => {
     const b = svc.checkoutBreakdown(TOKEN, parseSettings([]));
-    expect(b).toMatchObject({ totalPaise: 5_120_900, gatewayPct: 2, nri: false });
+    expect(b).toMatchObject({ totalPaise: TOKEN, processingFeePaise: 0, gatewayPct: 2, nri: false, feeBearer: 'CUSTOMER' });
   });
-  test('an NRI buyer: 3% + GST, we net the whole token', () => {
+  test('an NRI buyer: the total is the token too, gateway pct 3 recorded', () => {
     const b = svc.checkoutBreakdown(TOKEN, parseSettings([]), { nri: true });
-    expect(b).toMatchObject({ gatewayPct: 3, nri: true });
-    expect(b.totalPaise).toBeGreaterThan(5_120_900);
-    expect(netAfterFee(b.totalPaise, 3)).toBeGreaterThanOrEqual(TOKEN - 1);
+    expect(b).toMatchObject({ totalPaise: TOKEN, processingFeePaise: 0, gatewayPct: 3, nri: true });
   });
   test('the rate is read from settings, so the owner can change it', () => {
     const s = parseSettings([{ key: 'processing_fee_gateway_pct_nri', value: '4' }]);

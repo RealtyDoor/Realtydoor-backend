@@ -84,6 +84,14 @@ async function adminUpsertConfig(key, { value, description, isPublic, reason }, 
   if (isSecretKey(key)) {
     throw new ApiError(400, `"${key}" looks like a secret. Store secrets in the server environment, not in platform config.`, { code: 'CONFIG_SECRET_REFUSED' });
   }
+  // Owner, 20 Nov 2026: Razorpay's Customer Fee Bearer is permanent and Realtydoor adds no fee of its own (locked in moneyConfig).
+  // Refuse a write that would only look like it changed something.
+  if (key === 'processing_fee_bearer' && value !== 'CUSTOMER') {
+    throw new ApiError(400, 'Customer Fee Bearer is permanent: Razorpay collects its own charge and Realtydoor adds no fee. This setting is locked to CUSTOMER.', { code: 'FEE_SETTING_LOCKED' });
+  }
+  if (key === 'processing_fee_enabled' && value !== 'false') {
+    throw new ApiError(400, 'Realtydoor adds no processing fee (Customer Fee Bearer is permanent). This setting is locked to false. A future Realtydoor platform fee would be a separate feature.', { code: 'FEE_SETTING_LOCKED' });
+  }
   const existing = await prisma.platformConfig.findUnique({ where: { key } });
   validateConfigValue(key, value, existing);
   // Money model phase 2: a rate, fee, TDS or refund setting changes only with a

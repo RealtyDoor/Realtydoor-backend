@@ -269,6 +269,31 @@ async function sendTicketVendorDispatched(userId, ticketSubject, vendorName, tic
   }, { ticketId });
 }
 
+// Welcome WhatsApp for a new buyer or partner: says where to sign in. Sent once, at the moment a verified phone number first exists
+// (a Google sign-up has none until then). Not sent until welcome_buyer / welcome_partner are approved by Meta and listed in
+// WATI_LIVE_TEMPLATES (notifyUser skips a template that is not live). Wording: admin-nextjs/docs/WHATSAPP_TEMPLATES.md.
+async function sendWelcomeWhatsApp(userId, role) {
+  const isPartner = role === 'PARTNER';
+  const { portalUrl } = require('./portalUrl');
+  const url = portalUrl(isPartner ? 'partner' : 'buyer');
+  if (!url) return null;
+  return notifyUser(userId, isPartner ? 'welcome_partner' : 'welcome_buyer', { name: '$userName', portal_url: url });
+}
+
+// Build-out form messages to a builder or owner (a person with no account, so no preferences to check). Two templates, each sent only once
+// Meta has approved it and its name is in WATI_LIVE_TEMPLATES, so this is silent until then. Wording: admin-nextjs/docs/WHATSAPP_TEMPLATES.md.
+//   onboarding_form_ready    {{name}} {{project}} {{form_link}}
+//   onboarding_form_received {{name}} {{project}}
+const ONBOARDING_TEMPLATES = ['onboarding_form_ready', 'onboarding_form_received'];
+async function sendOnboardingWhatsApp(phone, template, { name, project, formLink }, env = process.env) {
+  if (!ONBOARDING_TEMPLATES.includes(template)) return null;
+  if (!phone || !liveSet(env).has(template)) return null;
+  const clean = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
+  const parameters = [{ name: 'name', value: clean(name) || 'there' }, { name: 'project', value: clean(project) || 'your property' }];
+  if (template === 'onboarding_form_ready') parameters.push({ name: 'form_link', value: clean(formLink) });
+  return sendTemplateMessage(phone, template, parameters, {});
+}
+
 module.exports = { LEAD_RULE_TEMPLATES, TEMPLATE_UPGRADES, resolveTemplate, liveSet,
   sendTemplateMessage,
   sendSiteVisitOtp,
@@ -276,6 +301,9 @@ module.exports = { LEAD_RULE_TEMPLATES, TEMPLATE_UPGRADES, resolveTemplate, live
   sendBuyerFeedbackRequest,
   sendPhoneVerificationOtp,
   notifyUser,
+  sendWelcomeWhatsApp,
+  sendOnboardingWhatsApp,
+  ONBOARDING_TEMPLATES,
   sendVoucherOtp,
   sendTicketVendorDispatched,
   ticketVendorDispatchedTemplate,

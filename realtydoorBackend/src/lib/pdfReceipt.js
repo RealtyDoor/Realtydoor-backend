@@ -85,19 +85,48 @@ function buildTicketChargeReceiptPdf({ ticketSubject, userName, visitCharge, par
 // scope as the other two.
 // The money lines of the token receipt, in rupees with paise where there are some. The buyer paid the token PLUS the
 // payment processing fee (money model Rev 3), so the receipt shows both and the total, not just the token.
-function escrowReceiptLines({ amount, processingFeePaise, chargedPaise }) {
+// With Razorpay's Customer Fee Bearer the buyer's card was also charged Razorpay's own gateway charge, which Realtydoor never receives: the last line then
+// says what was paid TO REALTYDOOR, and a line says who collected the gateway charge, so the receipt never under-states what the card was charged.
+// The company name in the receipt header, on ONE line: the full legal name at 20pt wrapped onto the blue rule (seen 21 Nov 2026),
+// so the size steps down until it fits the space left of the document title.
+function companyName(doc, name, left, width, color) {
+  const box = width * 0.62;
+  let size = 20;
+  doc.font('Helvetica-Bold');
+  while (size > 12 && doc.fontSize(size).widthOfString(name) > box) size -= 1;
+  doc.fontSize(size).fillColor(color).text(name, left, 50 + (20 - size) / 2, { width: box, lineBreak: false });
+}
+
+function escrowReceiptLines({ amount, processingFeePaise, chargedPaise, feeBearer, gatewayChargePaise = null }) {
   const rs = rsPaise;
   const tokenPaise = Math.round((amount || 0) * 100);
   const feePaise = processingFeePaise > 0 ? processingFeePaise : 0;
   const totalPaise = chargedPaise > 0 ? chargedPaise : tokenPaise + feePaise;
+  const customer = feeBearer === 'CUSTOMER' && !feePaise;
   return [
     { label: 'Token advance', value: rs(tokenPaise) },
     ...(feePaise ? [{ label: 'Payment processing fee (GST included)', value: rs(feePaise) }] : []),
-    { label: 'Total paid', value: rs(totalPaise), strong: true },
+    // The amount when it is known (recorded since 21 Nov 2026), so the buyer sees what the card was charged in all.
+    ...(customer ? [{ label: 'Payment gateway charge', value: Number.isInteger(gatewayChargePaise) && gatewayChargePaise > 0 ? `${rs(gatewayChargePaise)}, paid to Razorpay` : 'Collected by Razorpay' }] : []),
+    { label: customer ? 'Paid to Realtydoor' : 'Total paid', value: rs(totalPaise), strong: true },
   ];
 }
 
-function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, processingFeePaise, chargedPaise, razorpayPaymentId, paidAt, company = {} }) {
+/** The paragraph under the amounts on the token receipt. The fee sentence follows THIS payment: only when a fee was charged. With Razorpay's
+ *  Customer Fee Bearer there is no fee of ours, and it says who collects the gateway's charge. */
+function escrowReceiptNote({ processingFeePaise, feeBearer }) {
+  const feeSentence = processingFeePaise > 0
+    ? 'The payment processing fee covers the payment company\'s charge and is not returned if you cancel.'
+    : (feeBearer === 'CUSTOMER'
+      ? 'Realtydoor adds no fee to this payment. Any payment-gateway charge was shown and collected by Razorpay at checkout, and appears on Razorpay\'s own confirmation.'
+      : '');
+  return `Your token advance is held in escrow with our payment partner until your allocation letter is verified.${feeSentence ? ` ${feeSentence}` : ''}`;
+}
+
+/** The receipt number shown on the PDF and in the email: RCT- plus the last 8 characters of the Razorpay payment id. */
+const receiptNumber = (razorpayPaymentId) => (razorpayPaymentId ? `RCT-${String(razorpayPaymentId).replace(/^pay_/, '').slice(-8).toUpperCase()}` : 'RCT-N/A');
+
+function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, processingFeePaise, chargedPaise, razorpayPaymentId, paidAt, company = {}, feeBearer, gatewayChargePaise = null }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: 'A4' });
     const chunks = [];
@@ -110,10 +139,10 @@ function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, proc
     const width = right - left;
     const INK = '#111111'; const BODY = '#333333'; const MUTED = '#777777'; const RULE = '#DDDDDD'; const BRAND = '#2C2FEE';
     const legalName = company.legalName || 'RealtyDoor';
-    const receiptNo = razorpayPaymentId ? `RCT-${String(razorpayPaymentId).replace(/^pay_/, '').slice(-8).toUpperCase()}` : 'RCT-N/A';
+    const receiptNo = receiptNumber(razorpayPaymentId);
 
     // Header: name on the left, document title on the right, a brand rule under both.
-    doc.fontSize(20).fillColor(INK).font('Helvetica-Bold').text(legalName, left, 50, { width: width * 0.6 });
+    companyName(doc, legalName, left, width, INK);
     doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('TOKEN ADVANCE RECEIPT', left, 56, { width, align: 'right' });
     doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
 
@@ -141,7 +170,7 @@ function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, proc
       .text('DESCRIPTION', left + 10, y + 8, { width: width - 130 })
       .text('AMOUNT', left, y + 8, { width: width - 10, align: 'right' });
     y += 24;
-    for (const line of escrowReceiptLines({ amount, processingFeePaise, chargedPaise })) {
+    for (const line of escrowReceiptLines({ amount, processingFeePaise, chargedPaise, feeBearer, gatewayChargePaise })) {
       if (line.strong) {
         doc.moveTo(left, y).lineTo(right, y).lineWidth(1).strokeColor(INK).stroke();
         doc.rect(left, y, width, 30).fill('#F3F4F8');
@@ -160,18 +189,14 @@ function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, proc
 
     // What it means.
     y += 22;
-    doc.font('Helvetica').fontSize(9).fillColor(BODY).text(
-      'Your token advance is held in escrow with our payment partner until your allocation letter is verified. '
-      + 'The payment processing fee covers the payment company\'s charge and is not returned if you cancel.',
-      left, y, { width },
-    );
+    doc.font('Helvetica').fontSize(9).fillColor(BODY).text(escrowReceiptNote({ processingFeePaise, feeBearer }), left, y, { width });
 
     // Footer.
     const footerY = doc.page.height - 90;
     doc.moveTo(left, footerY).lineTo(right, footerY).lineWidth(0.5).strokeColor(RULE).stroke();
     doc.font('Helvetica').fontSize(8).fillColor(MUTED)
       .text(`${legalName}${company.gstin ? `  |  GSTIN ${company.gstin}` : ''}`, left, footerY + 10, { width, align: 'center' })
-      .text(company.gstin ? 'This is a payment receipt. The GST tax invoice for the processing fee is a separate document.' : 'This is a payment receipt, not a GST tax invoice.', left, footerY + 24, { width, align: 'center' });
+      .text(company.gstin && processingFeePaise > 0 ? 'This is a payment receipt. The GST tax invoice for the processing fee is a separate document.' : 'This is a payment receipt, not a GST tax invoice.', left, footerY + 24, { width, align: 'center' });
 
     doc.end();
   });
@@ -179,19 +204,23 @@ function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, proc
 
 // Refund receipt: what the buyer paid, what was kept (the cancellation charge, and the processing fee unless it came back too),
 // and what returned to the original payment method. Same plain layout as the token receipt.
-function refundReceiptLines({ tokenPaise, feePaise, refundedPaise, chargePaise }) {
+// Payment audit 21 Nov 2026 (Customer Fee Bearer): with no fee of ours, Razorpay's own charge (when known) is shown as paid to
+// Razorpay and not returned, so the receipt matches what the card was charged.
+function refundReceiptLines({ tokenPaise, feePaise, refundedPaise, chargePaise, gatewayChargePaise = null }) {
   const rs = rsPaise;
   const fee = feePaise > 0 ? feePaise : 0;
   const feeReturned = fee > 0 && refundedPaise > tokenPaise;
+  const gateway = !fee && Number.isInteger(gatewayChargePaise) && gatewayChargePaise > 0 ? gatewayChargePaise : 0;
   return [
     { label: 'Token advance paid', value: rs(tokenPaise) },
+    ...(gateway ? [{ label: "Razorpay's payment-gateway charge (paid to Razorpay, not returned)", value: rs(gateway) }] : []),
     ...(chargePaise > 0 ? [{ label: 'Cancellation charge kept', value: `- ${rs(chargePaise)}` }] : []),
     ...(fee ? [{ label: feeReturned ? 'Payment processing fee (returned)' : 'Payment processing fee (not returned)', value: feeReturned ? rs(fee) : '-' }] : []),
     { label: 'Refunded to your original payment method', value: rs(refundedPaise), strong: true },
   ];
 }
 
-function buildRefundReceiptPdf({ refCode, propertyTitle, buyerName, tokenPaise, feePaise, refundedPaise, chargePaise, razorpayRefundId, refundedAt, company = {} }) {
+function buildRefundReceiptPdf({ refCode, propertyTitle, buyerName, tokenPaise, feePaise, refundedPaise, chargePaise, razorpayRefundId, refundedAt, company = {}, gatewayChargePaise = null }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: 'A4' });
     const chunks = [];
@@ -206,7 +235,7 @@ function buildRefundReceiptPdf({ refCode, propertyTitle, buyerName, tokenPaise, 
     const legalName = company.legalName || 'RealtyDoor';
     const receiptNo = razorpayRefundId ? `RFN-${String(razorpayRefundId).replace(/^rfnd_/, '').slice(-8).toUpperCase()}` : 'RFN-N/A';
 
-    doc.fontSize(20).fillColor(INK).font('Helvetica-Bold').text(legalName, left, 50, { width: width * 0.6 });
+    companyName(doc, legalName, left, width, INK);
     doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('REFUND RECEIPT', left, 56, { width, align: 'right' });
     doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
 
@@ -232,7 +261,7 @@ function buildRefundReceiptPdf({ refCode, propertyTitle, buyerName, tokenPaise, 
       .text('DESCRIPTION', left + 10, y + 8, { width: width - 130 })
       .text('AMOUNT', left, y + 8, { width: width - 10, align: 'right' });
     y += 24;
-    for (const line of refundReceiptLines({ tokenPaise, feePaise, refundedPaise, chargePaise })) {
+    for (const line of refundReceiptLines({ tokenPaise, feePaise, refundedPaise, chargePaise, gatewayChargePaise })) {
       if (line.strong) {
         doc.moveTo(left, y).lineTo(right, y).lineWidth(1).strokeColor(INK).stroke();
         doc.rect(left, y, width, 30).fill('#F3F4F8');
@@ -251,7 +280,7 @@ function buildRefundReceiptPdf({ refCode, propertyTitle, buyerName, tokenPaise, 
 
     y += 22;
     doc.font('Helvetica').fontSize(9).fillColor(BODY).text(
-      'The refund goes back to the payment method you used. Your bank may take a few days to show it.',
+      'The refund goes back to the payment method you used. Your bank may take a few days to show it. If you think we made a mistake, raise a request from your Realtydoor account.',
       left, y, { width },
     );
 
@@ -291,7 +320,7 @@ function buildFeeTaxInvoicePdf({ company = {}, invoiceNo, invoiceDate, buyerName
     const INK = '#111111'; const BODY = '#333333'; const MUTED = '#777777'; const RULE = '#DDDDDD'; const BRAND = '#2C2FEE';
     const legalName = company.legalName || 'RealtyDoor';
 
-    doc.fontSize(20).fillColor(INK).font('Helvetica-Bold').text(legalName, left, 50, { width: width * 0.6 });
+    companyName(doc, legalName, left, width, INK);
     doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('TAX INVOICE', left, 56, { width, align: 'right' });
     doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
 
@@ -354,16 +383,19 @@ function buildFeeTaxInvoicePdf({ company = {}, invoiceNo, invoiceDate, buyerName
 
 // The money lines of a service receipt. The price the buyer paid already includes GST, so the lines show the amount before GST,
 // the GST inside it, and the total (what the card was charged).
-function serviceReceiptLines({ amountPaise, gstPct = 18 }) {
+// Under Razorpay's Customer Fee Bearer the card was also charged Razorpay's own fee (never ours), so the last line is what Realtydoor received.
+function serviceReceiptLines({ amountPaise, gstPct = 18, feeBearer }) {
   const gstPaise = amountPaise - Math.round(amountPaise / (1 + gstPct / 100));
+  const customer = feeBearer === 'CUSTOMER';
   return [
     { label: 'Service fee before GST', value: rsPaise(amountPaise - gstPaise) },
     { label: `GST at ${gstPct}% (included in the price)`, value: rsPaise(gstPaise) },
-    { label: 'Total paid', value: rsPaise(amountPaise), strong: true },
+    ...(customer ? [{ label: 'Payment gateway charge', value: 'Collected by Razorpay' }] : []),
+    { label: customer ? 'Paid to Realtydoor' : 'Total paid', value: rsPaise(amountPaise), strong: true },
   ];
 }
 
-function buildServiceReceiptPdf({ serviceName, buyerName, amountPaise, gstPct = 18, razorpayPaymentId, paidAt, validUntil, company = {} }) {
+function buildServiceReceiptPdf({ serviceName, buyerName, amountPaise, gstPct = 18, razorpayPaymentId, paidAt, validUntil, company = {}, feeBearer }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: 'A4' });
     const chunks = [];
@@ -377,7 +409,7 @@ function buildServiceReceiptPdf({ serviceName, buyerName, amountPaise, gstPct = 
     const receiptNo = razorpayPaymentId ? `SRV-${String(razorpayPaymentId).replace(/^pay_/, '').slice(-8).toUpperCase()}` : 'SRV-N/A';
     const day = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A');
 
-    doc.fontSize(20).fillColor(INK).font('Helvetica-Bold').text(legalName, left, 50, { width: width * 0.6 });
+    companyName(doc, legalName, left, width, INK);
     doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('SERVICE PAYMENT RECEIPT', left, 56, { width, align: 'right' });
     doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
 
@@ -399,7 +431,7 @@ function buildServiceReceiptPdf({ serviceName, buyerName, amountPaise, gstPct = 
       .text('DESCRIPTION', left + 10, y + 8, { width: width - 130 })
       .text('AMOUNT', left, y + 8, { width: width - 10, align: 'right' });
     y += 24;
-    for (const line of serviceReceiptLines({ amountPaise, gstPct })) {
+    for (const line of serviceReceiptLines({ amountPaise, gstPct, feeBearer })) {
       if (line.strong) {
         doc.moveTo(left, y).lineTo(right, y).lineWidth(1).strokeColor(INK).stroke();
         doc.rect(left, y, width, 30).fill('#F3F4F8');
@@ -456,4 +488,4 @@ function buildPartnerStatementPdf(st) {
   });
 }
 
-module.exports = { serviceReceiptLines, buildServiceReceiptPdf, feeTaxInvoiceRows, buildFeeTaxInvoicePdf, escrowReceiptLines, buildPartnerStatementPdf, buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf, buildRefundReceiptPdf, refundReceiptLines };
+module.exports = { escrowReceiptNote, receiptNumber, serviceReceiptLines, buildServiceReceiptPdf, feeTaxInvoiceRows, buildFeeTaxInvoicePdf, escrowReceiptLines, buildPartnerStatementPdf, buildCommissionReceiptPdf, buildTicketChargeReceiptPdf, buildEscrowReceiptPdf, buildRefundReceiptPdf, refundReceiptLines };

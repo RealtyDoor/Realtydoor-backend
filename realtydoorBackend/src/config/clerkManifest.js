@@ -28,10 +28,10 @@ const paths = {
 
 const settings = [
   // User & authentication
-  { area: 'User & authentication > Email', setting: 'Sign-up with email', value: 'off', source: 'OBSERVED', note: 'Our own screens create the account; the email is still stored on the user.' },
-  { area: 'User & authentication > Email', setting: 'Sign-in with email', value: 'off', source: 'OBSERVED' },
+  { area: 'User & authentication > Email', setting: 'Sign-up with email (Require email address, Verify at sign-up)', value: 'on, address required, verify on', source: 'CODE', note: 'PROVEN 16 Nov 2026 against the Clerk API: with the Email attribute off, createUser refuses `emailAddress` (422 form_param_unknown), so our phone signup cannot create an account. The working development instance had it off (read as "off" on 16 Nov), which means phone signup is broken there; fix by turning this on. Users created by our API are not asked to verify.' },
+  { area: 'User & authentication > Email', setting: 'Sign-in with email', value: 'on', source: 'CODE', note: 'The admin console signs in with work email and password (and Google Workspace); the email identifier must exist.' },
   { area: 'User & authentication > Phone', setting: 'Sign-in with phone (with SMS verification code)', value: 'on', source: 'OBSERVED', note: 'Pro feature. Sign-up with phone stays off.' },
-  { area: 'User & authentication > Username', setting: 'Username attribute', value: 'the instance must accept a username when our signup creates a user', source: 'CODE', risk: 'Our signup sends a generated username to createUser, but on the development instance both Username toggles (sign-up and sign-in) were off. If Clerk then refuses the field, phone signup fails. Prove with one test phone sign-up (audit A8); if refused, turn the Username attribute on here.' },
+  { area: 'User & authentication > Username', setting: 'Username attribute', value: 'both toggles may stay off', source: 'CODE', note: 'PROVEN 16 Nov 2026 against the Clerk API on the working development instance: createUser with a generated username is accepted and stored while both Username toggles are off.' },
   { area: 'User & authentication > Password', setting: 'Sign-up with password', value: 'on', source: 'CODE', note: 'Our signup sends a generated strong password.' },
   { area: 'User & authentication > Password', setting: 'Add password to account', value: 'on', source: 'OBSERVED' },
   { area: 'User & authentication > Password', setting: 'Minimum length / reject compromised passwords / enforce strength', value: 'Clerk defaults: 10 characters / on / off', source: 'DECIDED', note: 'The old instance had 8 / on / on. Clerk itself recommends a longer minimum and no strength meter; our code creates passwords itself (long and random), so the stricter default is kept.' },
@@ -55,7 +55,7 @@ const settings = [
 
 // What has been applied from this file, so the next person knows what is left. The settings that need a person or a later step stay open.
 const applied = [
-  { instance: 'Realtydoor Live, development (ins_3KxuPGjUlel9SZKFozrJynnqjha)', on: '2026-11-16', done: 'email sign-up and sign-in off; phone sign-in on with SMS code (sign-up off); first and last name required; authenticator app on; access mode open; account portal light mode and #2C2FEE; logo, favicon, support email; Secured-by-Clerk removed', notDone: 'Username attribute question (needs a test sign-up); session lifetime not read; production instance, own Google client and webhook (need DNS and the API host first)' },
+  { instance: 'Realtydoor Live, development (ins_3KxuPGjUlel9SZKFozrJynnqjha)', on: '2026-11-16', done: 'email sign-up (required, verified) and sign-in on, after first copying the old instance and finding that wrong; phone sign-in on with SMS code (sign-up off); first and last name required; authenticator app on; access mode open; account portal light mode and #2C2FEE; logo, favicon, support email; Secured-by-Clerk removed', notDone: 'session lifetime not read; production instance, own Google client and webhook (need DNS and the API host first)' },
 ];
 
 module.exports = { applied, application, webhook, roles, createUserFields, paths, settings };

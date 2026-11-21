@@ -77,7 +77,8 @@ async function reconcilePendingSubscriptions() {
     try {
       const captured = await fetchCapturedPayment(s.razorpayOrderId);
       if (captured) {
-        await activateSubscription(s.razorpayOrderId, captured.id);
+        // Payment audit 20 Nov: pass Razorpay's own amount so the same order-amount check runs here as in the webhook.
+        await activateSubscription(s.razorpayOrderId, captured.id, null, { amount: captured.amount, currency: captured.currency });
         healed++;
       }
     } catch (err) {

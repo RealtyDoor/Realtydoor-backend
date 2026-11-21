@@ -93,31 +93,17 @@ describe('createOrder', () => {
     await expect(svc.createOrder('l1', 'b1', 10)).rejects.toMatchObject({ statusCode: 400 });
   });
 
-  test('an NRI buyer is charged the NRI processing fee, a normal buyer the normal one (from the database flag)', async () => {
+  // Customer Fee Bearer locked 20 Nov 2026: Realtydoor adds no fee for anyone; Razorpay adds its own charge at checkout.
+  test.each([[false], [true]])('NRI=%p: the order is exactly the token, and the stored charge is what the gateway is asked for (not what the client sent)', async (isNRI) => {
     prisma.lead.findFirst.mockResolvedValue(lead());
     rz.createEscrowOrder.mockResolvedValue({ id: 'order_1' });
     prisma.escrowTransaction.create.mockResolvedValue({ id: 'e1' });
-    prisma.user.findUnique.mockResolvedValue({ isNRI: false });
-    await svc.createOrder('l1', 'b1', 50000);
-    expect(rz.createEscrowOrder).toHaveBeenLastCalledWith(5_120_900, expect.any(String));
-    prisma.user.findUnique.mockResolvedValue({ isNRI: true });
+    prisma.user.findUnique.mockResolvedValue({ isNRI });
     const out = await svc.createOrder('l1', 'b1', 50000);
-    const nriTotal = rz.createEscrowOrder.mock.calls.at(-1)[0];
-    expect(nriTotal).toBeGreaterThan(5_120_900);
-    expect(nriTotal - (nriTotal * 3 * 1.18) / 100).toBeGreaterThanOrEqual(5_000_000 - 1);
-    expect(out).toBeTruthy();
-  });
-
-  test('the order is for token + fee, and the stored charge is what the gateway is asked for (not what the client sent)', async () => {
-    prisma.lead.findFirst.mockResolvedValue(lead());
-    rz.createEscrowOrder.mockResolvedValue({ id: 'order_1' });
-    prisma.escrowTransaction.create.mockResolvedValue({ id: 'e1' });
-    await svc.createOrder('l1', 'b1', 50000);
     const [chargedPaise, receipt] = rz.createEscrowOrder.mock.calls[0];
-    const data = prisma.escrowTransaction.create.mock.calls[0][0].data;
-    expect(receipt).toBe('escrow_l1');
-    expect(data).toMatchObject({ leadId: 'l1', buyerId: 'b1', amount: 50000, amountPaise: 5_000_000, status: 'PAYMENT_PENDING', chargedPaise, razorpayOrderId: 'order_1' });
-    expect(chargedPaise).toBeGreaterThan(5_000_000);
+    expect([chargedPaise, receipt]).toEqual([5_000_000, 'escrow_l1']);
+    expect(prisma.escrowTransaction.create.mock.calls[0][0].data).toMatchObject({ leadId: 'l1', buyerId: 'b1', amount: 50000, amountPaise: 5_000_000, status: 'PAYMENT_PENDING', chargedPaise: 5_000_000, processingFeePaise: 0, razorpayOrderId: 'order_1' });
+    expect(out.breakdown).toMatchObject({ totalPaise: 5_000_000, processingFeePaise: 0, feeBearer: 'CUSTOMER' });
   });
 
   test('a lead that already has a held escrow is a 409 with the existing id', async () => {
@@ -155,6 +141,24 @@ describe('createOrder', () => {
     expect(out.breakdown.tokenPaise).toBe(6_000_000);
     expect(rz.createEscrowOrder).not.toHaveBeenCalled();
     expect(prisma.escrowTransaction.create).not.toHaveBeenCalled();
+  });
+
+  // Payment audit 20 Nov 2026: an order made under earlier fee settings is shown with ITS OWN amounts, never re-quoted.
+  test('resumed order made with our fee, settings now Customer Fee Bearer: the screen shows the fee and total that order really charges', async () => {
+    getMoneySettings.mockResolvedValue(jest.requireActual('../../src/modules/money/moneyConfig').parseSettings([{ key: 'processing_fee_bearer', value: 'CUSTOMER' }]));
+    prisma.lead.findFirst.mockResolvedValue(lead());
+    prisma.escrowTransaction.findFirst.mockResolvedValue({ id: 'e1', status: 'PAYMENT_PENDING', razorpayOrderId: 'order_old', amount: 50000, processingFeePaise: 120900, chargedPaise: 5_120_900 });
+    rz.razorpay.orders.fetch.mockResolvedValue({ id: 'order_old', status: 'created', amount: 5_120_900 });
+    const out = await svc.createOrder('l1', 'b1', 50000);
+    expect(out.breakdown).toMatchObject({ tokenPaise: 5_000_000, processingFeePaise: 120900, totalPaise: 5_120_900, processingFeeEnabled: true, feeBearer: 'PLATFORM', madeUnderEarlierSettings: true });
+  });
+  test('resumed order whose amount matches today\'s settings: the normal quote, unchanged', async () => {
+    prisma.lead.findFirst.mockResolvedValue(lead());
+    prisma.escrowTransaction.findFirst.mockResolvedValue({ id: 'e1', status: 'PAYMENT_PENDING', razorpayOrderId: 'order_new', amount: 50000, processingFeePaise: 0, chargedPaise: 5_000_000 });
+    rz.razorpay.orders.fetch.mockResolvedValue({ id: 'order_new', status: 'created', amount: 5_000_000 });
+    const out = await svc.createOrder('l1', 'b1', 50000);
+    expect(out.breakdown.totalPaise).toBe(5_000_000);
+    expect(out.breakdown.madeUnderEarlierSettings).toBeUndefined();
   });
 
   test('a pending order whose payment already went through is healed instead of reopened', async () => {
@@ -234,7 +238,8 @@ describe('confirmPayment on the buyer verify path', () => {
     expect(prisma.escrowTransaction.updateMany).not.toHaveBeenCalled();
   });
 
-  test.each([[5_000_000, 'INR'], [1, 'INR'], [5_120_901, 'INR'], [5_120_900, 'USD']])('AMOUNT TAMPERING: a payment of %p %s for an order of 5120900 INR is refused', async (amount, currency) => {
+  // Customer Fee Bearer (locked 20 Nov 2026): Razorpay may add its charge on top, so the band is order..order+6%. Below it, above it, or another currency: refused.
+  test.each([[5_000_000, 'INR'], [1, 'INR'], [5_120_900 + 307_254 + 1, 'INR'], [5_120_900 * 2, 'INR'], [5_120_900, 'USD']])('AMOUNT TAMPERING: a payment of %p %s for an order of 5120900 INR is refused', async (amount, currency) => {
     prisma.escrowTransaction.findUnique.mockResolvedValue(pending());
     rz.razorpay.payments.fetch.mockResolvedValue(pay({ amount, currency }));
     await expect(svc.confirmPayment('order_1', 'pay_1', 'b1')).rejects.toMatchObject({ statusCode: 400, data: { code: 'AMOUNT_MISMATCH' } });

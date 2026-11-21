@@ -6,6 +6,15 @@ const CACHE_KEYS = require('../../lib/cacheKeys');
 const { createNotification, notifyAdmins } = require('../../lib/notifications');
 const { sendServiceActivated } = require('../../lib/email');
 const logger = require('../../lib/logger');
+const { paymentMatchesOrder } = require('../../lib/escrowUtils');
+
+// Razorpay's "Customer pays the fee" is account-wide, so a service payment can also arrive as the price plus Razorpay's own charge. Same rule as the
+// token (lib/escrowUtils.js): exact unless processing_fee_bearer is CUSTOMER; an unreadable setting means the strict exact rule.
+async function currentFeeBearer() {
+  // Owner, 20 Nov 2026: Razorpay's Customer Fee Bearer is permanent (locked in moneyConfig too). Not read from the database, so a
+  // database blip can never switch the amount check to the exact rule and refuse a real customer payment.
+  return 'CUSTOMER';
+}
 
 // BE-8 — the FE previously fell back to services[0] when no MAINTENANCE
 // service was returned (fixed in the FE by refusing that fallback instead),
@@ -61,7 +70,7 @@ async function createServiceOrder(userId, serviceId) {
     } catch (err) {
       throw new ApiError(502, `Could not fetch the existing Razorpay order: ${err?.error?.description || err.message || 'Unknown error'}`, { code: 'RAZORPAY_ERROR' });
     }
-    return { subscription: recentPending, razorpayOrder, key: process.env.RAZORPAY_KEY_ID };
+    return { subscription: recentPending, razorpayOrder, key: process.env.RAZORPAY_KEY_ID, feeBearer: await currentFeeBearer() };
   }
 
   const amountInPaise = Math.round(service.price * 100);
@@ -83,7 +92,7 @@ async function createServiceOrder(userId, serviceId) {
     },
   });
 
-  return { subscription, razorpayOrder: order, key: process.env.RAZORPAY_KEY_ID };
+  return { subscription, razorpayOrder: order, key: process.env.RAZORPAY_KEY_ID, feeBearer: await currentFeeBearer() };
 }
 
 // BE-3 — one atomic activation path for both the buyer-facing verify route
@@ -119,14 +128,14 @@ async function activateSubscription(orderId, paymentId, userId = null, webhookPa
     if (payment.status !== 'captured') {
       throw new ApiError(409, `Payment has not been captured yet (status: ${payment.status}).`, { code: 'PAYMENT_NOT_CAPTURED' });
     }
-    if (payment.amount !== Math.round(subscription.amountPaid * 100) || payment.currency !== 'INR') {
+    if (!paymentMatchesOrder({ paidPaise: payment.amount, expectedPaise: subscription.amountPaidPaise ?? Math.round(subscription.amountPaid * 100), currency: payment.currency, bearer: await currentFeeBearer() })) {
       throw new ApiError(400, "This payment's amount or currency does not match the order.", { code: 'AMOUNT_MISMATCH' });
     }
   }
 
   // Audit Nov 2026 (F6). The webhook's own payment record must match the order too; a mismatch is never activated.
   if (!userId && webhookPayment && typeof webhookPayment.amount === 'number'
-    && (webhookPayment.amount !== (subscription.amountPaidPaise ?? Math.round(subscription.amountPaid * 100)) || webhookPayment.currency !== 'INR')) {
+    && !paymentMatchesOrder({ paidPaise: webhookPayment.amount, expectedPaise: subscription.amountPaidPaise ?? Math.round(subscription.amountPaid * 100), currency: webhookPayment.currency, bearer: await currentFeeBearer() })) {
     logger.error('[Services] A captured payment does not match its subscription order; not activated', { subscriptionId: subscription.id, orderId, paymentId });
     await notifyAdmins({
       title: 'A payment does not match a service order',

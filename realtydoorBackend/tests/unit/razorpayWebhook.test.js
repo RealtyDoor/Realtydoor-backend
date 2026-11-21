@@ -13,7 +13,7 @@ jest.mock('../../src/modules/escrow/escrowPayout.service', () => ({ adoptPayout:
 jest.mock('../../src/lib/prisma', () => ({
   webhookEvent: { create: jest.fn(), findUnique: jest.fn(), updateMany: jest.fn(() => Promise.resolve()) },
   escrowTransaction: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn(() => Promise.resolve()), updateMany: jest.fn(() => Promise.resolve({ count: 1 })) },
-  userSubscription: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn(() => Promise.resolve()) },
+  userSubscription: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn(() => Promise.resolve()), updateMany: jest.fn(() => Promise.resolve({ count: 1 })) },
   user: { findUnique: jest.fn(), findMany: jest.fn(() => Promise.resolve([{ id: 'adm1' }])) },
   lead: { findUnique: jest.fn() },
   commissionVoucher: { updateMany: jest.fn(() => Promise.resolve()) },
@@ -215,6 +215,17 @@ describe('refund.created', () => {
     expect(ledger.onRefund).toHaveBeenCalledWith(expect.objectContaining({ id: 'e1' }), expect.objectContaining({ refundPaise: 100000, reason: 'RAZORPAY_DASHBOARD' }), expect.objectContaining({ refundId: 'rfnd_1' }));
   });
 
+  // Payment audit 20 Nov 2026 (Customer Fee Bearer): the dashboard's full refund of a Rs 50,000 token is Rs 51,180 (Razorpay's charge on top).
+  test('a dashboard refund above what reached us alerts admins (Razorpay\'s charge paid from our balance); a token-sized one does not', async () => {
+    prisma.escrowTransaction.findFirst.mockResolvedValue(held({ amount: 50000, chargedPaise: 5000000 }));
+    await call(refund(5118000));
+    expect(broadcastNotification).toHaveBeenCalledWith(expect.objectContaining({ title: 'Refund above the token (Razorpay dashboard)', message: expect.stringContaining('₹1,180 more') }));
+    broadcastNotification.mockClear();
+    prisma.escrowTransaction.findFirst.mockResolvedValue(held({ amount: 50000, chargedPaise: 5000000 }));
+    await call(refund(5000000, 'rfnd_2'));
+    expect(broadcastNotification).not.toHaveBeenCalled();
+  });
+
   test('RACE: when the row changed between the read and the write, nothing is counted and Razorpay is asked to send it again', async () => {
     prisma.escrowTransaction.findFirst.mockResolvedValue(held());
     prisma.escrowTransaction.updateMany.mockResolvedValueOnce({ count: 0 });
@@ -266,16 +277,37 @@ describe('refund.created', () => {
 
   test('a subscription refund: partial stays unrefunded, full marks REFUNDED, a repeat is ignored', async () => {
     prisma.escrowTransaction.findFirst.mockResolvedValue(null);
-    prisma.userSubscription.findFirst.mockResolvedValue({ id: 's1', userId: 'u1', amountPaid: 500, refundIds: [], refundedAmountPaise: 0, paymentStatus: 'PAID' });
+    prisma.userSubscription.findFirst.mockResolvedValue({ id: 's1', userId: 'u1', amountPaid: 500, refundIds: [], refundedAmountPaise: 0, paymentStatus: 'SUCCESS' });
     await call(refund(20000));
-    expect(prisma.userSubscription.update.mock.calls[0][0].data.paymentStatus).toBeUndefined();
-    prisma.userSubscription.update.mockClear();
+    expect(prisma.userSubscription.updateMany.mock.calls[0][0].data.paymentStatus).toBeUndefined();
+    prisma.userSubscription.updateMany.mockClear();
     await call(refund(50000, 'rfnd_9'));
-    expect(prisma.userSubscription.update.mock.calls[0][0].data.paymentStatus).toBe('REFUNDED');
-    prisma.userSubscription.update.mockClear();
+    expect(prisma.userSubscription.updateMany.mock.calls[0][0].data.paymentStatus).toBe('REFUNDED');
+    prisma.userSubscription.updateMany.mockClear();
     prisma.userSubscription.findFirst.mockResolvedValue({ id: 's1', userId: 'u1', amountPaid: 500, refundIds: ['rfnd_9'], refundedAmountPaise: 50000, paymentStatus: 'REFUNDED' });
     await call(refund(50000, 'rfnd_9'));
-    expect(prisma.userSubscription.update).not.toHaveBeenCalled();
+    expect(prisma.userSubscription.updateMany).not.toHaveBeenCalled();
+  });
+
+  // Payment audit 21 Nov 2026.
+  test('a subscription refund is one guarded write: a second delivery racing the first counts nothing and tells nobody', async () => {
+    prisma.escrowTransaction.findFirst.mockResolvedValue(null);
+    prisma.userSubscription.findFirst.mockResolvedValue({ id: 's1', userId: 'u1', amountPaid: 2999, amountPaidPaise: 299900, refundIds: [], refundedAmountPaise: 0, paymentStatus: 'SUCCESS' });
+    prisma.userSubscription.updateMany.mockResolvedValueOnce({ count: 0 });
+    await call(refund(299900, 'rfnd_s'));
+    const w = prisma.userSubscription.updateMany.mock.calls[0][0];
+    expect(w.where).toEqual({ id: 's1', NOT: { refundIds: { has: 'rfnd_s' } } });
+    expect(w.data.refundedAmountPaise).toEqual({ increment: 299900 });
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+  test('a dashboard full refund of a service payment (price + Razorpay\'s charge) alerts admins; the price alone does not', async () => {
+    prisma.escrowTransaction.findFirst.mockResolvedValue(null);
+    prisma.userSubscription.findFirst.mockResolvedValue({ id: 's1', userId: 'u1', amountPaid: 2999, amountPaidPaise: 299900, refundIds: [], refundedAmountPaise: 0, paymentStatus: 'SUCCESS' });
+    await call(refund(307000, 'rfnd_a'));
+    expect(broadcastNotification).toHaveBeenCalledWith(expect.objectContaining({ title: 'Refund above the plan price (Razorpay dashboard)' }));
+    broadcastNotification.mockClear();
+    await call(refund(299900, 'rfnd_b'));
+    expect(broadcastNotification).not.toHaveBeenCalled();
   });
 });
 

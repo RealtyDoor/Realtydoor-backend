@@ -112,7 +112,7 @@ async function onRefund(escrow, quote, { refundId, actor }) {
     leadId: escrow.leadId, escrowId: escrow.id, type: 'REFUND', direction: 'OUT', status: 'RECORDED',
     partyType: 'BUYER', partyId: escrow.buyerId, grossPaise: quote.refundPaise, netPaise: quote.refundPaise,
     razorpayPaymentId: escrow.razorpayPaymentId, razorpayRefundId: refundId, reason: quote.reason,
-    note: quote.note || (quote.feeReturned ? 'Token and processing fee returned' : 'Token returned, processing fee kept'),
+    note: quote.note || (!(quote.feePaise > 0) ? 'Token returned' : (quote.feeReturned ? 'Token and processing fee returned' : 'Token returned, processing fee kept')),
     idempotencyKey: `refund:${escrow.id}:${refundId}`, ...by,
   });
   if (quote.cancellationChargePaise > 0) {
@@ -408,7 +408,7 @@ async function dealMoneyCard(leadId) {
 
   return {
     lead: { ...lead },
-    escrows: escrows.map((e) => ({ id: e.id, status: e.status, tokenPaise: Math.round(e.amount * 100), processingFeePaise: e.processingFeePaise ?? 0, chargedPaise: e.chargedPaise ?? null, heldAt: e.heldAt, releasedAt: e.releasedAt, refundedAt: e.refundedAt, refundReason: e.refundReason ?? null })),
+    escrows: escrows.map((e) => ({ id: e.id, status: e.status, tokenPaise: Math.round(e.amount * 100), processingFeePaise: e.processingFeePaise ?? 0, chargedPaise: e.chargedPaise ?? null, capturedPaise: e.capturedPaise ?? null, gatewayChargePaise: e.gatewayChargePaise ?? null, heldAt: e.heldAt, releasedAt: e.releasedAt, refundedAt: e.refundedAt, refundReason: e.refundReason ?? null })),
     summary: {
       cashIn: { tokenPaise: tokenIn, processingFeePaise: feeIn, brokerageReceivedPaise: received },
       cashOut: { refundsPaise: refunds, sellerPayoutPaise: sellerPaid, partnerNetPaise: partnerNet, gatewayFeePaise: gatewayFee },
@@ -495,6 +495,9 @@ async function reconcile() {
     check('TOKEN_IN', token, m.TOKEN_IN || 0);
     if (e.processingFeePaise) check('PROCESSING_FEE_IN', e.processingFeePaise, m.PROCESSING_FEE_IN || 0);
     if (e.refundedAmountPaise) check('REFUND', e.refundedAmountPaise, m.REFUND || 0);
+    // Payment audit 21 Nov 2026: a refund above what reached us (the Razorpay dashboard's full refund under Customer Fee Bearer also
+    // returns Razorpay's own charge, from our balance). The owner's rule is the token at most, so this always needs a look.
+    if ((e.refundedAmountPaise || 0) > token) differences.push({ escrowId: e.id, leadId: e.leadId, what: 'REFUND_ABOVE_TOKEN', expectedPaise: token, ledgerPaise: e.refundedAmountPaise });
     if (e.status === 'RELEASED' && e.netAmountPaise) check('SELLER_PAYOUT', e.netAmountPaise, m.SELLER_PAYOUT || 0);
   }
   return {
@@ -541,7 +544,7 @@ async function profitView({ from, to }) {
     entries: base.length,
     notes: [
       'Income excludes GST. Tokens held in escrow are a liability, not income.',
-      'Gateway and payout fees appear only once they are entered or imported; until then profit is overstated by that amount.',
+      'Razorpay\'s payment-gateway charge on token and service payments is paid by the buyer (Customer Fee Bearer), so it is not a cost here. RazorpayX payout fees (and any gateway fee entered by hand) appear only once they are entered or imported; until then profit is overstated by that amount.',
     ],
   };
 }

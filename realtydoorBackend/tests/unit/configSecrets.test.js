@@ -22,3 +22,9 @@ describe('platform config secrets', () => {
     expect(prisma.platformConfig.upsert).not.toHaveBeenCalled();
   });
 });
+
+describe('fee settings are locked (owner, 20 Nov 2026: Customer Fee Bearer permanent, no Realtydoor fee)', () => {
+  test.each([['processing_fee_bearer', 'PLATFORM'], ['processing_fee_bearer', ''], ['processing_fee_enabled', 'true']])('%s = %p is refused before anything is read or written', async (key, value) => {
+    await expect(adminUpsertConfig(key, { value, reason: 'test' }, 'a1')).rejects.toMatchObject({ statusCode: 400, data: { code: 'FEE_SETTING_LOCKED' } });
+  });
+});

@@ -35,7 +35,7 @@ describe('setDealRate', () => {
   test('the standard rate needs no reason', async () => {
     prisma.lead.findUnique.mockResolvedValue(lead());
     await commission.setDealRate('l1', { partnerRatePct: 1 }, 'a1');
-    expect(setTerms.mock.calls[0][1]).toMatchObject({ feePct: 2, lines: [{ payeeRole: 'CLOSING_AGENT', pct: 50 }] });
+    expect(setTerms.mock.calls[0][1]).toMatchObject({ feePct: 1, lines: [{ payeeRole: 'CLOSING_AGENT', pct: 100 }] }); // platform fee 0 since 21 Nov 2026
   });
   test('a different rate without a reason is refused', async () => {
     prisma.lead.findUnique.mockResolvedValue(lead());

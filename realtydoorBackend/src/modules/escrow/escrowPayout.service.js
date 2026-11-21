@@ -1,3 +1,4 @@
+const { gatewayRefundNote } = require('../../lib/escrowUtils');
 // BE-2 — the way out of HELD_PAYOUT_FAILED. release()/refund() both still
 // only accept a HELD escrow, so without this, money stuck on a failed leg
 // (see escrow.service.js's release(), BE-1) had no admin-facing resolution
@@ -426,7 +427,7 @@ async function refundRemaining(escrowId, note, adminId, ip) {
   if (escrow.buyerId) {
     createNotification({
       userId: escrow.buyerId, title: 'Escrow Refunded',
-      message: `₹${(remainingPaise / 100).toLocaleString('en-IN')} of your token advance has been refunded to your original payment method.`,
+      message: `₹${(remainingPaise / 100).toLocaleString('en-IN')} of your token advance has been refunded to your original payment method.${gatewayRefundNote(escrow)}`,
       type: 'ESCROW_REFUNDED', linkUrl: `/user/inquiries/${escrow.leadId}`,
     }).catch((e) => logger.warn('[EscrowPayout] buyer notice of the refund failed', { escrowId, error: e.message }));
   }

@@ -42,14 +42,15 @@ beforeEach(() => {
 });
 
 describe('previewTermsForLead: rate resolution', () => {
-  test('no card, no override: platform default 1% + 1%, partner takes half of the 2% fee', async () => {
+  // Platform fee 0 since 21 Nov 2026 (owner): the fee is the partner's 1% and all of it goes to the partner.
+  test('no card, no override: platform default 1% + 0%, the partner takes the whole 1% fee', async () => {
     prisma.lead.findUnique.mockResolvedValue(lead());
     const p = await commission.previewTermsForLead('lead1');
-    expect(p.feePct).toBe(2);
-    expect(p.lines).toEqual([{ payeeRole: 'CLOSING_AGENT', pct: 50 }]);
-    expect(p.rate).toMatchObject({ source: 'PLATFORM_DEFAULT', partnerRatePct: 1, platformFeePct: 1, isCustom: false });
-    expect(p.feeAmount).toBe(150000);
-    expect(p.headroom).toBe(75000); // fee 1,50,000 less the partner 75,000 = Realtydoor platform fee
+    expect(p.feePct).toBe(1);
+    expect(p.lines).toEqual([{ payeeRole: 'CLOSING_AGENT', pct: 100 }]);
+    expect(p.rate).toMatchObject({ source: 'PLATFORM_DEFAULT', partnerRatePct: 1, platformFeePct: 0, isCustom: false });
+    expect(p.feeAmount).toBe(75000);
+    expect(p.headroom).toBe(0); // nothing left for Realtydoor at a 0% platform fee
   });
 
   test('a project rate card wins over property and city cards, and is looked up through Property.projectId', async () => {
@@ -97,8 +98,8 @@ describe('setProjectRate', () => {
     prisma.rateCard.create.mockImplementation(async ({ data }) => ({ id: 'rc9', version: 1, ...data }));
     await commission.setProjectRate('proj1', { partnerRatePct: 2.5, reason: 'Launch push' }, 'admin1', '::1');
     const { data } = prisma.rateCard.create.mock.calls[0][0];
-    expect(data).toMatchObject({ projectId: 'proj1', feePct: 3.5, partnerRatePct: 2.5, platformFeePct: 1, isCustom: true, customReason: 'Launch push' });
-    expect(data.lines.create[0].pct).toBeCloseTo(71.4286, 3);
+    expect(data).toMatchObject({ projectId: 'proj1', feePct: 2.5, partnerRatePct: 2.5, platformFeePct: 0, isCustom: true, customReason: 'Launch push' });
+    expect(data.lines.create[0].pct).toBeCloseTo(100, 3);
     expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: 'PROJECT_COMMISSION_RATE_SET', targetId: 'proj1',
       after: expect.objectContaining({ partnerRatePct: 2.5, isCustom: true, reason: 'Launch push' }),
@@ -111,7 +112,7 @@ describe('setProjectRate', () => {
     prisma.rateCard.update.mockImplementation(async ({ data }) => ({ id: 'rc1', ...data }));
     await commission.setProjectRate('proj1', { partnerRatePct: 1 }, 'admin1', '::1');
     const { data } = prisma.rateCard.update.mock.calls[0][0];
-    expect(data).toMatchObject({ isCustom: false, customReason: null, version: 5, feePct: 2 });
+    expect(data).toMatchObject({ isCustom: false, customReason: null, version: 5, feePct: 1 });
   });
 
   test('unknown project', async () => {
@@ -215,15 +216,16 @@ describe('BUG-049: release readiness needs the allocation letter VERIFIED, not o
 });
 
 describe('checkout breakdown', () => {
-  test('Rs 50,000 token: buyer pays 51,209, fee 1,209; refund terms from settings', async () => {
+  // Customer Fee Bearer locked 20 Nov 2026: the buyer pays Realtydoor the token only, whatever the stored settings say.
+  test('Rs 50,000 token: buyer pays Realtydoor 50,000, no fee of ours; refund terms from settings', async () => {
     const q = await escrow.getCheckoutQuote(50000);
     expect(q).toMatchObject({
-      tokenPaise: 5000000, processingFeePaise: 120900, totalPaise: 5120900,
-      refundWindowHours: 48, cancellationChargePaise: 299900, holdDays: 30, processingFeeEnabled: true,
+      tokenPaise: 5000000, processingFeePaise: 0, totalPaise: 5000000, feeBearer: 'CUSTOMER',
+      refundWindowHours: 48, cancellationChargePaise: 299900, holdDays: 30, processingFeeEnabled: false,
     });
   });
-  test('fee switched off by setting', async () => {
-    prisma.platformConfig.findMany.mockResolvedValue([{ key: 'processing_fee_enabled', value: 'false' }]);
+  test('an old stored processing_fee_enabled=true cannot bring our fee back', async () => {
+    prisma.platformConfig.findMany.mockResolvedValue([{ key: 'processing_fee_enabled', value: 'true' }, { key: 'processing_fee_bearer', value: 'PLATFORM' }]);
     const q = await escrow.getCheckoutQuote(50000);
     expect(q).toMatchObject({ processingFeePaise: 0, totalPaise: 5000000 });
   });

@@ -53,7 +53,8 @@ describe('new emails', () => {
     expect(subject).toContain('Divine');
     expect(html).toContain('Thu, 29 Oct, 3:00 pm IST');
     expect(html).toContain('https://app.example.test/user/inquiries/L1');
-    expect(html).not.toMatch(/\b\d{6}\b/);
+    // The only six-digit number allowed is the pincode in the company address in the footer; a visit code would be a leak.
+    expect(html.replace('Karnataka 560070', '')).not.toMatch(/\b\d{6}\b/);
   });
 
   test('anything typed by a person is escaped', async () => {

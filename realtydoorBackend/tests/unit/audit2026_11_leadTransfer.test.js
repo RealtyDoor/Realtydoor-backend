@@ -104,3 +104,35 @@ describe('the scripts are fenced', () => {
     expect(fs.readFileSync(path.join(__dirname, '../../.gitignore'), 'utf8')).toMatch(/^exports\/$/m);
   });
 });
+
+describe('importing leads before their listing exists (--allow-unlisted)', () => {
+  const rec = (over = {}) => ({ ...lt.toRecord(fb(), 'vrunda-city-gated-plots-hoskote'), ...over });
+  test('without the option a lead whose listing is missing is skipped', () => {
+    const plan = lt.planImport([rec()], {});
+    expect(plan.toCreate).toHaveLength(0);
+    expect(plan.skipped[0].reason).toMatch(/not in the target/);
+  });
+  test('with the option it is added with no listing and the slug kept in propertyInterest', () => {
+    const plan = lt.planImport([rec({ propertyInterest: 'Vrunda City' })], { allowUnlisted: true });
+    expect(plan.toCreate).toHaveLength(1);
+    expect(plan.toCreate[0].unlisted).toBe(true);
+    expect(plan.toCreate[0].data.propertyId).toBeNull();
+    expect(plan.toCreate[0].data.propertyInterest).toBe('Vrunda City [vrunda-city-gated-plots-hoskote]');
+  });
+  test('with no interest text the slug alone is used, and it is not doubled on a second pass', () => {
+    const a = lt.planImport([rec({ propertyInterest: null })], { allowUnlisted: true }).toCreate[0].data.propertyInterest;
+    expect(a).toBe('vrunda-city-gated-plots-hoskote [vrunda-city-gated-plots-hoskote]');
+    const b = lt.planImport([rec({ propertyInterest: 'Vrunda City [vrunda-city-gated-plots-hoskote]' })], { allowUnlisted: true }).toCreate[0].data.propertyInterest;
+    expect(b).toBe('Vrunda City [vrunda-city-gated-plots-hoskote]');
+  });
+  test('a listing that does exist is still linked normally', () => {
+    const plan = lt.planImport([rec()], { allowUnlisted: true, listingsBySlug: new Map([['vrunda-city-gated-plots-hoskote', { id: 'P1' }]]) });
+    expect(plan.toCreate[0].unlisted).toBeUndefined();
+    expect(plan.toCreate[0].data.propertyId).toBe('P1');
+  });
+  test('repeats are still skipped', () => {
+    const plan = lt.planImport([rec(), rec()], { allowUnlisted: true });
+    expect(plan.toCreate).toHaveLength(1);
+    expect(plan.skipped).toHaveLength(1);
+  });
+});

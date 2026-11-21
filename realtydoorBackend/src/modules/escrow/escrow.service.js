@@ -8,7 +8,7 @@ const { createNotification, notifyAdmins } = require('../../lib/notifications');
 const { notifyUser } = require('../../lib/wati');
 const { sendEscrowRefunded, sendEscrowHeld, sendPartnerTaxInvoiceNeeded } = require('../../lib/email');
 const { getConfigNumber } = require('../config/config.service');
-const { isEscrowLeadUniqueViolation } = require('../../lib/escrowUtils');
+const { isEscrowLeadUniqueViolation, paymentMatchesOrder, gatewayRefundNote } = require('../../lib/escrowUtils');
 const { buildEscrowReceiptPdf, buildFeeTaxInvoicePdf, buildRefundReceiptPdf } = require('../../lib/pdfReceipt');
 const { splitGstInclusive, financialYear, formatInvoiceNo } = require('../../lib/gstInvoice');
 const logger = require('../../lib/logger');
@@ -33,6 +33,7 @@ async function getById(escrowId, buyerId) {
       status: true, heldAt: true, releasedAt: true, refundedAt: true, failedAt: true,
       createdAt: true, buyerId: true,
       processingFeePaise: true, chargedPaise: true, cancellationChargePaise: true, refundReason: true,
+      capturedPaise: true, gatewayChargePaise: true,
     },
   });
   if (!escrow || escrow.buyerId !== buyerId) throw new ApiError(404, 'Escrow not found');
@@ -46,6 +47,15 @@ async function getById(escrowId, buyerId) {
 // request (same read-only data every time) rather than generated once
 // and stored — there's no "has this already been issued" state to track
 // the way an invoice has, so nothing is gained by persisting it.
+// Who collects the gateway's charge right now: 'PLATFORM' (today) or 'CUSTOMER' (Razorpay's Customer Fee Bearer). Any failure to read the setting means
+// PLATFORM, which is the strict exact-amount check: a payment is never accepted more loosely because a lookup failed.
+async function currentFeeBearer() {
+  // Owner, 20 Nov 2026: Razorpay's Customer Fee Bearer is permanent (locked in moneyConfig too). Not read from the database, so a
+  // database blip can never switch the amount check to the exact rule and refuse a real customer payment.
+  return 'CUSTOMER';
+}
+
+
 async function getReceipt(escrowId, buyerId) {
   const escrow = await prisma.escrowTransaction.findFirst({
     where: { id: escrowId, buyerId },
@@ -64,9 +74,11 @@ async function getReceipt(escrowId, buyerId) {
     throw new ApiError(400, 'No receipt yet — payment has not been captured for this escrow');
   }
 
-  const { company } = await getMoneySettings();
+  const { company, processingFee } = await getMoneySettings();
   return buildEscrowReceiptPdf({
     company,
+    feeBearer: processingFee?.bearer,
+    gatewayChargePaise: escrow.gatewayChargePaise ?? null,
     refCode: escrow.lead?.refCode,
     propertyTitle: escrow.lead?.property?.title || escrow.lead?.propertyInterest,
     buyerName: escrow.lead?.buyerName,
@@ -98,6 +110,7 @@ async function getRefundReceipt(escrowId, buyerId) {
     chargePaise: escrow.cancellationChargePaise || 0,
     razorpayRefundId: escrow.razorpayRefundId,
     refundedAt: escrow.refundedAt,
+    gatewayChargePaise: escrow.gatewayChargePaise ?? null,
   });
 }
 
@@ -185,6 +198,7 @@ function checkoutBreakdown(tokenPaise, settings, { nri = false } = {}) {
     processingFeeGstPaise: fee.feeGstPaise,
     totalPaise: fee.totalPaise,
     processingFeeEnabled: settings.processingFee.enabled,
+    feeBearer: settings.processingFee.bearer === 'CUSTOMER' ? 'CUSTOMER' : 'PLATFORM',
     nri,
     gatewayPct,
     gatewayGstPct: settings.processingFee.gatewayGstPct,
@@ -275,7 +289,24 @@ async function createOrder(leadId, buyerId, amountInRupees) {
     try { razorpayOrder = await razorpay.orders.fetch(existing.razorpayOrderId); } catch (err) {
       throw new ApiError(502, `Could not fetch the existing Razorpay order: ${razorpayErrorText(err)}`, { code: 'RAZORPAY_ERROR' });
     }
-    const resumedBreakdown = checkoutBreakdown(Math.round(existing.amount * 100), await getMoneySettings(), { nri: await isNri() });
+    const resumeSettings = await getMoneySettings();
+    let resumedBreakdown = checkoutBreakdown(Math.round(existing.amount * 100), resumeSettings, { nri: await isNri() });
+    // Payment audit 20 Nov: an order made before a settings change (our fee on or off, Customer Fee Bearer) still charges
+    // what it was made for. Show the buyer THAT order's amounts, never a re-quote with today's settings.
+    if (Number.isInteger(razorpayOrder?.amount) && razorpayOrder.amount !== resumedBreakdown.totalPaise) {
+      const feePaise = existing.processingFeePaise ?? Math.max(0, razorpayOrder.amount - Math.round(existing.amount * 100));
+      const gstPct = resumeSettings.processingFee.feeGstPct ?? 18;
+      resumedBreakdown = {
+        ...resumedBreakdown,
+        processingFeePaise: feePaise,
+        processingFeeGstPaise: feePaise - Math.round(feePaise / (1 + gstPct / 100)),
+        totalPaise: razorpayOrder.amount,
+        processingFeeEnabled: feePaise > 0,
+        feeBearer: feePaise > 0 ? 'PLATFORM' : resumedBreakdown.feeBearer,
+        madeUnderEarlierSettings: true,
+      };
+      logger.warn('[Escrow] Resumed an order made under earlier fee settings; showing its own amounts', { escrowId: existing.id, orderPaise: razorpayOrder.amount });
+    }
 
     if (razorpayOrder.status === 'paid') {
       // The payment actually went through already — most likely the
@@ -365,6 +396,9 @@ async function createOrder(leadId, buyerId, amountInRupees) {
 // authorized; a captured payment on another order of the same lead stays with us. So the extra payment is refunded in full (token and fee) here:
 // claim the row first (only one delivery wins), call Razorpay, put the row back and alert admins if Razorpay refuses. Never throws.
 async function refundDuplicatePayment(escrow, razorpayPaymentId) {
+  // The order amount: what reached Realtydoor (owner, 20 Nov: every refund is what we received; Razorpay keeps its own charge
+  // under Customer Fee Bearer, and anything else is settled offline through a request). Refunding the captured amount would
+  // take Razorpay's charge out of our balance and book more refunded than received.
   const paise = escrow.chargedPaise ?? Math.round(escrow.amount * 100);
   try {
     const claim = await prisma.escrowTransaction.updateMany({
@@ -442,6 +476,8 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
   // "authorized" payment could otherwise get marked HELD here. The webhook
   // path doesn't need this: payment.captured itself only ever fires once
   // Razorpay has actually captured the payment.
+  // What Razorpay says it captured; under Customer Fee Bearer it is the token plus Razorpay's own charge (Test Mode, 20 Nov: 51,180 for 50,000).
+  let capturedPaise = null;
   if (buyerId) {
     let payment;
     try {
@@ -459,16 +495,17 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
       throw new ApiError(409, `Payment has not been captured yet (status: ${payment.status}).`, { code: 'PAYMENT_NOT_CAPTURED' });
     }
     const expectedPaise = escrow.chargedPaise ?? Math.round(escrow.amount * 100);
-    if (payment.amount !== expectedPaise || payment.currency !== 'INR') {
+    if (!paymentMatchesOrder({ paidPaise: payment.amount, expectedPaise, currency: payment.currency, bearer: await currentFeeBearer() })) {
       throw new ApiError(400, "This payment's amount or currency does not match the order.", { code: 'AMOUNT_MISMATCH' });
     }
+    capturedPaise = payment.amount;
   }
 
   // Audit Nov 2026 (F6). The webhook and the reconcile job carry the payment's own amount and currency: check them too, so no caller
   // can mark a token paid for a different amount. A mismatch is never confirmed; admins are told and the order stays as it is.
   if (!buyerId && webhookPayment && typeof webhookPayment.amount === 'number') {
     const expected = escrow.chargedPaise ?? Math.round(escrow.amount * 100);
-    if (webhookPayment.amount !== expected || webhookPayment.currency !== 'INR') {
+    if (!paymentMatchesOrder({ paidPaise: webhookPayment.amount, expectedPaise: expected, currency: webhookPayment.currency, bearer: await currentFeeBearer() })) {
       logger.error('[Escrow] A captured payment does not match its order; not confirmed', { escrowId: escrow.id, razorpayOrderId, razorpayPaymentId, paid: webhookPayment.amount, expected });
       await notifyAdmins({
         title: 'A payment does not match its token order',
@@ -477,7 +514,10 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
       }).catch(() => null);
       return escrow;
     }
+    capturedPaise = webhookPayment.amount;
   }
+  const orderPaise = escrow.chargedPaise ?? Math.round(escrow.amount * 100);
+  const gatewayChargePaise = Number.isInteger(capturedPaise) ? Math.max(0, capturedPaise - orderPaise) : null;
 
   // Atomic claim, same shape as release()/refund(): this can race a webhook
   // delivery against the createOrder() resume-path self-heal hitting the same
@@ -488,7 +528,7 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
   try {
     claim = await prisma.escrowTransaction.updateMany({
       where: { razorpayOrderId, status: { in: ['PAYMENT_PENDING', 'FAILED'] } },
-      data: { razorpayPaymentId, status: 'HELD', heldAt: new Date(), failedAt: null },
+      data: { razorpayPaymentId, status: 'HELD', heldAt: new Date(), failedAt: null, ...(Number.isInteger(capturedPaise) && { capturedPaise, gatewayChargePaise }) },
     });
   } catch (err) {
     // A newer order for the same lead is already active, so this older one can't also become HELD.
@@ -565,7 +605,18 @@ async function confirmPayment(razorpayOrderId, razorpayPaymentId, buyerId = null
       payment_id: updated.razorpayPaymentId || updated.razorpayOrderId,
     });
     const buyer = await prisma.user.findUnique({ where: { id: updated.buyerId }, select: { email: true } });
-    if (buyer) await sendEscrowHeld(buyer.email, updated.amount, updated.processingFeePaise);
+    if (buyer) {
+      // Our own branded receipt goes by email (Razorpay sends its own confirmation separately). If the PDF cannot be made the email still goes, without it.
+      const receipt = {
+        refCode: heldLead?.refCode, propertyTitle: heldLead?.property?.title || heldLead?.propertyInterest,
+        chargedPaise: updated.chargedPaise, razorpayPaymentId: updated.razorpayPaymentId, paidAt: updated.heldAt,
+        feeBearer: await currentFeeBearer(),
+      };
+      try { receipt.pdf = await getReceipt(updated.id, updated.buyerId); } catch (e) {
+        logger.warn('[Escrow] Receipt PDF for the email could not be made; sending the email without it', { escrowId: updated.id, error: e.message });
+      }
+      await sendEscrowHeld(buyer.email, updated.amount, updated.processingFeePaise, receipt);
+    }
   })().catch((err) => logger.warn('[Escrow] Post-confirmation notification/email failed', { escrowId: updated.id, error: err.message }));
 
   return updated;
@@ -1538,7 +1589,8 @@ async function refund(escrowId, adminId, ip, opts = {}) {
     const refundRupees = money.toRupees(amountInPaise);
     const inr = (n) => `₹${n.toLocaleString('en-IN')}`;
     const chargeRupees = quote.cancellationChargePaise ? money.toRupees(quote.cancellationChargePaise) : 0;
-    const feeNote = quote.feeReturned ? ' The processing fee is returned too.' : ' The processing fee is not returned.';
+    // The fee sentence only when a fee was actually paid on this payment (none under Razorpay's Customer Fee Bearer, or when our fee is off).
+    const feeNote = !(escrow.processingFeePaise > 0) ? gatewayRefundNote(escrow) : (quote.feeReturned ? ' The processing fee is returned too.' : ' The processing fee is not returned.');
     await createNotification({
       userId: escrow.buyerId,
       title: 'Escrow Refunded',
@@ -1577,7 +1629,14 @@ async function refund(escrowId, adminId, ip, opts = {}) {
       linkUrl: '/admin/escrow',
     });
     const buyer = await prisma.user.findUnique({ where: { id: escrow.buyerId }, select: { email: true } });
-    if (buyer) await sendEscrowRefunded(buyer.email, refundRupees, { chargeRupees, feeReturned: !!quote.feeReturned, propertyTitle: refundedLead?.property?.title });
+    if (buyer) {
+      const receipt = { refCode: refundedLead?.refCode, refundedAt: updated.refundedAt, razorpayRefundId: updated.razorpayRefundId };
+      try { receipt.pdf = await getRefundReceipt(updated.id, escrow.buyerId); } catch (e) {
+        logger.warn('[Escrow] Refund receipt PDF for the email could not be made; sending the email without it', { escrowId: updated.id, error: e.message });
+      }
+      // The fee sentence only when a fee was actually paid on this payment (none under Razorpay's Customer Fee Bearer).
+      await sendEscrowRefunded(buyer.email, refundRupees, { chargeRupees, feeReturned: updated.processingFeePaise > 0 ? !!quote.feeReturned : undefined, propertyTitle: refundedLead?.property?.title, receipt, gatewayChargePaise: escrow.gatewayChargePaise ?? null });
+    }
   })().catch((err) => logger.warn('[Escrow] Post-refund notification/email failed', { escrowId: updated.id, error: err.message }));
 
   return { ...updated, refundQuote: quote };
@@ -1666,9 +1725,18 @@ async function refundPartial(escrowId, adminId, ip, { amountPaise, reason } = {}
     await createNotification({
       userId: escrow.buyerId,
       title: complete ? 'Token Advance Refunded' : 'Partial Refund Issued',
-      message: `${inr(refundRupees)} of your token advance has been refunded to your original payment method.${complete ? '' : ' The rest stays held until your deal is settled.'}`,
+      message: `${inr(refundRupees)} of your token advance has been refunded to your original payment method.${complete ? '' : ' The rest stays held until your deal is settled.'}${gatewayRefundNote(escrow)}`,
       type: 'ESCROW_REFUNDED',
     });
+    // Payment audit 21 Nov 2026: a part refund was the one refund with no email.
+    const partialBuyer = await prisma.user.findUnique({ where: { id: escrow.buyerId }, select: { email: true } });
+    if (partialBuyer?.email) {
+      await sendEscrowRefunded(partialBuyer.email, refundRupees, {
+        partial: !complete, propertyTitle: refundedLead?.property?.title,
+        feeReturned: escrow.processingFeePaise > 0 ? false : undefined, gatewayChargePaise: escrow.gatewayChargePaise ?? null,
+        receipt: { refCode: refundedLead?.refCode, refundedAt: new Date(), razorpayRefundId: refundResult.id },
+      }).catch((e) => logger.warn('[Escrow] Part-refund email failed', { escrowId, error: e.message }));
+    }
     notifyUser(escrow.buyerId, 'escrow_refunded', {
       name: '$userName', amount: refundRupees.toLocaleString('en-IN'), charge: '0', property_title: refundedLead?.property?.title || 'your property',
     }, { leadId: escrow.leadId });
@@ -1827,7 +1895,7 @@ async function refundManually(escrowId, adminId, ip, { amountPaise, reference, r
     await createNotification({
       userId: escrow.buyerId,
       title: complete ? 'Token Advance Refunded' : 'Partial Refund Issued',
-      message: `${inr(refundRupees)} of your token advance has been sent to your bank account by transfer. Reference: ${ref}.${complete ? '' : ' The rest stays held until your deal is settled.'}`,
+      message: `${inr(refundRupees)} of your token advance has been sent to your bank account by transfer. Reference: ${ref}.${complete ? '' : ' The rest stays held until your deal is settled.'}${gatewayRefundNote(escrow)}`,
       type: 'ESCROW_REFUNDED',
     });
     await notifyAdmins({

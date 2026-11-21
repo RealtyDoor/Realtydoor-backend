@@ -49,6 +49,10 @@ model EscrowTransaction {
   // keeps working; the Razorpay order is for chargedPaise.
   processingFeePaise    Int?
   chargedPaise          Int?
+  // Payment audit 21 Nov 2026 (Razorpay Customer Fee Bearer): what Razorpay reports it captured (token + its own charge) and
+  // the difference, Razorpay's charge, which the buyer paid to Razorpay and which a refund does not return. Null on older rows.
+  capturedPaise         Int?
+  gatewayChargePaise    Int?
   // Refund outcome (BUYER_WITHIN_WINDOW | BUYER_AFTER_WINDOW | SELLER_BACKOUT |
   // LISTING_WRONG | OUR_FAULT | ADMIN_TOKEN_ONLY) and the cancellation charge
   // kept from a refund after the free window.

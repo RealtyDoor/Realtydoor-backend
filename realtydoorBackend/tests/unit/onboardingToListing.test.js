@@ -8,6 +8,7 @@ jest.mock('../../src/lib/auditLog', () => ({ createAuditLog: jest.fn().mockResol
 jest.mock('../../src/lib/notifications', () => ({ notifyAdmins: jest.fn() }));
 jest.mock('../../src/lib/fileUpload', () => ({ deleteFile: jest.fn().mockResolvedValue(), copyFile: jest.fn() }));
 jest.mock('../../src/modules/properties/properties.service', () => ({ createProperty: jest.fn() }));
+jest.mock('../../src/lib/email', () => ({ sendOnboardingFormReady: jest.fn(), sendOnboardingReceived: jest.fn(), sendOnboardingUpdate: jest.fn().mockResolvedValue({}) }));
 
 const prisma = require('../../src/lib/prisma');
 const { copyFile, deleteFile } = require('../../src/lib/fileUpload');
@@ -134,10 +135,22 @@ describe('converting', () => {
     expect(copyFile).not.toHaveBeenCalled();
     expect(createProperty).not.toHaveBeenCalled();
   });
+  test('emails the sender "listing created" when an email is on file, and only then', async () => {
+    const email = require('../../src/lib/email');
+    prisma.onboardingRequest.findUnique.mockResolvedValue(ready({ contactEmail: 'builder@example.com', contactName: 'Asha Rao', title: 'Green Park' }));
+    const out = await service.convertToListing('a1', 'r1', { partnerId: 'p1' }, '1.1.1.1');
+    expect(out.statusEmailSent).toBe(true);
+    expect(email.sendOnboardingUpdate).toHaveBeenCalledWith('builder@example.com', 'listing_created', { name: 'Asha Rao', title: 'Green Park' });
+    email.sendOnboardingUpdate.mockClear();
+    prisma.onboardingRequest.findUnique.mockResolvedValue(ready());
+    await service.convertToListing('a1', 'r1', { partnerId: 'p1' }, '1.1.1.1');
+    expect(email.sendOnboardingUpdate).not.toHaveBeenCalled();
+  });
   test('copies photos to the public pictures, papers to private documents, creates the listing under the partner, and marks the request converted', async () => {
     prisma.onboardingRequest.findUnique.mockResolvedValue(ready());
     const out = await service.convertToListing('a1', 'r1', { partnerId: 'p1' }, '1.1.1.1');
-    expect(out).toEqual({ propertyId: 'prop1', slug: 'sobha-1', partnerName: 'Dev One' });
+    // statusEmailSent: false because the request in this test has no sender email on file (the sender email itself is tested in onboardingNotify.test.js).
+    expect(out).toEqual({ statusEmailSent: false, propertyId: 'prop1', slug: 'sobha-1', partnerName: 'Dev One' });
     expect(copyFile.mock.calls.map((c) => c[1]).sort()).toEqual(['properties', 'properties', 'properties/documents']);
     const [data, partnerId] = createProperty.mock.calls[0];
     expect(partnerId).toBe('p1');
@@ -205,7 +218,7 @@ describe('the builder project record', () => {
     test('creates the project first, links the listing to it, reuses the copied private files, and notes the project id', async () => {
       prisma.onboardingRequest.findUnique.mockResolvedValue(newProject({ adminNotes: [] }));
       const out = await service.convertToListing('a1', 'r1', { partnerId: 'p1', createProject: true }, '1.1.1.1');
-      expect(out).toEqual({ propertyId: 'prop1', slug: 'green-park-1', partnerName: 'Dev One', projectId: 'proj1' });
+      expect(out).toEqual({ statusEmailSent: false, propertyId: 'prop1', slug: 'green-park-1', partnerName: 'Dev One', projectId: 'proj1' });
       const made = prisma.project.create.mock.calls[0][0].data;
       expect(made).toMatchObject({ title: 'Green Park', builderId: 'p1', publishStatus: 'PENDING_APPROVAL', reraProjectNumber: 'PRM/KA/RERA/1251/1', designatedAccountBankName: 'HDFC Bank, Jayanagar' });
       expect(made.slug).toMatch(/^green-park-\d+$/);

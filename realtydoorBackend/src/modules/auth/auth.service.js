@@ -8,6 +8,8 @@ const otpAuth = require('../../lib/otpAuth');
 const { setUserRole, syncUserFields } = require('../../lib/clerkAdmin');
 const { computeOnboardingComplete } = require('../../lib/onboarding');
 const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
+const { isDisposableEmail, isBlockingEnabled } = require('../../lib/disposableEmail');
+const { sendWelcomeWhatsApp } = require('../../lib/wati');
 const { nextRefCode } = require('../../lib/refCode');
 const { sendWelcomeEmail } = require('../../lib/email');
 const { getAllowedOrigins } = require('../../lib/allowedOrigins');
@@ -115,6 +117,7 @@ async function createAccount({ name, email, phone, isNRI = false, marketingOptIn
   // Fire-and-forget, same as every other notification send in this codebase
   // — a flaky email send must never fail or delay account creation itself.
   sendWelcomeEmail(dbUser.email, dbUser.name, dbUser.role, dbUser).catch(() => {});
+  sendWelcomeWhatsApp(dbUser.id, dbUser.role).catch(() => {});
 
   // The account (Clerk user + DB row) already exists by this point — a failure
   // here doesn't leave a broken account (the user can still log in normally
@@ -301,6 +304,19 @@ async function syncUserByClerkId(clerkId, clerkUser) {
     }
   }
 
+  // A brand-new account with a temporary (disposable) email address is refused when BLOCK_DISPOSABLE_EMAILS=true. Never applies to an existing
+  // account, so nobody already signed up is locked out. The stray Clerk identity is removed (as for a duplicate email) so the person can try
+  // again with a permanent address.
+  if (!existing && isBlockingEnabled() && isDisposableEmail(email)) {
+    if (Date.now() - clerkUser.createdAt < RECENT_CLERK_USER_MS) {
+      await clerk.users.deleteUser(clerkId).catch((err) =>
+        logger.warn('[authSync] cleanup of disposable-email Clerk identity failed', { clerkId, error: err.message })
+      );
+    }
+    logger.warn('[authSync] refused a disposable email address', { clerkId });
+    throw new ApiError(403, 'Please sign up with a permanent email address. Temporary email services are not accepted.', { code: 'DISPOSABLE_EMAIL' });
+  }
+
   if (existing?.isSuspended) {
     throw new ApiError(403, SUSPENDED_MESSAGE);
   }
@@ -425,6 +441,8 @@ async function googlePhoneVerify(currentUser, { phone, code }) {
     where: { id: currentUser.id },
     data: { phoneVerified: true, phoneVerifiedAt: new Date() },
   });
+  // First verified number on this account: the welcome WhatsApp goes now (the email went at sign-up).
+  if (!currentUser.phoneVerifiedAt) sendWelcomeWhatsApp(user.id, user.role).catch(() => {});
 
   return user;
 }

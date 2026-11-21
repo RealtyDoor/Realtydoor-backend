@@ -6,6 +6,7 @@ const { isTrustedMediaUrl } = require('../../lib/trustedUrl');
 const otpAuth = require('../../lib/otpAuth');
 const escrowService = require('../escrow/escrow.service');
 const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
+const { sendWelcomeWhatsApp } = require('../../lib/wati');
 const { sanitizeLeadForBuyer } = require('../leads/leads.service');
 const { createPrivacyAuditLog } = require('../../lib/privacyAuditLog');
 const { getMoneyInFlightReasons, revokeAllSessions } = require('../../lib/accountDeletion');
@@ -49,6 +50,7 @@ async function verifyPhoneOtp(userId, phone, code) {
     throw new ApiError(409, 'Phone number already registered to another account', { code: 'PHONE_IN_USE' });
   }
 
+  const before = await prisma.user.findUnique({ where: { id: userId }, select: { phoneVerifiedAt: true, role: true } });
   try {
     await prisma.user.update({
       where: { id: userId },
@@ -62,6 +64,7 @@ async function verifyPhoneOtp(userId, phone, code) {
     }
     throw err;
   }
+  if (before && !before.phoneVerifiedAt) sendWelcomeWhatsApp(userId, before.role).catch(() => {});
   return { phoneVerified: true, phone };
 }
 
@@ -171,6 +174,9 @@ async function getMyPayments(userId) {
       tokenPaise,
       processingFeePaise: feePaise,
       paidPaise: e.chargedPaise ?? tokenPaise + feePaise,
+      // What the card was charged in all (token + Razorpay's own charge under Customer Fee Bearer), when known.
+      capturedPaise: e.capturedPaise ?? null,
+      gatewayChargePaise: e.gatewayChargePaise ?? null,
       paidAt: e.heldAt || e.createdAt,
       paymentId: e.razorpayPaymentId || null,
       refundedPaise: e.status === 'REFUNDED' ? (e.refundedAmountPaise > 0 ? e.refundedAmountPaise : null) : null,
@@ -216,6 +222,7 @@ async function getServiceReceipt(userId, subscriptionId) {
     serviceName: sub.service?.name, buyerName: user?.name,
     amountPaise: sub.amountPaidPaise ?? Math.round((sub.amountPaid || 0) * 100), gstPct: settings?.commission?.gstPct ?? 18,
     razorpayPaymentId: sub.razorpayPaymentId, paidAt: sub.startDate, validUntil: sub.endDate, company: settings?.company || {},
+    feeBearer: settings?.processingFee?.bearer, // service payments do not record the mode; the current one is used
   });
 }
 
@@ -314,7 +321,8 @@ async function getCancelQuote(userId, leadId) {
     return { hasEscrow: true, escrowId: escrow.id, stage: 'CLOSED', refundable: false };
   }
   const quote = await escrowService.refund(escrow.id, userId, null, { reason: 'BUYER_CANCEL', dryRun: true });
-  return { hasEscrow: true, escrowId: escrow.id, ...quote };
+  // Razorpay's own charge on this payment (Customer Fee Bearer): the buyer paid it to Razorpay and a refund does not return it.
+  return { hasEscrow: true, escrowId: escrow.id, ...quote, gatewayChargePaise: escrow.gatewayChargePaise ?? null, capturedPaise: escrow.capturedPaise ?? null };
 }
 
 async function cancelLead(userId, leadId, { reason, reasonLabel, acceptCancellationCharge }) {

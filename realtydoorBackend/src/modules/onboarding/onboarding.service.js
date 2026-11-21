@@ -7,7 +7,10 @@ const { notifyAdmins } = require('../../lib/notifications');
 const { deleteFile, copyFile } = require('../../lib/fileUpload');
 const { withKeyLock, withKeyLockWait } = require('../../lib/keyLock');
 const { buildListing } = require('../../lib/onboardingToListing');
+const { sendOnboardingFormReady, sendOnboardingReceived, sendOnboardingUpdate } = require('../../lib/email');
+const { sendOnboardingWhatsApp, liveSet } = require('../../lib/wati');
 const f = require('../../lib/onboardingForm');
+const { encryptToken, decryptToken } = require('../../lib/linkVault');
 
 const asList = (v) => (Array.isArray(v) ? v : []);
 
@@ -64,6 +67,7 @@ async function senderSubmit(token, body) {
     type: 'ONBOARDING_RECEIVED',
     linkUrl: `/admin/onboarding/${row.id}`,
   });
+  tellSender('received', row, null);
   return { submittedAt: now };
 }
 
@@ -117,6 +121,8 @@ async function removeDocument(row, docId) {
 const adminView = (row) => ({
   ...row,
   tokenHash: undefined,
+  tokenEnc: undefined, // the saved link never leaves the server; only the copy and resend endpoints use it
+  hasSavedLink: !!row.tokenEnc,
   documents: asList(row.documents).map(({ s3Key, ...d }) => d),
   linkState: f.linkState(row).state,
 });
@@ -124,6 +130,7 @@ const adminView = (row) => ({
 const listItem = (row) => ({
   id: row.id, title: row.title, propertyType: row.propertyType, status: row.status,
   contactName: row.contactName, contactPhone: row.contactPhone, contactRole: row.contactRole,
+  hasEmail: !!row.contactEmail, hasPhone: !!row.contactPhone, hasSavedLink: !!row.tokenEnc,
   documentCount: asList(row.documents).length, answerCount: Object.keys(row.data || {}).length,
   submittedAt: row.submittedAt, expiresAt: row.expiresAt, linkState: f.linkState(row).state, createdAt: row.createdAt, updatedAt: row.updatedAt,
 });
@@ -149,11 +156,48 @@ const audit = (adminId, action, id, metadata, ipAddress) =>
   createAuditLog({ adminId, action, targetType: 'OnboardingRequest', targetId: String(id), metadata, ipAddress })
     .catch((err) => logger.warn('[onboarding] audit failed', { action, error: err.message }));
 
+
+// ─── Messages to the sender (builder or owner) ─────────────────────────────────────────────────────────────────────────────────────────
+// Sent when the link is created or re-issued ("ready") and when they press Send ("received"), by email and by WhatsApp, only to the contact
+// details the team typed. Fire and forget: a failed email must never block creating a link or sending a form. WhatsApp is silent until its
+// template is approved and listed in WATI_LIVE_TEMPLATES. Returns what will go out, so the admin screen can say so.
+const formUrlFor = (token) => `${String(process.env.FRONTEND_URL || '').replace(/\/+$/, '')}/listing-form/${token}`;
+
+function tellSender(kind, row, token) {
+  const info = { name: row.contactName, title: row.title };
+  const whatsappTemplate = kind === 'ready' ? 'onboarding_form_ready' : 'onboarding_form_received';
+  const whatsappLive = !!row.contactPhone && liveSet().has(whatsappTemplate);
+  if (row.contactEmail) {
+    const mail = kind === 'ready'
+      ? sendOnboardingFormReady(row.contactEmail, { ...info, formUrl: formUrlFor(token), expiresAt: row.expiresAt })
+      : sendOnboardingReceived(row.contactEmail, info);
+    Promise.resolve(mail).catch((e) => logger.warn('[onboarding] email to the sender failed', { requestId: row.id, kind, error: e.message }));
+  }
+  if (whatsappLive) {
+    Promise.resolve(sendOnboardingWhatsApp(row.contactPhone, whatsappTemplate, { name: row.contactName, project: row.title, formLink: kind === 'ready' ? formUrlFor(token) : '' }))
+      .catch((e) => logger.warn('[onboarding] WhatsApp to the sender failed', { requestId: row.id, kind, error: e.message }));
+  }
+  return { email: !!row.contactEmail, whatsapp: whatsappLive, whatsappWaitingForTemplate: !!row.contactPhone && !whatsappLive };
+}
+
+// The status the team moves a request to, and the email the sender gets for it. RECEIVED is not here: that email goes when the sender presses Send.
+// SENT is the "link ready" email (create / New link). Email only: no WhatsApp template exists for these.
+const STATUS_EMAIL = { IN_DISCUSSION: 'in_discussion', READY: 'ready_to_list', CONVERTED: 'listing_created', CLOSED: 'closed' };
+
+function tellSenderStatus(newStatus, row) {
+  const kind = STATUS_EMAIL[newStatus];
+  if (!kind || !row.contactEmail) return false;
+  Promise.resolve(sendOnboardingUpdate(row.contactEmail, kind, { name: row.contactName, title: row.title }))
+    .catch((e) => logger.warn('[onboarding] status email to the sender failed', { requestId: row.id, kind, error: e.message }));
+  return true;
+}
+
 async function adminCreate(adminId, body, ip) {
   const token = f.newToken();
   const row = await prisma.onboardingRequest.create({
     data: {
       tokenHash: f.hashToken(token),
+      tokenEnc: encryptToken(token),
       propertyType: body.propertyType,
       title: body.title || null,
       contactName: body.contactName,
@@ -168,7 +212,8 @@ async function adminCreate(adminId, body, ip) {
   });
   await audit(adminId, 'ONBOARDING_CREATED', row.id, { propertyType: row.propertyType }, ip);
   // The secret is shown to the admin once, here. Only its hash is kept.
-  return { ...adminView(row), token };
+  const notified = tellSender('ready', row, token);
+  return { ...adminView(row), token, notified };
 }
 
 async function adminUpdate(adminId, id, body, ip) {
@@ -193,7 +238,9 @@ async function adminUpdate(adminId, id, body, ip) {
   data.lastSavedAt = new Date();
   const updated = await prisma.onboardingRequest.update({ where: { id }, data });
   await audit(adminId, 'ONBOARDING_UPDATED', id, { fields: Object.keys(data).filter((k) => k !== 'lastSavedAt'), status: updated.status }, ip);
-  return adminView(updated);
+  // A real status change (not the same status saved again) emails the sender what the team did.
+  const emailed = data.status && data.status !== row.status ? tellSenderStatus(data.status, updated) : false;
+  return { ...adminView(updated), ...(data.status && data.status !== row.status ? { statusEmailSent: emailed } : {}) };
 }
 
 async function adminAddNote(adminId, id, text, ip) {
@@ -213,18 +260,55 @@ async function adminReopen(adminId, id, expiresInDays, ip) {
   const token = f.newToken();
   const updated = await prisma.onboardingRequest.update({
     where: { id },
-    data: { tokenHash: f.hashToken(token), revokedAt: null, status: 'SENT', expiresAt: f.expiryFromDays(expiresInDays) },
+    data: { tokenHash: f.hashToken(token), tokenEnc: encryptToken(token), revokedAt: null, status: 'SENT', expiresAt: f.expiryFromDays(expiresInDays) },
   });
   await audit(adminId, 'ONBOARDING_LINK_REISSUED', id, null, ip);
-  return { ...adminView(updated), token };
+  const notified = tellSender('ready', updated, token);
+  return { ...adminView(updated), token, notified };
 }
 
 async function adminRevoke(adminId, id, ip) {
   const row = await prisma.onboardingRequest.findUnique({ where: { id } });
   if (!row) throw new ApiError(404, 'Onboarding request not found');
-  const updated = await prisma.onboardingRequest.update({ where: { id }, data: { revokedAt: new Date() } });
+  const updated = await prisma.onboardingRequest.update({ where: { id }, data: { revokedAt: new Date(), tokenEnc: null } });
   await audit(adminId, 'ONBOARDING_LINK_REVOKED', id, null, ip);
   return adminView(updated);
+}
+
+// ─── Copy and resend a link that was already made ─────────────────────────────────────────────────────────────────────────────────────
+// Possible only for links made after links were saved (hasSavedLink). An older one cannot be read back: "New link" makes one that can.
+const NO_SAVED_LINK = 'This link was made before links could be saved, so it cannot be shown again. Press "New link" to make one you can copy and resend any time. The old link will stop working.';
+const resendAt = new Map(); // request id -> time of the last resend (one process; a short pause so a double click cannot send twice)
+const RESEND_PAUSE_MS = 30 * 1000;
+
+async function savedLinkFor(id) {
+  const row = await prisma.onboardingRequest.findUnique({ where: { id } });
+  if (!row) throw new ApiError(404, 'Onboarding request not found');
+  if (row.status === 'CONVERTED' || row.convertedToId) throw new ApiError(409, 'This one has already become a listing, so its link is closed.', { code: 'LINK_CLOSED' });
+  const { state } = f.linkState(row);
+  if (state === 'revoked') throw new ApiError(409, 'This link was switched off. Press "New link" to make a new one.', { code: 'LINK_CLOSED' });
+  if (state === 'expired') throw new ApiError(409, 'This link has expired. Press "New link" to make a new one.', { code: 'LINK_CLOSED' });
+  const token = row.tokenEnc ? decryptToken(row.tokenEnc) : null;
+  if (!token) throw new ApiError(409, NO_SAVED_LINK, { code: 'NO_SAVED_LINK' });
+  return { row, token };
+}
+
+/** The private link, for the admin's "Copy link". Audited every time, because the link is a key to that builder's form. */
+async function adminCopyLink(adminId, id, ip) {
+  const { token } = await savedLinkFor(id);
+  await audit(adminId, 'ONBOARDING_LINK_COPIED', id, null, ip);
+  return { token };
+}
+
+/** Sends the SAME link again, by email and by WhatsApp (when live), to the contact details on the request. Nothing changes for a link the sender already has. */
+async function adminResend(adminId, id, ip) {
+  const { row, token } = await savedLinkFor(id);
+  const last = resendAt.get(id) || 0;
+  if (Date.now() - last < RESEND_PAUSE_MS) throw new ApiError(429, 'It was just sent. Please wait a moment before sending again.', { code: 'RESEND_TOO_SOON' });
+  const notified = tellSender('ready', row, token);
+  if (notified.email || notified.whatsapp) resendAt.set(id, Date.now());
+  await audit(adminId, 'ONBOARDING_LINK_RESENT', id, { email: notified.email, whatsapp: notified.whatsapp }, ip);
+  return { notified };
 }
 
 // ─── Convert to a listing ─────────────────────────────────────────────────────
@@ -315,14 +399,15 @@ async function convertToListingLocked(adminId, id, { partnerId, createProject = 
     : undefined;
   await prisma.onboardingRequest.update({
     where: { id },
-    data: { status: 'CONVERTED', convertedToType: 'PROPERTY', convertedToId: property.id, lastSavedAt: new Date(), ...(notes && { adminNotes: notes }) },
+    data: { status: 'CONVERTED', convertedToType: 'PROPERTY', convertedToId: property.id, tokenEnc: null, lastSavedAt: new Date(), ...(notes && { adminNotes: notes }) },
   });
   await audit(adminId, 'ONBOARDING_CONVERTED', id, { propertyId: property.id, partnerId: partner.id, ...(project && { projectId: project.id }) }, ip);
-  return { propertyId: property.id, slug: property.slug, partnerName: partner.name, ...(project && { projectId: project.id }) };
+  const statusEmailSent = tellSenderStatus('CONVERTED', row);
+  return { statusEmailSent, propertyId: property.id, slug: property.slug, partnerName: partner.name, ...(project && { projectId: project.id }) };
 }
 
 module.exports = {
   listingPreview, convertToListing,
   loadByToken, senderGet, senderSave, senderSubmit, attachDocument, removeDocument,
-  adminList, adminGet, adminCreate, adminUpdate, adminAddNote, adminReopen, adminRevoke,
+  adminList, adminGet, adminCreate, adminUpdate, adminAddNote, adminReopen, adminRevoke, adminCopyLink, adminResend,
 };

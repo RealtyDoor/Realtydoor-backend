@@ -233,6 +233,16 @@ describe('ledger', () => {
     prisma.moneyLedgerEntry.findMany.mockResolvedValue([{ escrowId: 'e1', type: 'TOKEN_IN', grossPaise: 5000000 }, { escrowId: 'e1', type: 'PROCESSING_FEE_IN', grossPaise: 120900 }]);
     expect((await ledger.reconcile()).tallied).toBe(true);
   });
+  // Payment audit 21 Nov 2026: the Razorpay dashboard's full refund under Customer Fee Bearer (Rs 51,180 on a Rs 50,000 token).
+  test('reconcile: a refund above the token shows as a difference even when the ledger matches it', async () => {
+    prisma.escrowTransaction.findMany.mockResolvedValue([{ id: 'e1', leadId: 'l1', amount: 50000, amountPaise: 5000000, processingFeePaise: 0, status: 'REFUNDED', refundedAmountPaise: 5118000 }]);
+    prisma.moneyLedgerEntry.findMany.mockResolvedValue([{ escrowId: 'e1', type: 'TOKEN_IN', grossPaise: 5000000 }, { escrowId: 'e1', type: 'REFUND', grossPaise: 5118000 }]);
+    const r = await ledger.reconcile();
+    expect(r.differences).toEqual([{ escrowId: 'e1', leadId: 'l1', what: 'REFUND_ABOVE_TOKEN', expectedPaise: 5000000, ledgerPaise: 5118000 }]);
+    prisma.escrowTransaction.findMany.mockResolvedValue([{ id: 'e1', leadId: 'l1', amount: 50000, amountPaise: 5000000, processingFeePaise: 0, status: 'REFUNDED', refundedAmountPaise: 5000000 }]);
+    prisma.moneyLedgerEntry.findMany.mockResolvedValue([{ escrowId: 'e1', type: 'TOKEN_IN', grossPaise: 5000000 }, { escrowId: 'e1', type: 'REFUND', grossPaise: 5000000 }]);
+    expect((await ledger.reconcile()).tallied).toBe(true);
+  });
   test('payables: TDS overdue and partner GST held until matched', async () => {
     prisma.moneyLedgerEntry.findMany.mockImplementation(async ({ where }) => {
       const t = where.type;

@@ -19,6 +19,7 @@ const { FORMAT, planImport, metaLeadId } = require('../src/lib/leadTransfer');
 
 const arg = (name) => { const i = process.argv.indexOf(name); return i > -1 ? process.argv[i + 1] : undefined; };
 const APPLY = process.argv.includes('--apply');
+const ALLOW_UNLISTED = process.argv.includes('--allow-unlisted'); // add leads whose listing is not in the target yet (linked later by attachLeadsToListings.js)
 
 async function main() {
   const url = process.env.TARGET_DATABASE_URL;
@@ -42,8 +43,9 @@ async function main() {
       listingsBySlug: new Map(listings.map((l) => [l.slug, l])),
       existingRefCodes: new Set(existing.map((l) => l.refCode).filter(Boolean)),
       existingMetaIds: new Set(existing.map(metaLeadId).filter(Boolean)),
+      allowUnlisted: ALLOW_UNLISTED,
     });
-    console.log(`Would add ${plan.toCreate.length} leads; skip ${plan.skipped.length}.`);
+    console.log(`Would add ${plan.toCreate.length} leads (${plan.toCreate.filter((c) => c.unlisted).length} without a listing yet); skip ${plan.skipped.length}.`);
     const reasons = plan.skipped.reduce((a, s) => { a[s.reason] = (a[s.reason] || 0) + 1; return a; }, {});
     for (const [r, n] of Object.entries(reasons)) console.log(`  skip: ${String(n).padStart(3)}  ${r}`);
     console.log(`Lead counter would be raised to at least ${plan.maxRef} (new leads continue after it).`);

@@ -118,7 +118,7 @@ describe('setDealRate', () => {
   });
   test('the partner and platform percentages become one fee % and one closing line that carries the partner part', async () => {
     prisma.lead.findUnique.mockResolvedValue(lead());
-    await svc.setDealRate('l1', { partnerRatePct: 1, platformFeePct: 1 }, 'a1', 'ip');
+    await svc.setDealRate('l1', { partnerRatePct: 1, platformFeePct: 1, reason: 'Negotiated with the seller' }, 'a1', 'ip');
     expect(setLeadTerms).toHaveBeenCalledWith('l1', expect.objectContaining({ feePct: 2, lines: [{ payeeRole: 'CLOSING_AGENT', pct: 50 }] }), 'a1', 'ip');
   });
 });

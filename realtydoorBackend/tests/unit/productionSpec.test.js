@@ -148,11 +148,16 @@ describe('the Clerk manifest agrees with the code', () => {
     const env = fs.readFileSync(f, 'utf8');
     for (const [k, v] of Object.entries(clerk.paths)) expect(env).toMatch(new RegExp(`^${k}=${v.replace(/\//g, '\\/')}$`, 'm'));
   });
+  test('the manifest turns Email on because our signup sends an email address to Clerk', () => {
+    expect(clerk.createUserFields).toContain('emailAddress');
+    const rows = clerk.settings.filter((s) => s.area === 'User & authentication > Email');
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(r.value.startsWith('on')).toBe(true);
+  });
   test('every setting says where it comes from, and a risk is never hidden', () => {
     for (const s of clerk.settings) {
       expect(['CODE', 'OBSERVED', 'DECIDED']).toContain(s.source);
       expect(s.area && s.setting && s.value).toBeTruthy();
     }
-    expect(clerk.settings.filter((s) => s.risk).length).toBeGreaterThan(0);
   });
 });

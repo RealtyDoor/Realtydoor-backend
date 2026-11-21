@@ -1,5 +1,6 @@
 const { verifyWebhookSignature } = require('../../lib/razorpay');
 const { confirmPayment } = require('../escrow/escrow.service');
+const { gatewayRefundNote } = require('../../lib/escrowUtils');
 const { activateSubscription } = require('../services/services.service');
 const prisma = require('../../lib/prisma');
 const { sendEscrowPaymentFailed, sendPartnerPayoutProcessed } = require('../../lib/email');
@@ -269,12 +270,29 @@ async function razorpay(req, res) {
             before: { status: escrow.status, refundedAmountPaise: escrow.refundedAmountPaise || 0 },
             after: { status: fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED', refundId, refundPaise: amount },
           }).catch((e) => logger.warn('[RazorpayWebhook] audit of a dashboard refund failed', { error: e.message }));
+          // Payment audit 20 Nov 2026: under Customer Fee Bearer Razorpay's payment is the token PLUS its own charge, so the
+          // dashboard's "full refund" also hands back Razorpay's charge, out of our balance. Owner's rule: refunds are the token
+          // only, made from our admin. Tell admins whenever a dashboard refund takes the total above what reached us.
+          const receivedPaise = escrow.chargedPaise ?? Math.round(escrow.amount * 100);
+          if (refundedAmountPaise > receivedPaise) {
+            const extraRupees = `₹${((refundedAmountPaise - receivedPaise) / 100).toLocaleString('en-IN')}`;
+            logger.warn('[RazorpayWebhook] A dashboard refund took the refunded total above what Realtydoor received', { escrowId: escrow.id, refundId, refundedAmountPaise, receivedPaise });
+            const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
+            if (admins.length > 0) {
+              await broadcastNotification({
+                userIds: admins.map((a) => a.id),
+                title: 'Refund above the token (Razorpay dashboard)',
+                message: `A refund of ${amountRupees} made in the Razorpay dashboard brought the total refunded to ${extraRupees} more than Realtydoor received for this token (Razorpay's own charge, now paid from our balance). Refund from the Realtydoor admin, never with the dashboard's full refund.`,
+                type: 'ESCROW_PAYOUT_FAILED',
+              }).catch((e) => logger.warn('[RazorpayWebhook] over-refund alert failed', { error: e.message }));
+            }
+          }
           await createNotification({
             userId: escrow.buyerId,
             title: fullyRefunded ? 'Token Advance Refunded' : 'Partial Refund Received',
             message: fullyRefunded
-              ? `Your token advance of ${amountRupees} has been refunded.`
-              : `A partial refund of ${amountRupees} has been issued against your token advance.`,
+              ? `Your token advance of ${amountRupees} has been refunded.${gatewayRefundNote(escrow)}`
+              : `A partial refund of ${amountRupees} has been issued against your token advance.${gatewayRefundNote(escrow)}`,
             type: 'PAYMENT_REFUNDED',
             linkUrl: `/user/inquiries/${escrow.leadId}`,
           });
@@ -283,16 +301,33 @@ async function razorpay(req, res) {
 
       const subscription = await prisma.userSubscription.findFirst({ where: { razorpayPaymentId: paymentId } });
       if (subscription && !subscription.refundIds.includes(refundId) && subscription.paymentStatus !== 'REFUNDED') {
+        const pricePaise = subscription.amountPaidPaise ?? Math.round(subscription.amountPaid * 100);
         const refundedAmountPaise = (subscription.refundedAmountPaise || 0) + amount;
-        const fullyRefunded = refundedAmountPaise >= Math.round(subscription.amountPaid * 100);
-        await prisma.userSubscription.update({
-          where: { id: subscription.id },
+        const fullyRefunded = refundedAmountPaise >= pricePaise;
+        // Payment audit 21 Nov 2026: one guarded write (same as the token side), so two deliveries of this refund cannot both count it.
+        const applied = await prisma.userSubscription.updateMany({
+          where: { id: subscription.id, NOT: { refundIds: { has: refundId } } },
           data: {
-            refundedAmountPaise,
+            refundedAmountPaise: { increment: amount },
             refundIds: { push: refundId },
             ...(fullyRefunded && { paymentStatus: 'REFUNDED' }),
           },
         });
+        if (applied.count === 0) return res.json({ status: 'ok' }); // already counted by another delivery
+        // Under Customer Fee Bearer the dashboard's "full refund" also hands back Razorpay's own charge, out of our balance
+        // (owner's rule: refunds are what reached us). Tell admins when the refunded total goes above the plan price.
+        if (refundedAmountPaise > pricePaise) {
+          logger.warn('[RazorpayWebhook] A dashboard refund took a service payment\'s refunded total above its price', { subscriptionId: subscription.id, refundId, refundedAmountPaise, pricePaise });
+          const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
+          if (admins.length > 0) {
+            await broadcastNotification({
+              userIds: admins.map((a) => a.id),
+              title: 'Refund above the plan price (Razorpay dashboard)',
+              message: `A refund of ${amountRupees} made in the Razorpay dashboard brought a service payment's refunds to ₹${((refundedAmountPaise - pricePaise) / 100).toLocaleString('en-IN')} more than the plan price (Razorpay's own charge, now paid from our balance). Refund only the plan price.`,
+              type: 'ESCROW_PAYOUT_FAILED',
+            }).catch((e) => logger.warn('[RazorpayWebhook] over-refund alert failed', { error: e.message }));
+          }
+        }
         await createNotification({
           userId: subscription.userId,
           title: fullyRefunded ? 'Service Payment Refunded' : 'Partial Refund Received',

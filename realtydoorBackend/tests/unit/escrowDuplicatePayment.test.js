@@ -80,3 +80,19 @@ describe('confirmPayment: a captured payment for a lead that already has an acti
     expect(notifyAdmins.mock.calls[0][0].message).toContain('invalid request sent');
   });
 });
+
+describe('the duplicate refunds what reached us, never Razorpay\'s own charge (owner, 20 Nov: token only; Customer Fee Bearer)', () => {
+  beforeEach(() => {
+    prisma.escrowTransaction.findUnique.mockResolvedValue(row());
+    prisma.escrowTransaction.updateMany.mockRejectedValueOnce(dup());
+    prisma.escrowTransaction.updateMany.mockResolvedValue({ count: 1 });
+    rz.refundPayment.mockResolvedValue({ id: 'rfnd_dup' });
+  });
+  test('Razorpay captured the order plus its fee: only the order amount is refunded, and the books match it', async () => {
+    rz.razorpay.payments.fetch.mockResolvedValue({ id: 'pay_old', order_id: 'order_old', amount: 5120900 + 118000 });
+    await expect(svc.confirmPayment('order_old', 'pay_old')).rejects.toMatchObject({ data: { code: 'ESCROW_DUPLICATE_PAYMENT' } });
+    expect(rz.refundPayment).toHaveBeenCalledWith('pay_old', 5120900);
+    expect(prisma.escrowTransaction.updateMany.mock.calls[1][0].data.refundedAmountPaise).toBe(5120900);
+    expect(ledger.onRefund.mock.calls[0][1].refundPaise).toBe(5120900);
+  });
+});
