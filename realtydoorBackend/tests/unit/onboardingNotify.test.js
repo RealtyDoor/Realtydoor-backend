@@ -154,6 +154,15 @@ describe('the team changes the status', () => {
     expect(email.sendOnboardingUpdate).not.toHaveBeenCalled();
     expect(out.statusEmailSent).toBe(false);
   });
+  test('the sender also gets the status on WhatsApp (silent in wati.js until the template is live)', async () => {
+    await change('IN_DISCUSSION', 'READY');
+    expect(wati.sendOnboardingWhatsApp).toHaveBeenCalledWith('+919800000001', 'onboarding_status_update', { name: 'Ramesh Kumar', project: 'Vrunda City', statusKind: 'ready_to_list' });
+  });
+  test('no WhatsApp for a status change without a phone on file, or for a move back to RECEIVED', async () => {
+    await change('RECEIVED', 'READY', { contactPhone: null });
+    await change('IN_DISCUSSION', 'RECEIVED');
+    expect(wati.sendOnboardingWhatsApp).not.toHaveBeenCalled();
+  });
   test('a failed email never blocks the status change', async () => {
     email.sendOnboardingUpdate.mockRejectedValue(new Error('smtp down'));
     const out = await change('RECEIVED', 'READY');

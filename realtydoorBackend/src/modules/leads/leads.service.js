@@ -993,6 +993,8 @@ async function adminVerifyAllocationLetter(leadId, adminId, ip) {
       type: 'ALLOCATION_LETTER_VERIFIED',
       linkUrl: `/user/inquiries/${leadId}`,
     }).catch((err) => logger.warn('[Lead] letter-verified notification failed', { leadId, error: err.message }));
+    // WhatsApp copy (21 Nov 2026); silent until allocation_letter_verified is approved and listed in WATI_LIVE_TEMPLATES.
+    Promise.resolve(notifyUser?.(lead.buyerId, 'allocation_letter_verified', { name: '$userName', lead_ref: lead.refCode || 'your deal' }, { leadId })).catch(() => {});
   }
   await createAuditLog({
     adminId, action: 'ALLOCATION_LETTER_VERIFIED', targetType: 'Lead', targetId: leadId,

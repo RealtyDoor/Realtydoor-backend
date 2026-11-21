@@ -1,6 +1,7 @@
 const prisma = require('./prisma');
 const logger = require('./logger');
 const { createNotification, notifyAdmins } = require('./notifications');
+const { notifyUser } = require('./wati');
 
 /**
  * A listing stopped being available (taken down, or marked sold or rented) while leads on it were still open. Everyone in the middle
@@ -22,6 +23,10 @@ async function notifyOpenLeadsPropertyUnavailable(property, why) {
       }
       if (l.buyerId) {
         await createNotification({ userId: l.buyerId, title: 'This property is no longer available', message: `${l.refCode || 'Your inquiry'}: ${text} Our team will help you with similar options.`, type: 'LEAD_ASSIGNED', linkUrl: `/user/inquiries/${l.id}` }).catch(() => null);
+      }
+      // WhatsApp to both (21 Nov 2026), one shared template; silent until property_unavailable is approved and listed in WATI_LIVE_TEMPLATES.
+      for (const userId of [l.assignedPartnerId, l.buyerId].filter(Boolean)) {
+        Promise.resolve(notifyUser?.(userId, 'property_unavailable', { name: '$userName', property_title: property.title || 'The property', lead_ref: l.refCode || 'your inquiry' }, { leadId: l.id })).catch(() => {});
       }
     }
     await notifyAdmins({

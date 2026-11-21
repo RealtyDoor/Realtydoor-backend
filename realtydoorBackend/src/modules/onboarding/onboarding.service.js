@@ -166,7 +166,8 @@ const formUrlFor = (token) => `${String(process.env.FRONTEND_URL || '').replace(
 function tellSender(kind, row, token) {
   const info = { name: row.contactName, title: row.title };
   const whatsappTemplate = kind === 'ready' ? 'onboarding_form_ready' : 'onboarding_form_received';
-  const whatsappLive = !!row.contactPhone && liveSet().has(whatsappTemplate);
+  const live = liveSet();
+  const whatsappLive = !!row.contactPhone && (live.has(whatsappTemplate) || (kind === 'ready' && live.has('onboarding_form_ready_v2')));
   if (row.contactEmail) {
     const mail = kind === 'ready'
       ? sendOnboardingFormReady(row.contactEmail, { ...info, formUrl: formUrlFor(token), expiresAt: row.expiresAt })
@@ -181,11 +182,15 @@ function tellSender(kind, row, token) {
 }
 
 // The status the team moves a request to, and the email the sender gets for it. RECEIVED is not here: that email goes when the sender presses Send.
-// SENT is the "link ready" email (create / New link). Email only: no WhatsApp template exists for these.
+// SENT is the "link ready" email (create / New link). WhatsApp (21 Nov 2026): one template, onboarding_status_update, silent until it is live.
 const STATUS_EMAIL = { IN_DISCUSSION: 'in_discussion', READY: 'ready_to_list', CONVERTED: 'listing_created', CLOSED: 'closed' };
 
 function tellSenderStatus(newStatus, row) {
   const kind = STATUS_EMAIL[newStatus];
+  if (kind && row.contactPhone) {
+    Promise.resolve(sendOnboardingWhatsApp(row.contactPhone, 'onboarding_status_update', { name: row.contactName, project: row.title, statusKind: kind }))
+      .catch((e) => logger.warn('[onboarding] status WhatsApp to the sender failed', { requestId: row.id, kind, error: e.message }));
+  }
   if (!kind || !row.contactEmail) return false;
   Promise.resolve(sendOnboardingUpdate(row.contactEmail, kind, { name: row.contactName, title: row.title }))
     .catch((e) => logger.warn('[onboarding] status email to the sender failed', { requestId: row.id, kind, error: e.message }));

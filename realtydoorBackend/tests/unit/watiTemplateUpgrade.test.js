@@ -54,6 +54,10 @@ describe('image versions of templates', () => {
     expect(resolve('welcome_buyer', new Set())).toBe('welcome_buyer');
     expect(resolve('welcome_buyer', new Set(['welcome_buyer_v2']))).toBe('welcome_buyer_v2');
   });
+  test('the Utility rewrite of lead_given_checkin wins over the Marketing image copy once live', () => {
+    expect(resolve('lead_given_checkin', new Set(['lead_given_checkin_img']))).toBe('lead_given_checkin_img');
+    expect(resolve('lead_given_checkin', new Set(['lead_given_checkin_img', 'lead_given_checkin_v2']))).toBe('lead_given_checkin_v2');
+  });
   test('every mapped image exists in the website\'s public folder', () => {
     const dir = path.resolve(__dirname, '../../../../admin-nextjs/public/whatsapp');
     for (const img of new Set(Object.values(IMAGE_FOR))) expect(fs.existsSync(path.join(dir, `${img}.jpg`))).toBe(true);

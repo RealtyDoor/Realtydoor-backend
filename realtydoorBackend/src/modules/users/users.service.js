@@ -6,7 +6,7 @@ const { isTrustedMediaUrl } = require('../../lib/trustedUrl');
 const otpAuth = require('../../lib/otpAuth');
 const escrowService = require('../escrow/escrow.service');
 const { isPhoneUniqueViolation } = require('../../lib/phoneUtils');
-const { sendWelcomeWhatsApp } = require('../../lib/wati');
+const { sendWelcomeWhatsApp, notifyUser } = require('../../lib/wati');
 const { sanitizeLeadForBuyer } = require('../leads/leads.service');
 const { createPrivacyAuditLog } = require('../../lib/privacyAuditLog');
 const { getMoneyInFlightReasons, revokeAllSessions } = require('../../lib/accountDeletion');
@@ -896,6 +896,8 @@ async function raiseTicket(userId, subscriptionId, data) {
       linkUrl: `/admin/tickets/${ticket.id}`,
     });
   }
+  // WhatsApp receipt for the buyer (21 Nov 2026); silent until ticket_received is approved and listed in WATI_LIVE_TEMPLATES.
+  Promise.resolve(notifyUser?.(userId, 'ticket_received', { name: '$userName', ticket_subject: ticket.subject || 'your request' }, { ticketId: ticket.id })).catch(() => {});
   return ticket;
 }
 

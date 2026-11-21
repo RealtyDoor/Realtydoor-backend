@@ -662,6 +662,10 @@ async function assignLead(leadId, partnerId, adminId, ip, reason) {
       type: 'LEAD_ASSIGNED',
       linkUrl: `/user/inquiries/${leadId}`,
     });
+    // WhatsApp copy (21 Nov 2026); silent until inquiry_assigned is approved and listed in WATI_LIVE_TEMPLATES. No partner contact details.
+    Promise.resolve(notifyUser?.(lead.buyerId, 'inquiry_assigned', {
+      name: '$userName', lead_ref: lead.refCode || 'your inquiry', property_title: propertyLabel,
+    }, { leadId })).catch(() => {});
   }
   sendLeadInquiryConfirmed(lead.buyerEmail, propertyLabel).catch(() => {});
 

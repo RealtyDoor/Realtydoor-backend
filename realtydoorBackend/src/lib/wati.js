@@ -249,7 +249,11 @@ const baseName = (name) => String(name).replace(/_v\d+$/, '').replace(/_img$/, '
 const imageTemplateName = (name) => (IMAGE_FOR[baseName(name)] ? `${baseName(name)}_img` : null);
 
 /** The template to actually send: its branded image version when that is live, else the newest live text version, else the name asked for. */
+// Utility rewrites of templates Meta billed as Marketing (21 Nov 2026). Each carries the image header itself and wins over the _img copy once live.
+const UTILITY_REWRITES = { lead_given_checkin: 'lead_given_checkin_v2' };
 function resolveTemplate(name, live = LIVE_TEMPLATES) {
+  const rewrite = UTILITY_REWRITES[baseName(name)];
+  if (rewrite && live.has(rewrite)) return rewrite;
   const img = imageTemplateName(name);
   if (img && live.has(img)) return img;
   let pick = name;
@@ -328,14 +332,32 @@ async function sendWelcomeWhatsApp(userId, role) {
 // Meta has approved it and its name is in WATI_LIVE_TEMPLATES, so this is silent until then. Wording: admin-nextjs/docs/WHATSAPP_TEMPLATES.md.
 //   onboarding_form_ready    {{name}} {{project}} {{form_link}}
 //   onboarding_form_received {{name}} {{project}}
-const ONBOARDING_TEMPLATES = ['onboarding_form_ready', 'onboarding_form_received'];
-async function sendOnboardingWhatsApp(phone, template, { name, project, formLink }, env = process.env) {
-  if (!ONBOARDING_TEMPLATES.includes(template)) return null;
-  if (!phone || !liveSet(env).has(template)) return null;
+//   onboarding_status_update {{name}} {{project}} {{status_text}}   (21 Nov 2026: the team moved the request; one template for every stage)
+// onboarding_form_ready was approved as Marketing (costs more); onboarding_form_ready_v2 is the Utility rewording and is used once it is live.
+const ONBOARDING_TEMPLATES = ['onboarding_form_ready', 'onboarding_form_received', 'onboarding_status_update'];
+const ONBOARDING_STATUS_TEXT = {
+  in_discussion: 'being discussed with our team',
+  ready_to_list: 'ready to be listed',
+  listing_created: 'now live on Realtydoor',
+  closed: 'closed',
+};
+function onboardingTemplateToSend(template, live) {
+  if (template === 'onboarding_form_ready' && live.has('onboarding_form_ready_v2')) return 'onboarding_form_ready_v2';
+  return live.has(template) ? template : null;
+}
+async function sendOnboardingWhatsApp(phone, template, { name, project, formLink, statusKind }, env = process.env) {
+  if (!ONBOARDING_TEMPLATES.includes(template) || !phone) return null;
+  const send = onboardingTemplateToSend(template, liveSet(env));
+  if (!send) return null;
   const clean = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
   const parameters = [{ name: 'name', value: clean(name) || 'there' }, { name: 'project', value: clean(project) || 'your property' }];
   if (template === 'onboarding_form_ready') parameters.push({ name: 'form_link', value: clean(formLink) });
-  return sendTemplateMessage(phone, template, parameters, {});
+  if (template === 'onboarding_status_update') {
+    const text = ONBOARDING_STATUS_TEXT[statusKind];
+    if (!text) return null;
+    parameters.push({ name: 'status_text', value: text });
+  }
+  return sendTemplateMessage(phone, send, parameters, {});
 }
 
 module.exports = { LEAD_RULE_TEMPLATES, TEMPLATE_UPGRADES, IMAGE_FOR, imageTemplateName, resolveTemplate, liveSet,
