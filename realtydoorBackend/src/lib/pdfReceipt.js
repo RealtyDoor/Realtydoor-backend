@@ -87,14 +87,32 @@ function buildTicketChargeReceiptPdf({ ticketSubject, userName, visitCharge, par
 // payment processing fee (money model Rev 3), so the receipt shows both and the total, not just the token.
 // With Razorpay's Customer Fee Bearer the buyer's card was also charged Razorpay's own gateway charge, which Realtydoor never receives: the last line then
 // says what was paid TO REALTYDOOR, and a line says who collected the gateway charge, so the receipt never under-states what the card was charged.
-// The company name in the receipt header, on ONE line: the full legal name at 20pt wrapped onto the blue rule (seen 21 Nov 2026),
-// so the size steps down until it fits the space left of the document title.
-function companyName(doc, name, left, width, color) {
-  const box = width * 0.62;
-  let size = 20;
+// Brand header for every PDF (21 Nov 2026, owner: "add the logo"): the same look as the emails, a Realtydoor-blue band with the
+// white logo lockup (src/assets/email/logo-lockup-white.png, the file the emails use) and the document title, then the legal name
+// on one line below it (the size steps down so a long legal name never wraps).
+const BRAND_BLUE = '#2c2fee'; // emailShell BLUE
+const LOGO_WHITE = require('path').join(__dirname, '../assets/email/logo-lockup-white.png');
+const COMPANY_ADDRESS_FALLBACK = '#785/10, 14th Cross, Krishna Rajendra Road, above Adlabs, 7th Block, Jayanagar, Bengaluru, Karnataka 560070';
+function brandHeader(doc, title, { left, width, legalName, ink }) {
+  doc.save().rect(0, 0, doc.page.width, 72).fill(BRAND_BLUE).restore();
+  try { doc.image(LOGO_WHITE, left, 24, { height: 24 }); } catch { doc.font('Helvetica-Bold').fontSize(18).fillColor('#ffffff').text('REALTYDOOR', left, 26, { lineBreak: false }); }
+  doc.font('Helvetica-Bold').fontSize(10).fillColor('#ffffff').text(title, left, 31, { width, align: 'right' });
+  let size = 14;
   doc.font('Helvetica-Bold');
-  while (size > 12 && doc.fontSize(size).widthOfString(name) > box) size -= 1;
-  doc.fontSize(size).fillColor(color).text(name, left, 50 + (20 - size) / 2, { width: box, lineBreak: false });
+  while (size > 10 && doc.fontSize(size).widthOfString(legalName) > width) size -= 1;
+  doc.fontSize(size).fillColor(ink).text(legalName, left, 84, { width, lineBreak: false });
+}
+// Footer: legal name and GSTIN, what the document is, and the registered address with the support address (as in the emails).
+function brandFooter(doc, { left, width, legalName, gstin, address, note, muted, rule, right }) {
+  const footerY = doc.page.height - 104;
+  // The footer sits inside the page's bottom margin; without this pdfkit would start a second page for the address line.
+  const bottomMargin = doc.page.margins.bottom; doc.page.margins.bottom = 0;
+  doc.moveTo(left, footerY).lineTo(right, footerY).lineWidth(0.5).strokeColor(rule).stroke();
+  doc.font('Helvetica').fontSize(8).fillColor(muted)
+    .text(`${legalName}${gstin ? `  |  GSTIN ${gstin}` : ''}`, left, footerY + 10, { width, align: 'center', lineBreak: false })
+    .text(note, left, footerY + 23, { width, align: 'center', lineBreak: false })
+    .text(`${address || COMPANY_ADDRESS_FALLBACK}  |  support@realtydoor.com  |  realtydoor.com`, left, footerY + 36, { width, align: 'center' });
+  doc.page.margins.bottom = bottomMargin;
 }
 
 function escrowReceiptLines({ amount, processingFeePaise, chargedPaise, feeBearer, gatewayChargePaise = null }) {
@@ -142,9 +160,7 @@ function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, proc
     const receiptNo = receiptNumber(razorpayPaymentId);
 
     // Header: name on the left, document title on the right, a brand rule under both.
-    companyName(doc, legalName, left, width, INK);
-    doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('TOKEN ADVANCE RECEIPT', left, 56, { width, align: 'right' });
-    doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
+    brandHeader(doc, 'TOKEN ADVANCE RECEIPT', { left, width, legalName, ink: INK });
 
     // Who, what, when.
     const meta = [
@@ -192,11 +208,7 @@ function buildEscrowReceiptPdf({ refCode, propertyTitle, buyerName, amount, proc
     doc.font('Helvetica').fontSize(9).fillColor(BODY).text(escrowReceiptNote({ processingFeePaise, feeBearer }), left, y, { width });
 
     // Footer.
-    const footerY = doc.page.height - 90;
-    doc.moveTo(left, footerY).lineTo(right, footerY).lineWidth(0.5).strokeColor(RULE).stroke();
-    doc.font('Helvetica').fontSize(8).fillColor(MUTED)
-      .text(`${legalName}${company.gstin ? `  |  GSTIN ${company.gstin}` : ''}`, left, footerY + 10, { width, align: 'center' })
-      .text(company.gstin && processingFeePaise > 0 ? 'This is a payment receipt. The GST tax invoice for the processing fee is a separate document.' : 'This is a payment receipt, not a GST tax invoice.', left, footerY + 24, { width, align: 'center' });
+    brandFooter(doc, { left, right, width, legalName, gstin: company.gstin, address: company.address, note: company.gstin && processingFeePaise > 0 ? 'This is a payment receipt. The GST tax invoice for the processing fee is a separate document.' : 'This is a payment receipt, not a GST tax invoice.', muted: MUTED, rule: RULE });
 
     doc.end();
   });
@@ -235,9 +247,7 @@ function buildRefundReceiptPdf({ refCode, propertyTitle, buyerName, tokenPaise, 
     const legalName = company.legalName || 'RealtyDoor';
     const receiptNo = razorpayRefundId ? `RFN-${String(razorpayRefundId).replace(/^rfnd_/, '').slice(-8).toUpperCase()}` : 'RFN-N/A';
 
-    companyName(doc, legalName, left, width, INK);
-    doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('REFUND RECEIPT', left, 56, { width, align: 'right' });
-    doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
+    brandHeader(doc, 'REFUND RECEIPT', { left, width, legalName, ink: INK });
 
     const meta = [
       ['Receipt no.', receiptNo],
@@ -284,11 +294,7 @@ function buildRefundReceiptPdf({ refCode, propertyTitle, buyerName, tokenPaise, 
       left, y, { width },
     );
 
-    const footerY = doc.page.height - 90;
-    doc.moveTo(left, footerY).lineTo(right, footerY).lineWidth(0.5).strokeColor(RULE).stroke();
-    doc.font('Helvetica').fontSize(8).fillColor(MUTED)
-      .text(`${legalName}${company.gstin ? `  |  GSTIN ${company.gstin}` : ''}`, left, footerY + 10, { width, align: 'center' })
-      .text('This is a refund receipt, not a GST document.', left, footerY + 24, { width, align: 'center' });
+    brandFooter(doc, { left, right, width, legalName, gstin: company.gstin, address: company.address, note: 'This is a refund receipt, not a GST document.', muted: MUTED, rule: RULE });
 
     doc.end();
   });
@@ -320,9 +326,7 @@ function buildFeeTaxInvoicePdf({ company = {}, invoiceNo, invoiceDate, buyerName
     const INK = '#111111'; const BODY = '#333333'; const MUTED = '#777777'; const RULE = '#DDDDDD'; const BRAND = '#2C2FEE';
     const legalName = company.legalName || 'RealtyDoor';
 
-    companyName(doc, legalName, left, width, INK);
-    doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('TAX INVOICE', left, 56, { width, align: 'right' });
-    doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
+    brandHeader(doc, 'TAX INVOICE', { left, width, legalName, ink: INK });
 
     const meta = [
       ['Invoice no.', invoiceNo],
@@ -368,11 +372,7 @@ function buildFeeTaxInvoicePdf({ company = {}, invoiceNo, invoiceDate, buyerName
       left, y, { width },
     );
 
-    const footerY = doc.page.height - 90;
-    doc.moveTo(left, footerY).lineTo(right, footerY).lineWidth(0.5).strokeColor(RULE).stroke();
-    doc.font('Helvetica').fontSize(8).fillColor(MUTED)
-      .text(`${legalName}${company.gstin ? `  |  GSTIN ${company.gstin}` : ''}`, left, footerY + 10, { width, align: 'center' })
-      .text('This is a computer-generated invoice and needs no signature.', left, footerY + 24, { width, align: 'center' });
+    brandFooter(doc, { left, right, width, legalName, gstin: company.gstin, address: company.address, note: 'This is a computer-generated invoice and needs no signature.', muted: MUTED, rule: RULE });
 
     doc.end();
   });
@@ -409,9 +409,7 @@ function buildServiceReceiptPdf({ serviceName, buyerName, amountPaise, gstPct = 
     const receiptNo = razorpayPaymentId ? `SRV-${String(razorpayPaymentId).replace(/^pay_/, '').slice(-8).toUpperCase()}` : 'SRV-N/A';
     const day = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A');
 
-    companyName(doc, legalName, left, width, INK);
-    doc.fontSize(10).fillColor(BRAND).font('Helvetica-Bold').text('SERVICE PAYMENT RECEIPT', left, 56, { width, align: 'right' });
-    doc.moveTo(left, 88).lineTo(right, 88).lineWidth(2).strokeColor(BRAND).stroke();
+    brandHeader(doc, 'SERVICE PAYMENT RECEIPT', { left, width, legalName, ink: INK });
 
     const meta = [
       ['Receipt no.', receiptNo], ['Date', day(paidAt)], ['Paid by', buyerName || 'N/A'], ['Service', serviceName || 'N/A'],
@@ -448,11 +446,7 @@ function buildServiceReceiptPdf({ serviceName, buyerName, amountPaise, gstPct = 
       }
     }
 
-    const footerY = doc.page.height - 90;
-    doc.moveTo(left, footerY).lineTo(right, footerY).lineWidth(0.5).strokeColor(RULE).stroke();
-    doc.font('Helvetica').fontSize(8).fillColor(MUTED)
-      .text(`${legalName}${company.gstin ? `  |  GSTIN ${company.gstin}` : ''}`, left, footerY + 10, { width, align: 'center' })
-      .text('This is a payment receipt, not a GST tax invoice.', left, footerY + 24, { width, align: 'center' });
+    brandFooter(doc, { left, right, width, legalName, gstin: company.gstin, address: company.address, note: 'This is a payment receipt, not a GST tax invoice.', muted: MUTED, rule: RULE });
     doc.end();
   });
 }
