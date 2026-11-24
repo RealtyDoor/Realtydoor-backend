@@ -1,4 +1,5 @@
 const prisma = require('../../lib/prisma');
+const { LIVE_LEADS } = require('../../lib/poolLeads');
 const { getConfigNumber } = require('../config/config.service');
 
 // ─── Period helper ───────────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ const DAY_MS = 86_400_000;
 
 async function getFunnel(period = 'MTD') {
   const since = sinceFilter(period);
-  const leadWhere = since ? { createdAt: since } : {};
+  const leadWhere = since ? { createdAt: since, AND: [LIVE_LEADS] } : { AND: [LIVE_LEADS] };
 
   const [registrations, inquiries, assigned, visitsScheduled, otpVerified, decided, escrowHeld, closed] =
     await Promise.all([

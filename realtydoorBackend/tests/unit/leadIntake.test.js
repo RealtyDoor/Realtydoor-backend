@@ -3,7 +3,7 @@ jest.mock('../../src/lib/prisma', () => ({
   leadIntegration: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
   leadIntakeEvent: { create: jest.fn(), update: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
   leadSourceMapping: { create: jest.fn(), deleteMany: jest.fn() },
-  lead: { findFirst: jest.fn(), create: jest.fn() },
+  lead: { findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn().mockResolvedValue({ count: 1 }), create: jest.fn() },
   leadNote: { create: jest.fn().mockResolvedValue({}) },
   project: { findUnique: jest.fn() },
 }));
@@ -146,6 +146,8 @@ describe('ingest', () => {
     prisma.leadIntakeEvent.update.mockResolvedValue({});
     prisma.leadIntegration.update.mockResolvedValue({});
     prisma.lead.findFirst.mockResolvedValue(null);
+    prisma.lead.findMany.mockResolvedValue([]);
+    prisma.lead.updateMany.mockResolvedValue({ count: 1 });
     prisma.lead.create.mockImplementation(async ({ data }) => ({ id: 'L1', ...data }));
     prisma.project.findUnique.mockResolvedValue({ title: 'Lakeview', city: 'Bengaluru' });
     leadsService.evaluateBuyerOwnership.mockResolvedValue({ reason: 'NEW_BUYER' });
@@ -194,6 +196,46 @@ describe('ingest', () => {
     expect(out).toEqual({ status: 'DUPLICATE', leadId: 'LOPEN' });
     expect(prisma.lead.findFirst.mock.calls[0][0].where).toMatchObject({ projectId: 'p1' });
     expect(prisma.lead.create).not.toHaveBeenCalled();
+  });
+
+  test('a lead waiting in the qualification pool does not swallow a fresh enquiry: a live lead is made, the pool copy is noted and moved to group C', async () => {
+    prisma.lead.findMany.mockResolvedValue([{ id: 'LPOOLED' }]);
+    const out = await service.ingest(integ(), { name: 'A', phone: '9876543210', lead_id: 'X9', message: 'hello' });
+    expect(out).toMatchObject({ status: 'CREATED', leadId: 'L1' });
+    // the open-lead lookup (first findFirst) leaves out unreleased pool leads
+    expect(prisma.lead.findFirst.mock.calls[0][0].where.AND).toContainEqual(require('../../src/lib/poolLeads').LIVE_LEADS);
+    expect(prisma.lead.findMany.mock.calls[0][0].where).toMatchObject({ buyerPhone: '+919876543210', poolBatch: { isSet: true }, poolReleasedAt: { isSet: false } });
+    expect(prisma.lead.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 'LPOOLED', poolReleasedAt: { isSet: false } }), data: expect.objectContaining({ poolGroup: 'C' }) }));
+    const notes = prisma.leadNote.create.mock.calls.map((c) => c[0].data);
+    expect(notes.some((n) => n.leadId === 'LPOOLED' && /now a live lead/.test(n.text))).toBe(true);
+  });
+
+  test('a "qualify first" source puts the new lead in the pool (Call first), tells admins it is waiting for a call, and does not touch other pool copies', async () => {
+    const out = await service.ingest(integ({ qualifyFirst: true, name: 'Meta Lakeview' }), { name: 'A', phone: '9876543210', lead_id: 'Q1' });
+    expect(out).toMatchObject({ status: 'CREATED', leadId: 'L1' });
+    expect(prisma.lead.create.mock.calls[0][0].data).toMatchObject({ status: 'UNASSIGNED', poolGroup: 'B', poolBatch: expect.stringMatching(/^meta-lakeview-\d{4}-\d{2}$/), poolGroupReason: expect.stringContaining('Meta Lakeview') });
+    expect(prisma.lead.updateMany).not.toHaveBeenCalled();
+    expect(notifyAdmins).toHaveBeenCalledWith(expect.objectContaining({ title: 'New lead waiting for a call', linkUrl: '/admin/leads/pool' }));
+  });
+
+  test('a source without the switch makes an ordinary live lead', async () => {
+    await service.ingest(integ(), { name: 'A', phone: '9876543210', lead_id: 'Q2' });
+    const data = prisma.lead.create.mock.calls[0][0].data;
+    expect(data.poolBatch).toBeUndefined();
+    expect(data.poolGroup).toBeUndefined();
+  });
+
+  test('a buyer already waiting in the pool is not added twice by a "qualify first" source: a note goes on the waiting lead', async () => {
+    prisma.lead.findMany.mockResolvedValue([{ id: 'LWAIT' }]);
+    const out = await service.ingest(integ({ qualifyFirst: true }), { name: 'A', phone: '9876543210', lead_id: 'Q3', message: 'again' });
+    expect(out).toEqual({ status: 'DUPLICATE', leadId: 'LWAIT' });
+    expect(prisma.lead.create).not.toHaveBeenCalled();
+    expect(prisma.leadNote.create.mock.calls[0][0].data).toMatchObject({ leadId: 'LWAIT' });
+  });
+
+  test('the test (dry run) says whether the lead would go to the pool', async () => {
+    const out = await service.ingest(integ({ qualifyFirst: true }), { name: 'T', phone: '9876543210' }, { dryRun: true });
+    expect(out.would.pool).toBe(true);
   });
 
   test('a test (dry run) writes nothing and shows what would happen', async () => {

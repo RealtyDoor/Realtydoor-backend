@@ -19,6 +19,7 @@ const { buildPartnerQuote } = require('../../lib/commissionQuote');
 const { decideBuyerOwnership, OWNERSHIP_TEXT } = require('../../lib/leadOwnership');
 const { holdInfo, HOLD_EXTENSION_DAYS, HOLD_REMINDER_DAYS } = require('../../lib/leadTimers');
 const { canLinkLeadToUser } = require('../../lib/leadClaim');
+const { LIVE_LEADS } = require('../../lib/poolLeads');
 const { getMoneySettings } = require('../money/moneyConfig');
 
 const DEFAULT_MAX_ACTIVE_INQUIRIES = 5;
@@ -86,6 +87,7 @@ const BUYER_HIDDEN_LEAD_FIELDS = [
 const STAFF_ONLY_LEAD_FIELDS = [
   'adminNotes', 'addedByAdminId', 'salesStage', 'temperature', 'ownerStaffId', 'ownerAssignedAt', 'nextFollowUpAt', 'lastContactedAt',
   'qualifiedAt', 'notQualifiedReason', 'contactAttempts', 'responseReminderAt',
+  'poolBatch', 'poolGroup', 'poolGroupReason', 'poolReleasedAt', 'originalLeadAt', // qualification pool: staff only
   'campaign', 'sourceDetail', 'utmSource', 'utmMedium', 'utmCampaign', 'utmContent', 'utmTerm', 'adClickId', 'intakeIntegrationId', 'intakeAnswers',
   'windowWarnedAt', 'proofWarnedAt', 'holdExtensionEscalatedAt', 'holdExtensionEscalatedFiveAt', 'assignmentNudgedAt', 'assignmentDueNotifiedAt',
   'lateNotifiedAt', 'lateEscalatedAt', 'whatsappSentAt', 'secondFollowupSentAt', 'allocationLetterVerifiedBy', 'droppedByAdminId',
@@ -312,7 +314,7 @@ async function addPartnerLeadLocked(partnerId, data) {
 
   // B3.2 — same buyer, same property, still active.
   const duplicate = await prisma.lead.findFirst({
-    where: { propertyId: data.propertyId, buyerPhone: data.buyerPhone, status: ACTIVE_LEAD_STATUSES },
+    where: { AND: [{ propertyId: data.propertyId, buyerPhone: data.buyerPhone, status: ACTIVE_LEAD_STATUSES }, LIVE_LEADS] },
     select: { id: true, refCode: true, status: true, addedByPartnerId: true, assignedPartnerId: true },
   });
   if (duplicate) {
@@ -628,6 +630,17 @@ async function requestOtpOverride(leadId, partnerId) {
 async function verifyOtp(leadId, partnerId, inputOtp, ip) {
   const lead = await prisma.lead.findFirst({ where: { id: leadId, assignedPartnerId: partnerId } });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  return completeVisitWithCode(lead, inputOtp, { ip, by: 'the partner' });
+}
+
+/**
+ * The one way a visit becomes done with the buyer's code, shared by the broker (verifyOtp) and reception (23 Nov 2026,
+ * modules/reception). Every guard runs here: open status, do-not-contact, paused buyer, expiry, early window, and the shared attempt
+ * counter with its 3-try lock, so reception cannot guess codes either. The buyer's contact is revealed to the assigned broker, as before.
+ */
+async function completeVisitWithCode(lead, inputOtp, { ip = null, by = 'the partner', actor = null } = {}) {
+  const leadId = lead.id;
+  const partnerId = lead.assignedPartnerId;
   assertVisitAction(lead, ['SITE_VISIT_SCHEDULED']); // verifying reveals the buyer's number
   await assertLeadNotPaused(lead.buyerId);
   if (!lead.siteVisitOTP) throw new ApiError(400, 'No OTP generated for this lead');
@@ -677,7 +690,7 @@ async function verifyOtp(leadId, partnerId, inputOtp, ip) {
   // B16 — admins had no signal that the visit happened.
   await notifyAdmins({
     title: 'Site visit logged',
-    message: `${lead.refCode || 'A lead'} · ${lead.buyerName}: the partner verified the visit OTP.`,
+    message: `${lead.refCode || 'A lead'} · ${lead.buyerName}: ${by} verified the visit OTP.`,
     type: 'VISIT_LOGGED',
     linkUrl: `/admin/leads/${leadId}`,
   });
@@ -690,6 +703,12 @@ async function verifyOtp(leadId, partnerId, inputOtp, ip) {
       linkUrl: `/user/inquiries/${leadId}`,
     }).catch(() => null);
   }
+
+  // The broker path had no audit row (found 23 Nov 2026); one now records who completed the visit, and how.
+  await createAuditLog({
+    adminId: actor?.adminId ?? null, actorRole: actor?.role ?? 'PARTNER', action: 'VISIT_CODE_VERIFIED', targetType: 'Lead', targetId: leadId,
+    after: { status: 'SITE_VISIT_DONE', by, partnerId: partnerId ?? null }, ipAddress: ip ?? null,
+  }).catch(() => null);
 
   return {
     message: 'OTP verified. Buyer contact revealed.',
@@ -1092,4 +1111,4 @@ async function adminRejectDrop(leadId, adminId, ip) {
 
 module.exports = {
   PARTNER_VISIBLE_LEAD_FIELDS, PARTNER_HIDDEN_LEAD_FIELDS, BUYER_VISIBLE_LEAD_FIELDS, BUYER_HIDDEN_LEAD_FIELDS: BUYER_HIDDEN_ALL, sanitizeLeadForPartner,
-  requestHoldExtension, adminDecideHoldExtension, adminConfirmNoShow, adminReleaseRegistration, partnerConfirmNoShow, contestCredit, getPooledLeads, evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };
+  requestHoldExtension, adminDecideHoldExtension, adminConfirmNoShow, adminReleaseRegistration, partnerConfirmNoShow, contestCredit, getPooledLeads, evaluateBuyerOwnership, submitLead, sanitizeLeadForBuyer, stalledInfoFor, updateVisitOutcome, partnerAddLead, getPartnerLeads, getPartnerLeadById, scheduleVisit, resendOtp, requestOtpOverride, verifyOtp, completeVisitWithCode, uploadDocs, closeLead, requestDrop, adminApproveDrop, adminRejectDrop, adminVerifyAllocationLetter };

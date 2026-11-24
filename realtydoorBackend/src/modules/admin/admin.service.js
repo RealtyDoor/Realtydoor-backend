@@ -48,6 +48,7 @@ const {
   ADMIN_PERMISSION_SCOPES, ADMIN_STAFF_ROLES, DEFAULT_PERMISSIONS_BY_STAFF_ROLE,
 } = require('../../utils/adminPermissions');
 const CACHE_KEYS = require('../../lib/cacheKeys');
+const { LIVE_LEADS, isInPool } = require('../../lib/poolLeads');
 
 // ─── LEAD MANAGEMENT ─────────────────────────────────────────────────────────
 
@@ -82,16 +83,10 @@ function flattenBuyerInquiryCount(lead) {
 
 // The original filters, for callers that have no signed-in admin to scope by.
 function listWhereLegacy(filters) {
-  const where = {};
-  if (filters.status) where.status = filters.status;
+  const where = require('../../lib/leadListFilter').leadListFilter(filters);
   if (filters.partnerId) where.assignedPartnerId = filters.partnerId;
   if (filters.dropRequested === '1') where.dropRequestedByPartner = true;
   if (filters.holdExtension === '1') { where.holdExtensionRequestedAt = { isSet: true }; where.holdExtensionDecidedAt = { isSet: false }; }
-  if (filters.search) where.OR = [
-    { refCode:    { contains: filters.search, mode: 'insensitive' } },
-    { buyerName:  { contains: filters.search, mode: 'insensitive' } },
-    { buyerEmail: { contains: filters.search, mode: 'insensitive' } },
-  ];
   return where;
 }
 
@@ -181,7 +176,7 @@ async function createLead(data, adminId, ip) {
   // to deduplicate a free-text interest against.
   if (data.propertyId) {
     const duplicate = await prisma.lead.findFirst({
-      where: { propertyId: data.propertyId, buyerPhone: data.buyerPhone, status: { notIn: ['CLOSED', 'DROPPED'] } },
+      where: { AND: [{ propertyId: data.propertyId, buyerPhone: data.buyerPhone, status: { notIn: ['CLOSED', 'DROPPED'] } }, LIVE_LEADS] },
       select: { id: true, refCode: true, status: true },
     });
     if (duplicate) {
@@ -556,6 +551,8 @@ async function assignLead(leadId, partnerId, adminId, ip, reason) {
     include: { property: { select: { title: true, partnerId: true } }, escrowTransactions: { select: { status: true } } },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  // A lead still in the qualification pool cannot be given to a partner: qualify it first (that sends it to Lead Dispatch).
+  if (isInPool(lead)) throw new ApiError(409, 'This lead is still in the qualification pool. Qualify it first; then it can be given to a partner.', { code: 'IN_QUALIFICATION_POOL' });
   // BUG-039: the listing's owner cannot earn commission on their own listing, so a lead for it must not be assigned to them
   // (it used to be accepted here and only fail at release).
   if (lead.property?.partnerId && String(lead.property.partnerId) === String(partnerId)) {
@@ -825,6 +822,7 @@ async function autoAssignLead(leadId, adminId, ip) {
     include: { property: { select: { locality: true, city: true, propertyType: true } } },
   });
   if (!lead) throw new ApiError(404, 'Lead not found');
+  if (isInPool(lead)) throw new ApiError(409, 'This lead is still in the qualification pool. Qualify it first; then it can be given to a partner.', { code: 'IN_QUALIFICATION_POOL' });
   if (lead.assignedPartnerId) throw new ApiError(409, 'Lead is already assigned to a partner');
   if (UNASSIGNABLE_LEAD_STATUSES.includes(lead.status)) {
     throw new ApiError(400, `Cannot assign a ${lead.status.toLowerCase()} lead`);
@@ -1434,7 +1432,7 @@ async function getRevenueSummary() {
     }),
     // closedAt, with updatedAt for deals closed before closedAt existed (T16).
     prisma.lead.count({ where: { status: 'CLOSED', OR: [{ closedAt: { gte: startOfMonth } }, { closedAt: { isSet: false }, updatedAt: { gte: startOfMonth } }] } }),
-    prisma.lead.count(),
+    prisma.lead.count({ where: LIVE_LEADS }),
   ]);
 
   return {
@@ -1781,7 +1779,7 @@ async function buyerActivityFor(users) {
   const phones = users.map((u) => u.phone).filter(Boolean);
   const [leads, escrows, subs] = await Promise.all([
     prisma.lead.findMany({
-      where: { OR: [{ buyerId: { in: userIds } }, ...(phones.length ? [{ buyerPhone: { in: phones } }] : [])] },
+      where: { AND: [{ OR: [{ buyerId: { in: userIds } }, ...(phones.length ? [{ buyerPhone: { in: phones } }] : [])] }, LIVE_LEADS] },
       select: { buyerId: true, buyerPhone: true },
     }),
     prisma.escrowTransaction.groupBy({
@@ -2907,8 +2905,12 @@ async function listUserSubscriptionsAdmin(userId, skip, limit) {
 async function listContactMessages(filters, skip, limit) {
   const where = {};
   if (filters.isRead !== undefined) where.isRead = filters.isRead === 'true';
-  // 11.2 / 11.5 — inbox tabs and channel grouping.
-  if (filters.status) where.status = filters.status;
+  // 11.2 / 11.5 — inbox tabs and channel grouping. One status or several, comma-separated (the Inbox tab is every status but SPAM);
+  // unknown values are ignored (23 Nov 2026: the tabs are filtered here, across all messages, not in the browser).
+  if (filters.status) {
+    const list = String(filters.status).split(',').map((v) => v.trim().toUpperCase()).filter((v) => ['NEW', 'REPLIED', 'RESOLVED', 'SPAM'].includes(v));
+    where.status = list.length === 1 ? list[0] : { in: list };
+  }
   if (filters.source) where.source = filters.source;
   if (filters.search) where.OR = [
     { name:    { contains: filters.search, mode: 'insensitive' } },
@@ -2916,7 +2918,7 @@ async function listContactMessages(filters, skip, limit) {
     { subject: { contains: filters.search, mode: 'insensitive' } },
   ];
 
-  const [data, total, statusCounts] = await Promise.all([
+  const [data, total, statusCounts, unreadCount] = await Promise.all([
     prisma.contactMessage.findMany({
       where, skip, take: limit,
       orderBy: { createdAt: 'desc' },
@@ -2937,12 +2939,15 @@ async function listContactMessages(filters, skip, limit) {
     // retroactively. Counts just don't match those rows, which is accurate
     // and can't take the endpoint down.
     Promise.all(CONTACT_STATUSES.map(async (st) => [st, await prisma.contactMessage.count({ where: { status: st } })])),
+    // The Unread tab's exact count (unread, not spam), for the same reason (23 Nov 2026).
+    prisma.contactMessage.count({ where: { isRead: false, status: { in: CONTACT_STATUSES.filter((st) => st !== 'SPAM') } } }),
   ]);
 
   return {
     data: data.map(({ _count, ...m }) => ({ ...m, replyCount: _count.replies })),
     total,
     statusCounts: Object.fromEntries(statusCounts),
+    unreadCount,
   };
 }
 
@@ -3165,7 +3170,7 @@ async function getAdminAnalytics() {
     totalProperties,
   ] = await Promise.all([
     // Lead pipeline funnel
-    prisma.lead.groupBy({ by: ['status'], _count: { _all: true } }),
+    prisma.lead.groupBy({ by: ['status'], where: LIVE_LEADS, _count: { _all: true } }),
 
     // Property approval funnel
     prisma.property.groupBy({ by: ['publishStatus'], _count: { _all: true } }),
@@ -3208,8 +3213,26 @@ async function getAdminAnalytics() {
     if (revenueByMonth[key] !== undefined) revenueByMonth[key] += amountPaid;
   });
 
+  // 23 Nov 2026: worked out by the database. The screen used to add up the 50 newest released payments and rank the 50 newest partners.
+  const [gmv, topGroups] = await Promise.all([
+    prisma.escrowTransaction.aggregate({ where: { status: 'RELEASED' }, _sum: { amount: true }, _count: { _all: true } }),
+    prisma.lead.groupBy({
+      by: ['assignedPartnerId'], where: { status: 'CLOSED', assignedPartnerId: { not: null } },
+      _count: { _all: true }, orderBy: { _count: { assignedPartnerId: 'desc' } }, take: 5,
+    }),
+  ]);
+  const topIds = topGroups.map((g) => g.assignedPartnerId).filter(Boolean);
+  const topUsers = topIds.length ? await prisma.user.findMany({ where: { id: { in: topIds } }, select: { id: true, name: true, companyName: true, email: true } }) : [];
+  const byId = Object.fromEntries(topUsers.map((u) => [u.id, u]));
+  const topPartners = topGroups.filter((g) => byId[g.assignedPartnerId]).map((g) => {
+    const u = byId[g.assignedPartnerId];
+    return { id: u.id, name: u.companyName || u.name || u.email, email: u.email, closedLeads: g._count._all };
+  });
+
   return {
     totals: { users: totalUsers, partners: totalPartners, activeListings: totalProperties },
+    escrowReleased: { total: gmv._sum.amount || 0, count: gmv._count._all },
+    topPartners,
     leadFunnel: Object.fromEntries(leadFunnel.map((r) => [r.status, r._count._all])),
     propertyFunnel: Object.fromEntries(propertyFunnel.map((r) => [r.publishStatus, r._count._all])),
     userGrowth: months.map((m) => ({ month: m, ...growthByMonth[m] })),

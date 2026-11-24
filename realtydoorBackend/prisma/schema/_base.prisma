@@ -104,6 +104,7 @@ enum LeadSource {
   GOOGLE_ADS
   YOUTUBE
   WHATSAPP
+  HOARDING // calls that come straight from hoardings (traditional, non-digital marketing); first used by the old CRM's "IMS" source
 }
 
 enum KycStatus {

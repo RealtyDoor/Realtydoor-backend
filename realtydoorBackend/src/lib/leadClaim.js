@@ -5,6 +5,7 @@
 // the person the partner named: same phone number AND that phone verified by
 // OTP. Two paths use this: admin confirm links automatically, and the buyer
 // can claim it themselves.
+const { isInPool } = require('./poolLeads');
 const UNLINKABLE_STATUSES = ['AWAITING_ADMIN', 'DROPPED'];
 
 // Mongo: a lead created without buyerId has the field MISSING, which a plain
@@ -14,6 +15,7 @@ const UNLINKED_LEAD_WHERE = { OR: [{ buyerId: null }, { buyerId: { isSet: false 
 function canLinkLeadToUser(lead, user) {
   if (!lead || !user) return false;
   if (lead.buyerId) return false;
+  if (isInPool(lead)) return false; // an old bulk-imported lead is not the buyer's enquiry
   if (user.role !== 'USER' || user.deletedAt || user.isSuspended) return false;
   if (user.phoneVerified !== true || !user.phone) return false;
   if (!lead.buyerPhone || lead.buyerPhone !== user.phone) return false;

@@ -13,6 +13,7 @@ const { getMoneyInFlightReasons, revokeAllSessions } = require('../../lib/accoun
 const { getLoanEligibility, resolveVerifiedDocIds, attachLoanDocuments } = require('../../lib/loanEligibility');
 const { getConfigValue } = require('../config/config.service');
 const { notifyAdmins, createNotification } = require('../../lib/notifications');
+const { LIVE_LEADS } = require('../../lib/poolLeads');
 const { canLinkLeadToUser, UNLINKED_LEAD_WHERE, UNLINKABLE_STATUSES } = require('../../lib/leadClaim');
 const { presentTicketForBuyer } = require('../../lib/ticketPresenter');
 const { getMoneySettings } = require('../money/moneyConfig');
@@ -105,7 +106,7 @@ async function getClaimableLeads(userId) {
   });
   if (!user?.phone || user.phoneVerified !== true) return [];
   return prisma.lead.findMany({
-    where: { AND: [UNLINKED_LEAD_WHERE, { buyerPhone: user.phone }, { status: { notIn: UNLINKABLE_STATUSES } }] },
+    where: { AND: [UNLINKED_LEAD_WHERE, LIVE_LEADS, { buyerPhone: user.phone }, { status: { notIn: UNLINKABLE_STATUSES } }] },
     select: {
       id: true, refCode: true, status: true, createdAt: true, propertyInterest: true,
       property: { select: { title: true, slug: true, city: true, locality: true } },
@@ -129,7 +130,7 @@ async function claimLead(userId, leadId) {
 
   // Atomic: only the first claim wins if two requests race.
   const claim = await prisma.lead.updateMany({
-    where: { AND: [{ id: leadId }, UNLINKED_LEAD_WHERE] },
+    where: { AND: [{ id: leadId }, UNLINKED_LEAD_WHERE, LIVE_LEADS] },
     data: { buyerId: userId },
   });
   if (claim.count === 0) throw new ApiError(409, 'This inquiry has already been claimed', { code: 'LEAD_ALREADY_CLAIMED' });

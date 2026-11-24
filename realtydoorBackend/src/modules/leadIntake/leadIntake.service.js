@@ -2,9 +2,11 @@ const prisma = require('../../lib/prisma');
 const logger = require('../../lib/logger');
 const ApiError = require('../../utils/ApiError');
 const { nextRefCode } = require('../../lib/refCode');
+const { retryOnWriteConflict } = require('../../lib/writeConflictRetry');
 const { notifyAdmins } = require('../../lib/notifications');
 const { createAuditLog } = require('../../lib/auditLog');
 const li = require('../../lib/leadIntake');
+const { onlyLive, inPool, intakeBatch } = require('../../lib/poolLeads');
 
 // Lead integrations: one intake path for every outside source (ad forms, WhatsApp, website, any webhook). See prisma/schema/lead_intake.prisma.
 
@@ -20,7 +22,7 @@ async function createIntegration(data, adminId) {
     data: {
       name: data.name, kind: data.kind || 'GENERIC', keyId: li.newKeyId(), secretHash: li.hashSecret(secret),
       defaultSource: data.defaultSource || 'OTHER', defaultCampaign: data.defaultCampaign || null,
-      defaultProjectId: data.defaultProjectId || null, consentAssumed: data.consentAssumed ?? true, createdByAdminId: adminId,
+      defaultProjectId: data.defaultProjectId || null, consentAssumed: data.consentAssumed ?? true, qualifyFirst: data.qualifyFirst ?? false, createdByAdminId: adminId,
     },
   });
   await createAuditLog({ adminId, action: 'LEAD_INTEGRATION_CREATED', targetType: 'LeadIntegration', targetId: integration.id, after: { name: integration.name, kind: integration.kind } }).catch(() => null);
@@ -44,7 +46,7 @@ async function listIntegrations() {
 
 async function updateIntegration(id, data, adminId) {
   const allowed = {};
-  for (const k of ['name', 'isActive', 'defaultSource', 'defaultCampaign', 'defaultProjectId', 'consentAssumed']) if (data[k] !== undefined) allowed[k] = data[k];
+  for (const k of ['name', 'isActive', 'defaultSource', 'defaultCampaign', 'defaultProjectId', 'consentAssumed', 'qualifyFirst']) if (data[k] !== undefined) allowed[k] = data[k];
   const row = await prisma.leadIntegration.update({ where: { id }, data: allowed }).catch(() => null);
   if (!row) throw new ApiError(404, 'Integration not found');
   await createAuditLog({ adminId, action: 'LEAD_INTEGRATION_UPDATED', targetType: 'LeadIntegration', targetId: id, after: allowed }).catch(() => null);
@@ -80,9 +82,14 @@ async function authenticate(keyId, secret) {
 }
 
 async function finish(integration, eventId, status, extra = {}) {
-  await prisma.leadIntakeEvent.update({ where: { id: eventId }, data: { status, ...extra } }).catch(() => null);
+  // 23 Nov 2026: under a burst both writes can hit a MongoDB write conflict; retried, and a final failure is logged (it was silent).
+  await retryOnWriteConflict(() => prisma.leadIntakeEvent.update({ where: { id: eventId }, data: { status, ...extra } }))
+    .catch((e) => logger.warn('[leadIntake] event status not saved', { eventId, status, error: e.message }));
   const data = status === 'ERROR' ? { lastError: extra.reason || 'error', lastErrorAt: new Date() } : status === 'CREATED' ? { lastLeadAt: new Date(), leadCount: { increment: 1 }, lastError: null } : {};
-  if (Object.keys(data).length) await prisma.leadIntegration.update({ where: { id: integration.id }, data }).catch(() => null);
+  if (Object.keys(data).length) {
+    await retryOnWriteConflict(() => prisma.leadIntegration.update({ where: { id: integration.id }, data }))
+      .catch((e) => logger.warn('[leadIntake] integration totals not saved', { status, error: e.message }));
+  }
 }
 
 async function note(leadId, text) {
@@ -117,7 +124,7 @@ async function ingest(integration, rawBody, { dryRun = false } = {}) {
     if (!dryRun) await prisma.leadIntakeEvent.create({ data: { integrationId: integration.id, externalId, status: 'REJECTED', reason: 'No valid phone number', payload: body } }).catch(() => null);
     return { status: 'REJECTED', reason: 'A valid phone number is required' };
   }
-  if (dryRun) return { status: 'DRY_RUN', would: { name: f.name, phone: f.phone, source, campaign: campaign || null, projectId, propertyId, mappingMatched: !!mapping } };
+  if (dryRun) return { status: 'DRY_RUN', would: { name: f.name, phone: f.phone, pool: !!integration.qualifyFirst, source, campaign: campaign || null, projectId, propertyId, mappingMatched: !!mapping } };
 
   // The same lead sent twice is one lead.
   let event;
@@ -147,14 +154,25 @@ async function ingest(integration, rawBody, { dryRun = false } = {}) {
     }
 
     // An open lead for the same buyer and project or listing: add a note, do not create a second one.
+    // A lead still waiting in the qualification pool is not "open": a fresh enquiry must reach Lead Dispatch, not vanish into a note on it.
     const open = await prisma.lead.findFirst({
-      where: { buyerPhone: f.phone, status: ACTIVE, ...(propertyId ? { propertyId } : projectId ? { projectId } : {}) },
+      where: onlyLive({ buyerPhone: f.phone, status: ACTIVE, ...(propertyId ? { propertyId } : projectId ? { projectId } : {}) }),
       orderBy: { createdAt: 'desc' },
     });
     if (open) {
       await note(open.id, `The buyer enquired again through ${source}${campaign ? ` (${campaign})` : ''}${f.message ? `: ${f.message}` : ''}.`);
       await finish(integration, event.id, 'DUPLICATE', { leadId: open.id, reason: 'Open lead for the same buyer and project' });
       return { status: 'DUPLICATE', leadId: open.id };
+    }
+
+    // Leads waiting in the qualification pool for this buyer.
+    const pooled = await prisma.lead.findMany({ where: { buyerPhone: f.phone, ...inPool() }, select: { id: true } });
+    const qualifyFirst = !!integration.qualifyFirst;
+    if (qualifyFirst && pooled.length) {
+      // Already waiting for a call: a second copy would only make the caller ring twice.
+      await note(pooled[0].id, `The buyer enquired again through ${source}${campaign ? ` (${campaign})` : ''}${f.message ? `: ${f.message}` : ''}.`);
+      await finish(integration, event.id, 'DUPLICATE', { leadId: pooled[0].id, reason: 'Already waiting in the qualification pool' });
+      return { status: 'DUPLICATE', leadId: pooled[0].id };
     }
 
     const project = projectId ? await prisma.project.findUnique({ where: { id: projectId }, select: { title: true, city: true } }).catch(() => null) : null;
@@ -174,15 +192,25 @@ async function ingest(integration, rawBody, { dryRun = false } = {}) {
         ...((integration.consentAssumed || f.consent) && { buyerConsentAt: new Date() }),
         ...(earlier && { relatedLeadId: earlier.id }),
         ...(dncSince && { doNotContactAt: dncSince }),
+        // "Qualify first" source: the lead waits in the pool, in Call first, until someone has called the buyer.
+        ...(qualifyFirst && { poolBatch: intakeBatch(integration.name), poolGroup: 'B', poolGroupReason: `From ${integration.name}: call the buyer before it goes to Lead Dispatch` }),
       },
     });
+    // The buyer has now come to us themselves: the pool copy is no longer a cold call. Say so on it and park it in group C.
+    // Best effort: the live lead already exists, so a failure here must never fail the intake (a retry would make a second lead).
+    for (const p of qualifyFirst ? [] : pooled) {
+      try {
+        await prisma.lead.updateMany({ where: { id: p.id, ...inPool() }, data: { poolGroup: 'C', poolGroupReason: `The buyer enquired again (${lead.refCode}): handled there` } });
+        await note(p.id, `The buyer enquired again through ${source}${campaign ? ` (${campaign})` : ''} and is now a live lead, ${lead.refCode}. Do not call this pool copy.`);
+      } catch (e) { logger.warn('[leadIntake] could not mark the pool copy', { leadId: p.id, error: e.message }); }
+    }
     if (dncSince) await note(lead.id, 'This number was marked "do not contact" on an earlier lead, so this lead carries the mark. The buyer filled this form themselves: check with them, then clear the mark if they agree.');
     await finish(integration, event.id, 'CREATED', { leadId: lead.id });
     await createAuditLog({ adminId: null, actorRole: 'SYSTEM', action: 'LEAD_CREATED', targetType: 'Lead', targetId: lead.id, after: { refCode: lead.refCode, source, integration: integration.name, campaign: campaign || null, projectId } }).catch(() => null);
     await notifyAdmins({
-      title: `New lead from ${source.replace('_', ' ').toLowerCase()}`,
-      message: `${lead.refCode} · ${lead.buyerName}${project ? ` for ${project.title}` : ''}${campaign ? ` · ${campaign}` : ''} arrived through ${integration.name}.`,
-      type: 'LEAD_NEW', linkUrl: `/admin/leads/${lead.id}`,
+      title: qualifyFirst ? `New lead waiting for a call` : `New lead from ${source.replace('_', ' ').toLowerCase()}`,
+      message: `${lead.refCode} · ${lead.buyerName}${project ? ` for ${project.title}` : ''}${campaign ? ` · ${campaign}` : ''} arrived through ${integration.name}${qualifyFirst ? ' and is waiting in the Qualification pool until someone has called the buyer' : ''}.`,
+      type: 'LEAD_NEW', linkUrl: qualifyFirst ? '/admin/leads/pool' : `/admin/leads/${lead.id}`,
     }).catch(() => null);
     return { status: 'CREATED', leadId: lead.id, refCode: lead.refCode };
   } catch (err) {

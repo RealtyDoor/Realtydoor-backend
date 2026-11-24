@@ -1,6 +1,7 @@
 'use strict';
 
 const prisma = require('./prisma');
+const { retryOnWriteConflict } = require('./writeConflictRetry');
 
 const PREFIXES = { user: 'RD-U-', lead: 'RD-L-' };
 
@@ -10,12 +11,13 @@ const PREFIXES = { user: 'RD-U-', lead: 'RD-L-' };
 // exist yet" for a brand-new kind; in steady state (after
 // scripts/backfillRefCodes.js has pre-seeded both rows) this is always a
 // plain atomic update.
-async function nextRefCode(kind) {
-  const counter = await prisma.counter.upsert({
+// Parallel requests can hit a MongoDB write conflict on this one row (23 Nov 2026, Make queue burst): retried.
+async function nextRefCode(kind, opts) {
+  const counter = await retryOnWriteConflict(() => prisma.counter.upsert({
     where: { id: kind },
     update: { seq: { increment: 1 } },
     create: { id: kind, seq: 1 },
-  });
+  }), opts);
   return `${PREFIXES[kind]}${String(counter.seq).padStart(6, '0')}`;
 }
 

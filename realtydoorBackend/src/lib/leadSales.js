@@ -136,8 +136,13 @@ function planSalesChange(lead, body, access, now = new Date()) {
     if ((lead.salesStage || 'NEW') !== body.salesStage) {
       data.salesStage = body.salesStage;
       said.push(`Stage: ${STAGE_LABEL[lead.salesStage || 'NEW']} → ${STAGE_LABEL[body.salesStage]}`);
-      if (body.salesStage === 'QUALIFIED') { data.qualifiedAt = now; data.notQualifiedReason = null; }
-      else if (body.salesStage === 'NOT_QUALIFIED') { data.qualifiedAt = null; }
+      const inPool = !!lead.poolBatch && !lead.poolReleasedAt;
+      if (body.salesStage === 'QUALIFIED') {
+        data.qualifiedAt = now; data.notQualifiedReason = null;
+        // Qualified = released: a lead waiting in the qualification pool moves to Lead Dispatch (same record, history kept).
+        if (inPool) { data.poolReleasedAt = now; said.push('Released from the qualification pool to Lead Dispatch'); }
+      }
+      else if (body.salesStage === 'NOT_QUALIFIED') { data.qualifiedAt = null; if (inPool) { data.poolGroup = 'C'; data.poolGroupReason = 'Not qualified after a call'; } }
       else { data.qualifiedAt = null; data.notQualifiedReason = null; }
     }
   }

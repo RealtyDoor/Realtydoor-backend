@@ -1,3 +1,4 @@
+const { LIVE_LEADS } = require('./poolLeads');
 // B90 — a buyer's inquiries are linked either by account (Lead.buyerId) or,
 // for leads created without an account link (partner-added, admin-created,
 // legacy rows), only by phone. Counting buyerId alone showed 0 for those
@@ -19,10 +20,11 @@ function countInquiriesByUser(users, leads) {
 // where-clause that finds the leads the admin user page lists, so the tab and
 // the "Inquiries N" count can never disagree.
 function inquiryWhereForUser(user) {
+  // A pool lead (old bulk import) is not this buyer's enquiry.
   return {
-    OR: [
-      { buyerId: user.id },
-      ...(user.phone ? [{ buyerId: null, buyerPhone: user.phone }] : []),
+    AND: [
+      { OR: [{ buyerId: user.id }, ...(user.phone ? [{ buyerId: null, buyerPhone: user.phone }] : [])] },
+      LIVE_LEADS,
     ],
   };
 }

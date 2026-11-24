@@ -21,11 +21,13 @@ const ADMIN_PERMISSION_SCOPES = [
   // management, and isn't in any default staff-role preset below — an
   // admin/DPO needs it granted explicitly.
   'PRIVACY',
+  // Reception desk (23 Nov 2026): records site visits at the office or site (buyer's visit code + photo, who hosted). Nothing else.
+  'RECEPTION',
 ];
 
 // A named staffRole is just a convenient preset — adminPermissions is what
 // actually gets checked (SUPER_ADMIN bypasses it and always passes).
-const ADMIN_STAFF_ROLES = ['SUPER_ADMIN', 'SUPPORT', 'CRM_MANAGER', 'FINANCE_STAFF', 'CONTENT_MANAGER', 'BDE'];
+const ADMIN_STAFF_ROLES = ['SUPER_ADMIN', 'SUPPORT', 'CRM_MANAGER', 'FINANCE_STAFF', 'CONTENT_MANAGER', 'BDE', 'RECEPTION'];
 
 const DEFAULT_PERMISSIONS_BY_STAFF_ROLE = {
   SUPER_ADMIN: ADMIN_PERMISSION_SCOPES, // unused in practice — SUPER_ADMIN bypasses the check — kept for directory display consistency.
@@ -36,6 +38,8 @@ const DEFAULT_PERMISSIONS_BY_STAFF_ROLE = {
   CONTENT_MANAGER: ['CONTENT'],
   // Business development executive: works only the leads a manager has given them, up to qualification.
   BDE: ['SALES'],
+  // Receptionist: one screen, records site visits. Locked out of every other route app-wide (lib/staffLockdown.js).
+  RECEPTION: ['RECEPTION'],
 };
 
 // What the admin app needs to show only the screens and buttons this admin may use. `full` mirrors requirePermission:

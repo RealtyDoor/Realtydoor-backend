@@ -23,6 +23,8 @@ model LeadIntegration {
   defaultProjectId String?           @db.ObjectId
   // Ad forms carry their own consent wording, so a lead from one counts as consented unless the integration says otherwise.
   consentAssumed Boolean             @default(true)
+  // "Qualify first": a new lead from this source waits in the qualification pool until someone has called the buyer (lib/poolLeads.js).
+  qualifyFirst   Boolean             @default(false)
   createdByAdminId String?           @db.ObjectId
   lastLeadAt     DateTime?
   leadCount      Int                 @default(0)

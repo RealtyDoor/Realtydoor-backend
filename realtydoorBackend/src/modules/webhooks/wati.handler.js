@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const prisma = require('../../lib/prisma');
 const logger = require('../../lib/logger');
+const { onlyLive } = require('../../lib/poolLeads');
 const { recordDeliveryEvent } = require('../wati/wati.service');
 const inbox = require('../wati/whatsappInbox.service');
 
@@ -106,12 +107,12 @@ async function watiWebhook(req, res) {
     const phone = phoneOf(waId);
 
     const lead = await prisma.lead.findFirst({
-      where: {
+      where: onlyLive({
         buyerPhone: phone,
         whatsappSentAt: { not: null },
         // Audit Nov 2026 (L1): a field never written is not null in MongoDB, so "no reply yet" has to match both.
         OR: [{ feedbackReceivedAt: null }, { feedbackReceivedAt: { isSet: false } }],
-      },
+      }),
       orderBy: { whatsappSentAt: 'desc' },
     });
 

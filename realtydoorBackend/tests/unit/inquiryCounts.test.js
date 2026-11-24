@@ -24,11 +24,13 @@ describe('countInquiriesByUser', () => {
 describe('inquiryWhereForUser (T42)', () => {
   const { inquiryWhereForUser } = require('../../src/lib/inquiryCounts');
   test('matches by account, and by phone only for leads with no account', () => {
-    expect(inquiryWhereForUser({ id: 'u1', phone: '+919999999999' })).toEqual({
-      OR: [{ buyerId: 'u1' }, { buyerId: null, buyerPhone: '+919999999999' }],
-    });
+    const w = inquiryWhereForUser({ id: 'u1', phone: '+919999999999' });
+    expect(w.AND[0]).toEqual({ OR: [{ buyerId: 'u1' }, { buyerId: null, buyerPhone: '+919999999999' }] });
+  });
+  test('never lists an unreleased pool lead', () => {
+    expect(inquiryWhereForUser({ id: 'u1', phone: '+919999999999' }).AND).toContainEqual(require('../../src/lib/poolLeads').LIVE_LEADS);
   });
   test('a user with no phone matches by account only', () => {
-    expect(inquiryWhereForUser({ id: 'u1', phone: null })).toEqual({ OR: [{ buyerId: 'u1' }] });
+    expect(inquiryWhereForUser({ id: 'u1', phone: null }).AND[0]).toEqual({ OR: [{ buyerId: 'u1' }] });
   });
 });

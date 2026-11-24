@@ -1,6 +1,7 @@
 const axios = require('axios');
 const prisma = require('../../lib/prisma');
 const logger = require('../../lib/logger');
+const { onlyLive } = require('../../lib/poolLeads');
 const ApiError = require('../../utils/ApiError');
 
 // Copies the conversations that already exist in WATI into our chat threads (WhatsAppMessage). WATI lists contacts newest first, so an import
@@ -96,7 +97,7 @@ async function importSlice({ since, startPage = 1, pages = 3, dryRun = false } =
       }
       if (items.some((i) => i.owner === false)) out.withReplies += 1;
 
-      const lead = dryRun ? null : await prisma.lead.findFirst({ where: { buyerPhone: phone }, orderBy: { createdAt: 'desc' }, select: { id: true } });
+      const lead = dryRun ? null : await prisma.lead.findFirst({ where: onlyLive({ buyerPhone: phone }), orderBy: { createdAt: 'desc' }, select: { id: true } });
       const rows = items.map((i) => toRow(i, phone, lead?.id)).filter(Boolean);
       out.skipped += items.length - rows.length;
       out.inbound += rows.filter((r) => r.direction === 'IN').length;

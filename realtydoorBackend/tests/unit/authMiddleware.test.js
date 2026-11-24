@@ -143,3 +143,37 @@ describe('the developer bypass header', () => {
     expect((await run(h())).err).toMatchObject({ statusCode: 401 });
   });
 });
+
+// 23 Nov 2026: limited staff are locked to their areas on every router, here in authenticate() (lib/staffLockdown.js).
+describe('limited staff lock-down', () => {
+  const recep = user({ role: 'ADMIN', staffRole: 'RECEPTION', adminPermissions: ['RECEPTION'] });
+  const bde = user({ role: 'ADMIN', staffRole: 'BDE', adminPermissions: ['SALES'] });
+  beforeEach(() => mockVerify.mockResolvedValue({ sub: 'clerk_1' }));
+
+  test.each([
+    ['receptionist', recep, '/api/leads/partner/6afca91c6717f382bd10fc4c/verify-otp', 'POST'],
+    ['receptionist', recep, '/api/admin/leads', 'GET'],
+    ['BDE', bde, '/api/locality-insights/6afca91c6717f382bd10fc4c', 'PATCH'],
+    ['BDE', bde, '/api/partner/dashboard?x=1', 'GET'],
+  ])('%s is refused %s', async (_n, u, url, method) => {
+    prisma.user.findUnique.mockResolvedValue(u);
+    const { err } = await run({ authorization: 'Bearer abc' }, { url, method });
+    expect(err).toMatchObject({ statusCode: 403, data: { code: 'ROLE_LIMITED' } });
+  });
+
+  test.each([
+    [recep, '/api/reception/visits'],
+    [recep, '/api/auth/me'],
+    [bde, '/api/admin/leads?page=2'],
+  ])('allowed area passes', async (u, url) => {
+    prisma.user.findUnique.mockResolvedValue(u);
+    expect((await run({ authorization: 'Bearer abc' }, { url })).err).toBeUndefined();
+  });
+
+  test('the dev bypass applies the same lock', async () => {
+    process.env.DEV_API_KEY = 'k';
+    prisma.user.findFirst.mockResolvedValue(recep);
+    const { err } = await run({ 'x-dev-api-key': 'k', 'x-dev-user-email': 'a@x.in' }, { url: '/api/partner/dashboard' });
+    expect(err).toMatchObject({ statusCode: 403, data: { code: 'ROLE_LIMITED' } });
+  });
+});

@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const prisma = require('../lib/prisma');
 const logger = require('../lib/logger');
 const { alertStaff, recipients } = require('../lib/staffAlerts');
+const { LIVE_LEADS } = require('../lib/poolLeads');
 
 // Twice a day (9:00 and 15:00 IST) the team gets one email if anything is waiting: leads nobody has assigned for
 // more than the 4-hour SLA, payouts that failed, and disputes still open. Nothing waiting means no email.
@@ -11,7 +12,7 @@ const LEAD_SLA_HOURS = 4;
 async function buildDigest(now = new Date()) {
   const slaCutoff = new Date(now.getTime() - LEAD_SLA_HOURS * 3600 * 1000);
   const [unassigned, payoutFailed, openDisputes] = await Promise.all([
-    prisma.lead.count({ where: { status: 'UNASSIGNED', assignedPartnerId: { isSet: false }, createdAt: { lte: slaCutoff } } }),
+    prisma.lead.count({ where: { status: 'UNASSIGNED', assignedPartnerId: { isSet: false }, createdAt: { lte: slaCutoff }, AND: [LIVE_LEADS, { OR: [{ poolReleasedAt: { isSet: false } }, { poolReleasedAt: { lte: slaCutoff } }] }] } }),
     prisma.escrowTransaction.count({ where: { status: 'HELD_PAYOUT_FAILED' } }),
     prisma.dispute.count({ where: { status: 'OPEN' } }),
   ]);

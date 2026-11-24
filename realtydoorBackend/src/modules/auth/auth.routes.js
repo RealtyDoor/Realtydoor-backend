@@ -9,6 +9,8 @@ router.post('/sync', authLimiter, ctrl.syncUser);
 
 // GET /api/auth/me  — returns the full profile for the currently logged-in user
 router.get('/me', authenticate, ctrl.getMe);
+router.post('/tours/seen', authenticate, ctrl.markTourSeen);
+router.post('/tours/reset', authenticate, ctrl.resetToursSeen);
 
 // GET /api/auth/onboarding-status — cheap onboarding re-check
 router.get('/onboarding-status', authenticate, ctrl.getOnboardingStatus);

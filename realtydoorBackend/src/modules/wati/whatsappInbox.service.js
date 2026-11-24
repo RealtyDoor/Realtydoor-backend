@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const prisma = require('../../lib/prisma');
 const logger = require('../../lib/logger');
+const { onlyLive } = require('../../lib/poolLeads');
 const li = require('../../lib/leadIntake');
 const { createNotification, notifyAdmins } = require('../../lib/notifications');
 
@@ -79,7 +80,7 @@ async function recordMessage(body) {
   const eventType = String(body.eventType || '');
   if (m.fromUs && /template/i.test(eventType)) return { status: 'ignored' }; // sends from the app are already recorded, with their details
 
-  const lead = await prisma.lead.findFirst({ where: { buyerPhone: m.phone }, orderBy: { createdAt: 'desc' }, select: { id: true, status: true, refCode: true, ownerStaffId: true, buyerName: true } });
+  const lead = await prisma.lead.findFirst({ where: onlyLive({ buyerPhone: m.phone }), orderBy: { createdAt: 'desc' }, select: { id: true, status: true, refCode: true, ownerStaffId: true, buyerName: true } });
   const row = await prisma.whatsAppMessage.create({
     data: {
       phone: m.phone, direction: m.fromUs ? 'OUT' : 'IN', kind: m.kind, text: m.text || null, mediaUrl: m.mediaUrl, senderName: m.senderName,
@@ -131,7 +132,7 @@ async function listConversations({ search, limit = 40 } = {}) {
   const groups = await prisma.whatsAppMessage.groupBy({ by: ['phone'], where, _max: { at: true }, _count: { _all: true }, orderBy: { _max: { at: 'desc' } }, take: Math.min(limit, 100) });
   const out = [];
   const liveItems = live.slice(0, Math.min(limit, 100));
-  const liveLeads = liveItems.length ? await prisma.lead.findMany({ where: { buyerPhone: { in: liveItems.map((c) => c.phone) } }, orderBy: { createdAt: 'asc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, projectId: true, buyerPhone: true } }) : [];
+  const liveLeads = liveItems.length ? await prisma.lead.findMany({ where: onlyLive({ buyerPhone: { in: liveItems.map((c) => c.phone) } }), orderBy: { createdAt: 'asc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, projectId: true, buyerPhone: true } }) : [];
   const leadByPhone = new Map(liveLeads.map((l) => [l.buyerPhone, l]));   // oldest first, so a buyer's newest lead wins
   for (const c of liveItems) {
     const lead = leadByPhone.get(c.phone) || null;
@@ -142,7 +143,7 @@ async function listConversations({ search, limit = 40 } = {}) {
     if (seen.has(g.phone)) continue;
     const [last, lead] = await Promise.all([
       prisma.whatsAppMessage.findFirst({ where: { phone: g.phone }, orderBy: { at: 'desc' }, select: { direction: true, kind: true, text: true, templateName: true, status: true, at: true } }),
-      prisma.lead.findFirst({ where: { buyerPhone: g.phone }, orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, projectId: true } }),
+      prisma.lead.findFirst({ where: onlyLive({ buyerPhone: g.phone }), orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, projectId: true } }),
     ]);
     out.push({ phone: g.phone, name: lead?.buyerName || null, messages: g._count._all, lastAt: g._max.at, last, lead });
   }
@@ -173,7 +174,7 @@ async function getThread(phoneDigits, limit = 300) {
   if (live) {
     const stored = await prisma.whatsAppMessage.findMany({ where: { phone, watiMessageId: { in: live.map((m) => m.watiMessageId).filter(Boolean) } }, select: { id: true, watiMessageId: true, templateName: true, text: true, leadId: true } });
     const byId = new Map(stored.map((s) => [s.watiMessageId, s]));
-    const lead = await prisma.lead.findFirst({ where: { buyerPhone: phone }, orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, campaign: true, projectId: true, createdAt: true } });
+    const lead = await prisma.lead.findFirst({ where: onlyLive({ buyerPhone: phone }), orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, campaign: true, projectId: true, createdAt: true } });
     const messages = live.map((m, i) => {
       const s = byId.get(m.watiMessageId);
       return { id: s?.id || `live-${i}-${m.watiMessageId || ''}`, direction: m.direction, kind: m.kind, text: m.text || s?.text || null, templateName: s?.templateName || m.templateName || null, mediaUrl: m.mediaUrl, senderName: m.senderName, status: m.status, failureReason: m.failureReason || null, at: m.at, deliveredAt: null, readAt: null, leadId: s?.leadId || null, live: !s };
@@ -182,7 +183,7 @@ async function getThread(phoneDigits, limit = 300) {
   }
   const [messages, lead] = await Promise.all([
     prisma.whatsAppMessage.findMany({ where: { phone }, orderBy: { at: 'desc' }, take: Math.min(limit, 500), select: { id: true, direction: true, kind: true, text: true, templateName: true, mediaUrl: true, senderName: true, status: true, failureReason: true, at: true, deliveredAt: true, readAt: true, leadId: true } }),
-    prisma.lead.findFirst({ where: { buyerPhone: phone }, orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, campaign: true, projectId: true, createdAt: true } }),
+    prisma.lead.findFirst({ where: onlyLive({ buyerPhone: phone }), orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true, buyerName: true, status: true, source: true, campaign: true, projectId: true, createdAt: true } }),
   ]);
   return { phone, lead, messages: messages.reverse() };
 }
@@ -209,7 +210,7 @@ async function getLogDetail(id) {
 /** Turn one existing chat into a lead, with the buyer's first message and the ad they came from when known. */
 async function createLeadFromChat(phoneDigits) {
   const phone = toPhone(phoneDigits);
-  const existing = await prisma.lead.findFirst({ where: { buyerPhone: phone }, orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true } });
+  const existing = await prisma.lead.findFirst({ where: onlyLive({ buyerPhone: phone }), orderBy: { createdAt: 'desc' }, select: { id: true, refCode: true } });
   if (existing) return { status: 'EXISTS', leadId: existing.id, refCode: existing.refCode };
   const first = await prisma.whatsAppMessage.findFirst({ where: { phone, direction: 'IN' }, orderBy: { at: 'asc' } });
   const integration = await ensureIntegration();

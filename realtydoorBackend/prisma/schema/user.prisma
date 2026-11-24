@@ -40,6 +40,9 @@ model User {
   // checked (SUPER_ADMIN bypasses it entirely). See utils/adminPermissions.js.
   staffRole           String?
   adminPermissions    String[]
+  // In-app walkthroughs this person has finished or skipped (ids from the frontend registry, src/lib/tours/). A new feature ships a
+  // new tour id, so everyone who has not seen it sees it once. Additive: an old row simply has an empty list. (24 Nov 2026)
+  toursSeen           String[]
   isNRI               Boolean   @default(false)
 
   // Profile & settings (buyer-facing)

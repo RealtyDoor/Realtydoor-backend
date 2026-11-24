@@ -223,6 +223,16 @@ model Lead {
   invoicedAt            DateTime?
   collectedAt           DateTime?
 
+  // ─── Qualification pool (bulk lists: the old CRM, events, bought lists) ───────────────────────────────────────────────────────
+  // A bulk-imported lead waits OUT of every live queue until a person releases it: in the pool = poolBatch set AND poolReleasedAt empty
+  // (lib/poolLeads.js is the one place that says so). createdAt stays the import time on purpose (back-dating it would move partners'
+  // buyer ownership and every SLA); the date the old system had is originalLeadAt.
+  poolBatch       String?   // batch name, e.g. "buildesk-2026-11"
+  poolGroup       String?   // "A" promote after review, "B" call first, "C" archive
+  poolGroupReason String?
+  poolReleasedAt  DateTime?
+  originalLeadAt  DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -242,9 +252,14 @@ model Lead {
   @@index([otpOverrideRequestedByPartner])
   @@index([assignedPartnerId, status])
   @@index([status, createdAt])
+  // 23 Nov 2026, built for scale: the Lead Monitor's "stalled" filter (open leads not updated for days), and the buyer-phone lookups
+  // that intake, duplicate checks and repeat-buyer links run on every new lead.
+  @@index([status, updatedAt])
+  @@index([buyerPhone, createdAt])
   @@index([propertyId, status])
   @@index([buyerId, createdAt])
   @@index([commissionStatus])
   @@index([ownerStaffId, salesStage])
   @@index([nextFollowUpAt])
+  @@index([poolBatch, poolReleasedAt, poolGroup])
 }

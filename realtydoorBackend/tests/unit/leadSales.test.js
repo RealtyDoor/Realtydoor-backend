@@ -249,6 +249,6 @@ describe('Excel export', () => {
   test('uses the same filters as the list, including the BDE scope', () => {
     const w = service.listWhere({ status: 'UNASSIGNED', owner: 'me', temperature: 'HOT' }, BDE);
     expect(w).toMatchObject({ status: 'UNASSIGNED', ownerStaffId: BDE.id });
-    expect(w.AND).toHaveLength(2);
+    expect(w.AND).toHaveLength(3); // the two sales filters and the live-leads rule
   });
 });

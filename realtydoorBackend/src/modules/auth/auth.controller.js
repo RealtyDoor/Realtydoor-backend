@@ -63,10 +63,35 @@ async function getMe(req, res, next) {
     success(res, {
       ...userProfile(user),
       adminAccess: adminAccessOf(user),
+      toursSeen: user.toursSeen || [],
       onboardingComplete: req.user.onboardingComplete,
       unreadNotifications: unreadCount,
       activeSubscription: activeSub,
     });
+  } catch (err) { next(err); }
+}
+
+// POST /api/auth/tours/seen  { id } — remember that this person has seen (finished or skipped) an in-app walkthrough.
+// An id is a short slug; the list is capped so it can never grow without limit. $addToSet keeps it free of repeats.
+const TOUR_ID = /^[a-z0-9][a-z0-9._-]{1,63}$/;
+const TOURS_SEEN_MAX = 200;
+async function markTourSeen(req, res, next) {
+  try {
+    const id = typeof req.body?.id === 'string' ? req.body.id.trim() : '';
+    if (!TOUR_ID.test(id)) throw new ApiError(400, 'Not a valid tour id');
+    const current = req.user.toursSeen || [];
+    if (!current.includes(id) && current.length < TOURS_SEEN_MAX) {
+      await prisma.user.update({ where: { id: req.user.id }, data: { toursSeen: { push: id } } });
+    }
+    success(res, { toursSeen: current.includes(id) ? current : [...current, id].slice(0, TOURS_SEEN_MAX) });
+  } catch (err) { next(err); }
+}
+
+// POST /api/auth/tours/reset — "replay walkthroughs": forget which tours this person has seen, so they show again (the person's own list only).
+async function resetToursSeen(req, res, next) {
+  try {
+    await prisma.user.update({ where: { id: req.user.id }, data: { toursSeen: [] } });
+    success(res, { toursSeen: [] });
   } catch (err) { next(err); }
 }
 
@@ -222,7 +247,7 @@ async function googlePhoneVerify(req, res, next) {
 }
 
 module.exports = {
-  syncUser, getMe, setRole, getOnboardingStatus,
+  syncUser, getMe, markTourSeen, resetToursSeen, setRole, getOnboardingStatus,
   signupOtp, signupVerify, loginOtp, loginVerify,
   googlePhoneOtp, googlePhoneVerify,
 };

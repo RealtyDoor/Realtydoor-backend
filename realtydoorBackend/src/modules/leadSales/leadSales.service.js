@@ -1,9 +1,11 @@
 const ExcelJS = require('exceljs');
 const prisma = require('../../lib/prisma');
+const { leadListFilter } = require('../../lib/leadListFilter');
 const ApiError = require('../../utils/ApiError');
 const logger = require('../../lib/logger');
 const { createAuditLog } = require('../../lib/auditLog');
 const f = require('../../lib/leadSales');
+const { onlyLive } = require('../../lib/poolLeads');
 
 const EXPORT_MAX = 5000;
 const who = (user) => user.name || user.email || 'Staff';
@@ -96,7 +98,7 @@ async function salesSummary(user, now = new Date()) {
   const access = f.salesAccess(user);
   if (!access.canWork) throw new ApiError(403, 'You do not have access to lead qualification.');
   const base = f.leadScope(user);
-  const count = (extra) => prisma.lead.count({ where: { ...base, ...extra } });
+  const count = (extra) => prisma.lead.count({ where: onlyLive({ ...base, ...extra }) });
   const mine = (q) => f.salesWhere(q, user.id, now);
   const [stages, temps, overdue, today, upcoming, unowned, total, needsDecision] = await Promise.all([
     Promise.all(f.STAGES.map((s) => count(mine({ salesStage: s })))),
@@ -126,15 +128,15 @@ async function owners(user) {
 
 /** The leads list filter shared by the page and the export. */
 function listWhere(query, user) {
-  const where = {};
-  if (query.status) where.status = query.status;
+  // Status (one or several) and search across every lead: lib/leadListFilter.js (23 Nov 2026).
+  const where = leadListFilter(query);
   if (query.partnerId) where.assignedPartnerId = query.partnerId;
-  if (query.search) where.OR = [
-    { refCode: { contains: query.search, mode: 'insensitive' } },
-    { buyerName: { contains: query.search, mode: 'insensitive' } },
-    { buyerEmail: { contains: query.search, mode: 'insensitive' } },
-  ];
-  return { ...where, ...f.leadScope(user), ...f.salesWhere(query, user.id) };
+  // Both sides may carry an AND list (search + city + stalled here, sales filters there): merged, never one overwriting the other.
+  const sales = f.salesWhere(query, user.id);
+  const and = [...(where.AND || []), ...(sales.AND || [])];
+  const { AND: _a, ...rest } = where;
+  const { AND: _b, ...salesRest } = sales;
+  return { ...rest, ...f.leadScope(user), ...salesRest, ...(and.length && { AND: and }) };
 }
 
 const COLUMNS = [

@@ -61,6 +61,18 @@ const otpLimiter = rateLimit({
   message: rateLimitMessage('Too many OTP requests. Try again in 1 hour.'),
 });
 
+// Reception desk (23 Nov 2026). A receptionist records many visits an hour, so the 5-an-hour otpLimiter would stop the desk. Only
+// FAILED entries count here (a wrong code, a refusal): the per-lead 3-try lock is what stops code guessing, and this caps a run of
+// failures across leads.
+const receptionVisitLimiter = rateLimit({
+  ...BASE,
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: rateLimitMessage('Too many failed entries in the last hour. Try again later or ask an admin.'),
+});
+
 // Audit Nov 2026 (L5). Booking a visit sends the buyer a WhatsApp code. A busy partner books many visits, so this is wider than
 // otpLimiter; the one-a-minute gap per lead (leads.service assertVisitAction) is what protects a single buyer.
 const visitBookingLimiter = rateLimit({
@@ -237,7 +249,7 @@ const webhookLimiter = rateLimit({
 });
 
 module.exports = {
-  userUploadLimiter, paymentStartLimiter, paymentVerifyLimiter, webhookLimiter,
+  userUploadLimiter, receptionVisitLimiter, paymentStartLimiter, paymentVerifyLimiter, webhookLimiter,
   makePublicFormLimiter, publicFormLimiter,
   documentLimiter, localitySuggestLimiter,
   defaultLimiter, perUserLimiter, otpLimiter, visitBookingLimiter, authLimiter, uploadLimiter, searchLimiter,

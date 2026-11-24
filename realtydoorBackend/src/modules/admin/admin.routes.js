@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const { success } = require('../../utils/ApiResponse');
 const ctrl = require('./admin.controller');
 const escrowCtrl = require('../escrow/escrow.controller');
 const cmsCtrl = require('../cms/cms.controller');
@@ -61,6 +62,8 @@ router.use(restrictSalesOnly); // a sales-only BDE reaches only the lead routes 
 
 // Lead management
 router.get('/leads', requirePermission(['LEADS', 'SALES']), ctrl.getLeads);
+// Reception desk entries: every recorded site visit (23 Nov 2026, modules/reception).
+router.get('/reception-visits', requirePermission('LEADS'), require('../reception/reception.controller').adminList);
 router.post('/leads',       requirePermission('LEADS'), ctrl.createLead);          // 6.4a — admin logs an off-platform lead
 // Auto-assign: static path, registered above /leads/:id so it is never
 // swallowed as a lead id.
@@ -73,6 +76,38 @@ router.patch('/routing-rules/:id', requirePermission('LEADS'), ctrl.updateRoutin
 router.delete('/routing-rules/:id', requirePermission('LEADS'), ctrl.deleteRoutingRule);
 // Sales (BDE) layer on a lead: qualification stage, temperature, owner, follow-ups, note history. Static paths come before /leads/:id.
 // A BDE (SALES without LEADS) only ever sees and changes the leads they own; export and setting owners are for managers (LEADS).
+// Lead numbers counted in the database, not from a loaded page of leads (23 Nov 2026, leadStats.service.js).
+const leadStats = require('./leadStats.service');
+const leadPool = require('./leadPool.service');
+// The calling list (modules/admin/leadCalling.service.js): take the next batch of pool leads, call them, tap what happened. For a BDE or a manager.
+const leadCalling = require('./leadCalling.service');
+router.get('/leads/pool/my-batch', requirePermission(['LEADS', 'SALES']), async (req, res, next) => {
+  try { success(res, await leadCalling.myBatch(req.user)); } catch (err) { next(err); }
+});
+router.post('/leads/pool/take', requirePermission(['LEADS', 'SALES']), async (req, res, next) => {
+  try { success(res, await leadCalling.takeNext(req.user, req.body || {}, req.ip)); } catch (err) { next(err); }
+});
+router.post('/leads/:id/pool/outcome', validateObjectId('id'), requirePermission(['LEADS', 'SALES']), async (req, res, next) => {
+  try { success(res, await leadCalling.recordOutcome(req.user, req.params.id, req.body || {}, req.ip)); } catch (err) { next(err); }
+});
+router.post('/leads/pool/release', requirePermission('LEADS'), async (req, res, next) => {
+  try { success(res, await leadPool.releaseLeads(req.body?.ids, req.user, req.ip)); } catch (err) { next(err); }
+});
+router.post('/leads/pool/move', requirePermission('LEADS'), async (req, res, next) => {
+  try { success(res, await leadPool.moveGroup(req.body?.ids, req.body?.group, req.user, req.ip)); } catch (err) { next(err); }
+});
+router.get('/leads/pool-summary', requirePermission(['LEADS', 'SALES']), async (req, res, next) => {
+  try { success(res, await leadStats.poolSummary()); } catch (err) { next(err); }
+});
+router.get('/leads/status-counts', requirePermission(['LEADS', 'SALES']), async (req, res, next) => {
+  try { success(res, await leadStats.statusCounts()); } catch (err) { next(err); }
+});
+router.get('/leads/monitor-summary', requirePermission('LEADS'), async (req, res, next) => {
+  try {
+    const [summary, options] = await Promise.all([leadStats.monitorSummary(), leadStats.monitorFilterOptions()]);
+    success(res, { ...summary, ...options });
+  } catch (err) { next(err); }
+});
 router.get('/leads/sales-summary',    requirePermission(['LEADS', 'SALES']), leadSalesCtrl.salesSummary);
 router.get('/leads/owners',           requirePermission(['LEADS', 'SALES']), leadSalesCtrl.owners);
 router.get('/leads/export',           requirePermission('LEADS'), leadSalesCtrl.exportLeads);

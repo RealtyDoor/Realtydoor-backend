@@ -176,3 +176,26 @@ describe('verifyOtp', () => {
     await expect(ref('123456')).resolves.toMatchObject({ message: expect.stringContaining('verified') });
   });
 });
+
+// 23 Nov 2026: reception completes a visit through the same helper, with every guard; the contact still goes to the assigned partner.
+describe('completeVisitWithCode (reception)', () => {
+  const opts = { ip: '9.9.9.9', by: 'reception (Asha)', actor: { adminId: 'staff1', role: 'ADMIN' } };
+  test('the right code marks the visit done and reveals the contact to the assigned partner, not the receptionist', async () => {
+    await leads.completeVisitWithCode(lead(), '123456', opts);
+    expect(prisma.lead.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'SITE_VISIT_DONE', isOtpVerified: true, siteVisitOTP: null, contactRevealedByPartnerId: 'p1' }),
+    }));
+    expect(notifyAdmins).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('reception (Asha) verified') }));
+  });
+  test('the same guards apply: a locked lead, an expired code, a closed lead', async () => {
+    await expect(leads.completeVisitWithCode(lead({ otpLockedUntil: new Date(Date.now() + HOUR) }), '123456', opts)).rejects.toMatchObject({ statusCode: 429 });
+    await expect(leads.completeVisitWithCode(lead({ otpExpiresAt: new Date(Date.now() - 1000) }), '123456', opts)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(leads.completeVisitWithCode(lead({ status: 'SITE_VISIT_DONE' }), '123456', opts)).rejects.toMatchObject({ statusCode: 400 });
+    expect(prisma.lead.update).not.toHaveBeenCalled();
+  });
+  test('a wrong code counts toward the shared 3-try lock', async () => {
+    prisma.lead.update.mockResolvedValueOnce({ otpAttempts: 1 });
+    await expect(leads.completeVisitWithCode(lead(), '000000', opts)).rejects.toMatchObject({ data: { code: 'LEAD_OTP_INVALID', attemptsLeft: 2 } });
+    expect(prisma.lead.update).toHaveBeenCalledWith(expect.objectContaining({ data: { otpAttempts: { increment: 1 } } }));
+  });
+});

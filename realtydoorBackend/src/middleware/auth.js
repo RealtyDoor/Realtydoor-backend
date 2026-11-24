@@ -5,6 +5,7 @@ const ApiError = require('../utils/ApiError');
 const { computeOnboardingComplete } = require('../lib/onboarding');
 const authService = require('../modules/auth/auth.service');
 const { getAllowedOrigins } = require('../lib/allowedOrigins');
+const { limitedStaffMayReach } = require('../lib/staffLockdown');
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -41,6 +42,11 @@ function assertAccountUsable(dbUser, req) {
     throw new ApiError(403, 'Your account is scheduled for deletion. Cancel the request to continue using RealtyDoor.', {
       code: 'DELETION_PENDING',
     });
+  }
+
+  // 23 Nov 2026: limited staff (sales-only BDE, receptionist) reach only their own areas, on every router (lib/staffLockdown.js).
+  if (!limitedStaffMayReach(dbUser, req.originalUrl.split('?')[0])) {
+    throw new ApiError(403, 'Not available for your role', { code: 'ROLE_LIMITED' });
   }
 }
 

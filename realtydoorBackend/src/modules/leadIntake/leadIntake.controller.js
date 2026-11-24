@@ -14,6 +14,7 @@ const createSchema = z.object({
   defaultCampaign: z.string().trim().max(120).optional(),
   defaultProjectId: objectId.optional(),
   consentAssumed: z.boolean().optional(),
+  qualifyFirst: z.boolean().optional(),
 });
 const updateSchema = z.object({
   name: z.string().trim().min(2).max(80).optional(),
@@ -22,6 +23,7 @@ const updateSchema = z.object({
   defaultCampaign: z.string().trim().max(120).nullable().optional(),
   defaultProjectId: objectId.nullable().optional(),
   consentAssumed: z.boolean().optional(),
+  qualifyFirst: z.boolean().optional(),
 });
 const mappingSchema = z.object({
   matchField: z.enum(['formId', 'campaign', 'utmCampaign', 'adName', 'project', 'keyword']),

@@ -113,6 +113,10 @@ const ALLOWED = [
   'GET /api/admin/leads/:id/notes',
   'POST /api/admin/leads/:id/notes',
   'PATCH /api/admin/leads/:id/sales',
+  // the calling list for the qualification pool (24 Nov 2026)
+  'GET /api/admin/leads/pool/my-batch',
+  'POST /api/admin/leads/pool/take',
+  'POST /api/admin/leads/:id/pool/outcome',
 ].sort();
 
 describe('isSalesOnly', () => {

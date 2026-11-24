@@ -20,6 +20,7 @@ const configRoutes = require('../modules/config/config.routes');
 const projectRoutes = require('../modules/projects/project.routes');
 const micrositeRoutes = require('../modules/microsites/microsite.routes');
 const onboardingFormRoutes = require('../modules/onboarding/onboarding.routes');
+const receptionRoutes = require('../modules/reception/reception.routes');
 
 // Private files (BUG-048; audit Nov 2026, A1). Every JSON answer from every route carries short-lived signed links for files
 // outside the bucket's public folders, and a signed link sent back in a request body is stored as the plain link.
@@ -53,5 +54,6 @@ router.use('/escrow', escrowRoutes);
 
 // Admin
 router.use('/admin', adminRoutes);
+router.use('/reception', receptionRoutes); // reception desk: records site visits (23 Nov 2026)
 
 module.exports = router;

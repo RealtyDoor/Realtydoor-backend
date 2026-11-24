@@ -120,9 +120,14 @@ async function broadcastNotification({ userIds, title, message, type, linkUrl })
 // admin bell hiccup must not turn it into an error response.
 async function notifyAdmins({ title, message, type, linkUrl }) {
   try {
-    const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true } });
-    if (!admins.length) return { count: 0 };
-    return await broadcastNotification({ userIds: admins.map((a) => a.id), title, message, type, linkUrl });
+    const admins = await prisma.user.findMany({ where: { role: 'ADMIN' }, select: { id: true, staffRole: true, adminPermissions: true } });
+    // 23 Nov 2026: a receptionist-only account is an admin account too, but must not get every admin alert (new leads with buyer names,
+    // payments, KYC). Its work is the reception screen only.
+    const receptionOnly = (a) => a.staffRole != null && a.staffRole !== 'SUPER_ADMIN' && (a.adminPermissions || []).length > 0
+      && a.adminPermissions.every((p) => p === 'RECEPTION');
+    const ids = admins.filter((a) => !receptionOnly(a)).map((a) => a.id);
+    if (!ids.length) return { count: 0 };
+    return await broadcastNotification({ userIds: ids, title, message, type, linkUrl });
   } catch (err) {
     logger.warn('[Notifications] notifyAdmins failed', { type, error: err.message });
     return { count: 0 };

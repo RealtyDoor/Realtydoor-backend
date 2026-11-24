@@ -1,0 +1,38 @@
+// ─── RECEPTION (23 Nov 2026) ──────────────────────────────────────────────────
+// A receptionist records each site visit at the office or site: who came, when, who hosted them, a photo, and (when the buyer has it)
+// the visit code. A correct code marks the visit done through the same path the broker uses (leads.service.js, completeVisitWithCode).
+// Without a code, or for a walk-in, the record is kept as unverified and changes nothing on the lead.
+
+enum ReceptionHostType {
+  ASSIGNED_PARTNER // the broker the lead is assigned to
+  OTHER_PERSON     // anyone else: name and phone typed in; admins are alerted
+}
+
+model ReceptionVisit {
+  id                String            @id @default(auto()) @map("_id") @db.ObjectId
+  // Plain id, no relation (same as LeadNote): a record must never block deleting or merging a lead.
+  leadId            String            @db.ObjectId
+  // Snapshots at the time of the visit, so the admin list needs no joins and stays true if the lead changes later.
+  leadRef           String?
+  buyerName         String
+  propertyTitle     String?
+  assignedPartnerId String?           @db.ObjectId
+  assignedPartnerName String?
+  recordedByStaffId String            @db.ObjectId
+  recordedByName    String
+  visitedAt         DateTime
+  recordedAt        DateTime          @default(now())
+  codeVerified      Boolean           @default(false)
+  walkIn            Boolean           @default(false)
+  hostedByType      ReceptionHostType
+  hostedByName      String?
+  hostedByPhone     String?
+  photoUrls         String[]
+  photoConsentAt    DateTime
+  note              String?
+  ipAddress         String?
+
+  @@index([leadId])
+  @@index([visitedAt])
+  @@index([recordedByStaffId, visitedAt])
+}
